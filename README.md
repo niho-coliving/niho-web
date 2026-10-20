@@ -1,2 +1,155 @@
 # niho-web
-NIHOスタッフ向けの複数サイト編集基盤と公開可能な描画パッケージ
+
+公開ページの JSON 文書、入力検証、scoped CSS、React / HTML renderer を共有する TypeScript パッケージです。Astro と Next.js が同じ文書を描画できます。React renderer は本文と登録済みブロックをサーバーで描画し、初期 HTML に含めます。
+
+このリポジトリには公開可能な文書契約と描画処理を置きます。認証情報、管理 API、サイトの非公開データ、価格・在庫・予約の判断処理は利用側が所有します。
+
+ソースは公開されていますが、第三者への再利用ライセンスは付与していません（`UNLICENSED`）。
+
+## 利用開始
+
+Node.js 22 以上が必要です。React renderer には React 19、HTML helper にはさらに React DOM 19 を利用側で用意します。検証・CSS の `@niho/web/core` だけを利用する場合は React を必要としません。npm 公開前でも、リポジトリ直下を Git dependency として利用できます。利用先ではレビュー済みの commit SHA に固定してください。
+
+```json
+{
+  "dependencies": {
+    "@niho/web": "github:niho-coliving/niho-web#<reviewed-commit-sha>",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
+```
+
+Git からのインストール時は `prepare` が TypeScript をビルドします。パッケージの公開範囲は `dist/`、設計文書、公開サンプルです。共有されたクライアント側コードへ秘密を渡さないでください。
+
+| 入口 | 用途 |
+| --- | --- |
+| `@niho/web` | JSON 型、`validateDocument` / `parsePageDocument`、CSS、React SSR に使える `PageRenderer` |
+| `@niho/web/core` | 検証・文書型・CSS だけの入口。React の runtime import を含みません |
+| `@niho/web/react` | `PageRenderer` とブロック registry の型 |
+| `@niho/web/server` | Astro の build / server で使える `renderPageToHtml` |
+
+React は optional peer dependency です。API サーバーなど React を入れない利用先では `import { parsePageDocument } from '@niho/web/core'` を使います。root と `/react` は React runtime を import します。
+
+## 文書の形
+
+```ts
+import { parsePageDocument, type PageDocument } from '@niho/web';
+
+const document: PageDocument = {
+  schemaVersion: 1,
+  siteId: 'demo',
+  pageId: 'home',
+  locale: 'ja-JP',
+  revision: 1,
+  title: '海のそばで過ごす',
+  tokens: {
+    ink: { type: 'color', value: '#172d25' },
+    space: { type: 'length', value: '1.5rem' },
+  },
+  body: [{
+    type: 'element', id: 'intro', tag: 'section',
+    style: {
+      base: { color: { token: 'ink' }, padding: { token: 'space' } },
+      responsive: [{ minWidth: 768, declarations: { maxWidth: '64rem' } }],
+    },
+    children: [{
+      type: 'element', id: 'heading', tag: 'h1',
+      children: [{ type: 'text', text: '海のそばで過ごす' }],
+    }],
+  }],
+};
+
+// API・ファイル・ストレージから受け取る値は unknown として検証する。
+const checked = parsePageDocument(document);
+```
+
+`validateDocument(input, blocks?)` は `parsePageDocument` と同じ検証入口です。検証済みの新しい文書を返し、不正入力には例外を返します。サーバーの JSON 受け取り処理でも利用できます。
+
+[公開サンプル](examples/page.json)にはリンク、トークン、Flex、レスポンシブ指定を含めています。`schemaVersion` は文書契約の版、`revision` はページ内容の更新番号です。同じ site / page / locale / revision の内容は不変として扱い、内容を変えたら revision を増やします。
+
+## Next.js の React renderer
+
+```tsx
+// app/page.tsx（Server Component）
+import { PageRenderer } from '@niho/web';
+import document from './page-document.json';
+
+export default function Page() {
+  return <PageRenderer document={document} />;
+}
+```
+
+`PageRenderer` は `useEffect` やクライアントでの JSON fetch を必要としません。scoped `<style>` と本文の `<div lang="…">` を返します。`title` は文書の情報として保持し、Next.js の `metadata` / Astro の `<head>` へ設定するのは利用側の責務です。読み込む文書を site / page / locale から選ぶ処理も利用側に置きます。
+
+## 登録済み動的ブロック
+
+文書に保存するのは名前と公開 props だけです。利用側のコードに registry と許可する props を定義します。すべてのノードを検証した後にブロックを描画します。未知ブロック、未知 props、型違い、必須値不足はエラーになります。
+
+```tsx
+import { PageRenderer, type BlockRegistry } from '@niho/web/react';
+
+const blocks = {
+  PublicNotice: {
+    props: {
+      heading: { type: 'string', required: true, maxLength: 80 },
+      href: { type: 'url', required: true },
+      tone: { type: 'enum', values: ['info', 'warning'] },
+    },
+    component: ({ heading, href }) => (
+      <aside><a href={String(href)}>{heading}</a></aside>
+    ),
+  },
+} satisfies BlockRegistry;
+
+// body の flow content 内へ追加するノード:
+const notice = {
+  type: 'component', id: 'notice', block: 'PublicNotice',
+  props: { heading: 'お知らせ', href: '/news', tone: 'info' },
+};
+
+// PageRenderer document の body に notice を含める。
+// <PageRenderer document={document} blocks={blocks} />
+```
+
+props 契約は `string` / `url` / `number` / `boolean` / `enum` です。入れ子のオブジェクト、配列、関数、React の特殊 props、イベント props を文書から渡せません。URL に使う prop には `url` を指定します。既存の型付きコンポーネントへ接続するときは registry の小さな adapter で props を渡してください。
+
+registry は利用側がレビューした信頼できるコードです。文書からモジュールや JS を取得しません。ブロックは同期描画できるよう、必要な公開データを利用側で取得してから接続します。価格や在庫を表示する場合も、計算・認可・取得元の判断は利用側に置きます。Client Component の接続・hydration は各フレームワークの規則に従います。
+
+## Astro の静的 / サーバー HTML
+
+```astro
+---
+import { renderPageToHtml } from '@niho/web/server';
+import document from '../content/page-document.json';
+
+const html = renderPageToHtml(document);
+---
+<html lang={document.locale}>
+  <head><title>{document.title}</title></head>
+  <body><Fragment set:html={html} /></body>
+</html>
+```
+
+`set:html` へ渡すのは `renderPageToHtml` の戻り値だけにしてください。JSON 内の本文文字列は React が escape します。この入口は静的 HTML 用です。操作を伴うブロックを hydrate する場合は Astro の React integration を使い、registry を定義したアプリ側 React wrapper を island として配置します。
+
+## 検証と対応範囲
+
+- 未知フィールド、schema の版違い、重複 ID、画像の `alt` 不足、代表的な不正 HTML の入れ子を拒否します。
+- HTML タグ・属性・CSS プロパティは許可リスト方式です。任意 HTML / CSS / selector / JavaScript / event handler は扱いません。
+- URL は資格情報のない HTTPS、`/` から始まる同一サイト内パス、`#id` に限定します。HTTP、protocol relative、data、javascript、制御文字を含む値を拒否します。
+- 色・フォント・寸法・余白・Flex・Grid・位置・画像の収まり等を扱います。任意 CSS 関数や `url()` は許可しません。数値の寸法は px、line-height 等の数値プロパティは単位なしです。
+- レスポンシブ指定は 320–3840px の `minWidth` を昇順に最大 12 個。DOM ノードは最大 5,000、深さは最大 48 段、本文テキスト合計は最大 1,000,000 文字です。
+
+エラーは `DocumentValidationError` で、`path` に対象位置が入ります。公開 API は描画・CSS 生成時にも入力を検証します。詳細と制約は [文書・描画契約](docs/document-contract.md) を参照してください。
+
+## 開発
+
+```sh
+npm ci
+npm test
+npm run typecheck
+npm pack --dry-run
+```
+
+テストは文書検証、拒否すべき URL / 属性 / CSS、レイアウト、スコープ分離、ブロック契約、React SSR と HTML helper の出力を確認します。public GitHub Actions は secrets・外部 API・非公開リポジトリに依存せず同じ確認を実行します。
