@@ -38,3 +38,14 @@ export function isSafePublicUrl(value: unknown): value is string {
     return url.protocol === "https:" && !!url.hostname && !url.username && !url.password;
   } catch { return false; }
 }
+
+/** パス・query・fragment・資格情報・末尾 / を含まない HTTPS origin。 */
+export function isSafeHttpsOrigin(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048 || /[\u0000-\u001f\u007f]/u.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !!url.hostname && !url.username && !url.password && url.origin === value;
+  } catch {
+    return false;
+  }
+}

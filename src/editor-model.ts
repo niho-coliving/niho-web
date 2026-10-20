@@ -1,6 +1,7 @@
 import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
 import type { ElementNode, PageDocument, PageNode, PublicPropValue, StyleProperty, StyleValue } from "./types.js";
+import { isSafeHttpsOrigin } from "./validation-utils.js";
 
 export type NodePath = readonly number[];
 export type EditorOperation =
@@ -173,9 +174,7 @@ export function sameTarget(left: EditorTarget, right: EditorTarget): boolean {
   return left.siteId === right.siteId && left.pageId === right.pageId && left.locale === right.locale;
 }
 export function validateReleasePlan(plan: EditorReleasePlan, request: EditorReleaseRequest, site: EditorSite): void {
-  let origin = "";
-  try { const url = new URL(plan.domain); if (url.protocol === "https:" && url.origin === plan.domain && !url.username && !url.password) origin = url.origin; } catch { /* 拒否する */ }
-  if (!origin || !site.domains.includes(origin) || !sameTarget(plan.target, request.target) || plan.expectedVersion !== request.expectedVersion || plan.action !== request.action || plan.revision !== request.revision ||
+  if (!isSafeHttpsOrigin(plan.domain) || !site.domains.includes(plan.domain) || !sameTarget(plan.target, request.target) || plan.expectedVersion !== request.expectedVersion || plan.action !== request.action || plan.revision !== request.revision ||
     typeof plan.confirmationToken !== "string" || !plan.confirmationToken || !Array.isArray(plan.changes) ||
     plan.changes.some((change) => !change || typeof change.path !== "string" || typeof change.before !== "string" || typeof change.after !== "string") ||
     (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1))) throw new Error("公開対象または差分確認の情報が一致しません。再取得してください。");
