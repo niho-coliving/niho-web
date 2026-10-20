@@ -348,12 +348,18 @@ export function parseSearchConsoleVerificationPlan(input: unknown, expectedTarge
   exactKeys(value, ["target", "property", "publishedOrigin", "instructions", "confirmationToken", "expiresAt"], "verificationPlan");
   const target = assertSiteAnalyticsTarget(value.target, expectedTarget, "verificationPlan.target");
   const selectedProperty = property(value.property, "verificationPlan.property");
-  if (selectedProperty.kind !== "url-prefix" || selectedProperty.value !== `${target.siteOrigin}/`) {
-    invalid("verificationPlan.property", "verification requires the exact URL-prefix property for the selected origin");
-  }
   if (value.publishedOrigin !== target.siteOrigin) invalid("verificationPlan.publishedOrigin", "must exactly match the selected public origin");
   const instructions = object(value.instructions, "verificationPlan.instructions");
   const method = enumValue(instructions.method, ["meta-tag", "dns"] as const, "verificationPlan.instructions.method");
+  if (selectedProperty.kind === "url-prefix") {
+    if (selectedProperty.value !== `${target.siteOrigin}/`) invalid("verificationPlan.property", "verification requires the exact URL-prefix property for the selected origin");
+  } else {
+    const hostname = new URL(target.siteOrigin).hostname.toLowerCase();
+    const domain = selectedProperty.value.slice("sc-domain:".length).toLowerCase();
+    if (method !== "dns" || hostname !== domain && !hostname.endsWith(`.${domain}`)) {
+      invalid("verificationPlan.property", "domain verification requires DNS and a property covering the selected origin");
+    }
+  }
   let parsedInstructions: SearchConsoleVerificationInstructions;
   if (method === "meta-tag") {
     exactKeys(instructions, ["method", "name", "content"], "verificationPlan.instructions");

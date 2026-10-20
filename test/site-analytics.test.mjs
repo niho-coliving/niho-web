@@ -145,6 +145,21 @@ test("verification plan is bound to the exact project, origin, property, and pub
   assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, confirmationToken: "expired", expiresAt: "2026-10-20T02:00:00Z" }, target), SiteAnalyticsContractError);
 });
 
+test("domain ownership plans accept DNS only when the property covers the selected origin", () => {
+  const plan = {
+    target: { ...target },
+    property: { kind: "domain", value: "sc-domain:kamakura.example" },
+    publishedOrigin: target.siteOrigin,
+    instructions: { method: "dns", recordType: "TXT", name: "kamakura.example", value: "google-site-verification=proof123" },
+    confirmationToken: "one-time-host-token",
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  };
+  assert.equal(parseSearchConsoleVerificationPlan(plan, target).property.value, "sc-domain:kamakura.example");
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, property: { kind: "domain", value: "sc-domain:other.example" } }, target), /property covering the selected origin/u);
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, instructions: { method: "meta-tag", name: "google-site-verification", content: "proof123" } }, target), /requires DNS/u);
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, property: { kind: "url-prefix", value: "https://www.kamakura.example/pages/" } }, target), /exact URL-prefix/u);
+});
+
 test("change plans identify the exact public origin and impact before a confirmed action", () => {
   const plan = {
     target: { ...target },
