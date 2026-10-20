@@ -8,9 +8,11 @@
 
 ## 文書の識別と互換性
 
-必須項目は `schemaVersion: 1`、`siteId`、`pageId`、`locale`、`revision`、`title`、`tokens`、`body` です。サイト・ページ・ノード・ブロックの ID は英字で始まる英数字・`_`・`-` で最大 80 文字、locale は `ja` / `ja-JP` 等、revision は 1 以上の safe integer とします。title は空白以外を含む 300 文字以内です。任意項目 `meta` にページの公開メタ情報（説明文・OG画像・favicon・noindex・構造化データの ID）を持てます。値の規則と描画側の使い方は [ページ管理・公開情報の契約](page-contract.md) を正とします。`meta` は本文と同じ revision に属し、内容を変えたら revision を増やします。
+必須項目は `schemaVersion: 1`、`siteId`、`pageId`、`locale`、`revision`、`title`、`tokens`、`body` です。サイト・ページ・ノード・ブロックの ID は英字で始まる英数字・`_`・`-` で最大 80 文字、locale は `ja` / `ja-JP` 等、revision は 1 以上の safe integer とします。title は空白以外を含む 300 文字以内です。任意項目 `meta` にページの公開メタ情報（説明文・OG画像・favicon・noindex・構造化データの ID）を持てます。値の規則と描画側の使い方は [ページ管理・公開情報の契約](page-contract.md) を正とします。`meta` は本文と同じ revision に属し、内容を変えたら revision を増やします。任意項目 `textStyles`（文字スタイル）は下の「文字スタイル」の節を正とします。
 
 文書契約の非互換変更は `schemaVersion` を上げ、移行処理を明示してから導入します。未知版の暗黙変換は行いません。既存の鎌倉サイトの文書を直接受け入れる形式ではありません。移行時には現行の HTML / CSS を新しい許可リストに対応付ける adapter と視覚確認が必要です。
+
+token の `label`、`textStyles`、node style の `textStyle`、文字の見た目プロパティ（`fontStyle` / `textDecorationLine`）は v1 への後方互換な追加で、`schemaVersion` は 1 のままです。入力に無いキーは出力にも付けないため、既存文書の検証結果・直列化・fingerprint・CSS は変わりません。これらのキーを含む文書は、追加前のパッケージでは未知フィールドとして拒否されます。ホストは保存・公開側の検証も新しい commit SHA へ更新してから、新しい編集機能を使ってください。
 
 `siteId/pageId/locale/revision` の組が公開内容を一意に表します。同じ組の内容を変更すると同一 scope の CSS が競合するため、内容更新時は必ず revision を増やします。scope は各値を長さ付きで連結して生成し、他ページ・サイト・revision と衝突しない形にします。`pageScope` は検証済みの ID を持つ文書に対して使います。
 
@@ -20,7 +22,7 @@
 | --- | --- | --- |
 | `text` | `text` | HTML として解釈せず React が escape |
 | `element` | `id`, `tag`, `attrs?`, `style?`, `children` | 安全な HTML タグ・属性のみ。子配列は必須 |
-| `component` | `id`, `block`, `props`, `style?` | 登録済み名・許可された primitive props のみ。独自の children は持たない |
+| `component` | `id`, `block`, `props`, `style?`, `slots?` | 登録済み名・許可された primitive props のみ。独自の children は持たない。`slots` は registry が宣言した表示領域ごとの見た目（[業務ブロックの表示領域契約](block-slot-contract.md)） |
 | `instance` | `id`, `component`, `props?`, `style?` | 下書きだけで使う共通部品の参照。部品ライブラリを渡した検証でだけ受け付け、公開前に通常の element へ展開する（[共通部品契約](component-contract.md)） |
 
 element / component / instance の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
@@ -31,11 +33,36 @@ element / component / instance の `id` は文書全体で一意です。element
 
 ## トークンと style
 
-tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
+tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。任意の `label` は編集画面の表示名で、前後の空白を除いて 1 文字以上・60 文字以内、制御文字を含みません。CSS には出力しません。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
 
 `color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、擬似クラス・擬似要素、アニメーションは v1 に含めません。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
 
+表示を壊す過大値は拒否します。長さの上限は px が 10,000、rem / em / ch が 1,000、% / vh / vw / vmin / vmax が 1,000 です（負値は絶対値で判定）。数値だけの指定（px として扱うプロパティ）と length token も同じ上限です。`zIndex` は `auto` か絶対値 9,999 以下の整数です。
+
+文字の見た目には次の閉じた値を使えます。
+
+| プロパティ | 値 |
+| --- | --- |
+| `fontStyle` | `normal` / `italic` |
+| `textDecorationLine` | `none` / `underline` / `line-through` |
+
+
 node の `style` は `base` と `responsive` の宣言を持ちます。base を先に、続いて minWidth 昇順の `@media` を生成します。Grid はトラック列と限定した `repeat()` / `minmax()` に対応します。生の selector や CSS ファイルを JSON から読み込みません。CSS と token 変数は文書の `data-nw-scope` の下だけに出力し、ノードごとの `data-nw-owner` でも所属を限定するため、入れ子の別文書へ同じノード ID のルールが漏れません。ノードへ任意 class / style / data 属性を付ける入口は設けません。
+
+## 文字スタイル
+
+`textStyles` は名前付きの文字の見た目（STUDIO のテキストスタイル相当）で、最大 64 件です。名前は token と同じ規則です。各スタイルは任意の `label`、必須の `base`、任意の `responsive` を持ちます。使えるプロパティは `fontFamily` / `fontSize` / `fontWeight` / `lineHeight` / `letterSpacing` / `fontStyle` / `textDecorationLine` だけです。色は含めず、カラーの token で共通化します。値・token 参照の型と解決値の検証、`responsive` の規則（320〜3840px、昇順、重複なし、最大 12 個）は node style と同じです。
+
+```json
+{
+  "textStyles": {
+    "heading": { "label": "見出し", "base": { "fontSize": 28, "fontWeight": 700 }, "responsive": [{ "minWidth": 768, "declarations": { "fontSize": 40 } }] }
+  },
+  "body": [{ "type": "element", "id": "title", "tag": "h1", "style": { "textStyle": "heading", "base": { "color": { "token": "ink" } } }, "children": [] }]
+}
+```
+
+element と component の `style.textStyle` には存在する textStyles のキーだけを指定できます。CSS は token 変数 → box-sizing → 文字スタイル → ノード個別の順に出力します。文字スタイルは使われているものだけ、利用ノードの selector をカンマで束ねて base → `@media` 昇順で出力し、未使用のスタイルは出力しません。selector はノード規則と同じ `[data-nw-scope] [data-nw-owner][data-nw-node]` で詳細度が等しいため、後に出るノード個別の指定が全幅で文字スタイルより優先します。HTML の出力（data 属性）は変わりません。
 
 scope はページ間の CSS selector の衝突を避けるもので、Shadow DOM のような完全な隔離ではありません。ホストサイトの global CSS、継承、登録ブロックの CSS は描画に影響します。外側のサイトで必要な reset と視覚確認を行ってください。同じ文書の重複表示は同じ style が複数出ることがあります。
 
@@ -51,10 +78,10 @@ renderer は同期の React ツリーを返します。データ取得は呼び�
 
 無効入力は `DocumentValidationError` で止め、`path` に原因の位置を返します。実際の入力値はエラー文へ埋め込みません。描画 API と CSS API は毎回検証し、無効文書の途中までを公開しません。登録コンポーネント自身が投げる例外は呼び出し側へ伝わります。ページ配信時のエラーページ・直前の公開 revision の利用はアプリ側で決めます。
 
-上限は 5,000 ノード、深さ 48 段、単一 text 100,000 文字、本文 text 合計 1,000,000 文字、属性 2,048 文字、URL 2,048 文字、CSS 値 256 文字、レスポンシブ指定 12 個です。これらはパース済みオブジェクトの上限です。HTTP リクエスト・ファイルのバイト上限と JSON parse は受け取り側で管理します。
+上限は 5,000 ノード、深さ 48 段、単一 text 100,000 文字、本文 text 合計 1,000,000 文字、属性 2,048 文字、URL 2,048 文字、CSS 値 256 文字、レスポンシブ指定 12 個、token 128 件、文字スタイル 64 件です。これらはパース済みオブジェクトの上限です。HTTP リクエスト・ファイルのバイト上限と JSON parse は受け取り側で管理します。
 
 ## 検証範囲
 
-対象限定テストで文書契約、入力拒否、文書のコピー、scoped CSS、許可されたレイアウト、registry の props 検証、登録ブロックが初期 HTML に含まれること、React `renderToString` と共通 HTML helper の一致を確認します。
+対象限定テストで文書契約、入力拒否、文書のコピー、scoped CSS、許可されたレイアウト、文字スタイルの CSS の順序と束ね方、過大値の上限、旧文書の出力が変わらないこと、registry の props 検証、登録ブロックが初期 HTML に含まれること、React `renderToString` と共通 HTML helper の一致を確認します。
 
 実際の Next.js / Astro アプリでの bundling・hydration・CSP・サイト全体 CSS の視覚確認は利用側の導入時に行います。nonce を必須とする CSP を使うサイトでは、現在のインライン style の配信方法を導入前に調整する必要があります。

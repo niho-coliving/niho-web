@@ -1,8 +1,8 @@
 import type {
-  BlockContracts, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
+  BlockContract, BlockContracts, BlockSlot, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, NodeStyle, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue, TextStyle
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
-import { parseStyle, parseTokens } from "./style-values.js";
+import { isStyleProperty, parseStyle, parseTextStyles, parseTokens } from "./style-values.js";
 import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
@@ -115,6 +115,8 @@ export type NodeContext = {
   readonly tokens: Record<string, DesignToken>;
   /** インスタンスの style は部品ライブラリと文書の tokens を重ねて検証する。 */
   readonly instanceTokens: Record<string, DesignToken>;
+  /** 文書の文字スタイル。部品の root では持たない。 */
+  readonly textStyles?: Readonly<Record<string, TextStyle>>;
   readonly components: ReadonlyMap<string, ComponentShape> | undefined;
   readonly ids: Set<string>;
   readonly htmlIds: Set<string>;
@@ -145,6 +147,34 @@ function instanceProps(value: unknown, shape: ComponentShape, path: string): { p
   }
   return { props };
 }
+const nonBlank = (value: unknown) => typeof value === "string" && value.length <= 200 && !!value.trim() && !/[\u0000-\u001f\u007f]/u.test(value);
+/** @internal registry は信頼できるコードだが、selector と UI に出す slot 宣言の形だけは確かめる。 */
+export function blockSlots(contract: BlockContract, at: string): Readonly<Record<string, BlockSlot>> {
+  const slots = contract.slots ?? {};
+  for (const [name, slot] of Object.entries(slots)) {
+    const textProp = slot.text === undefined || Object.hasOwn(contract.props, slot.text) && contract.props[slot.text]!.type === "string";
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(name) || reservedPropNames.includes(name) || !nonBlank(slot.label) || !textProp ||
+        slot.style !== undefined && (!Array.isArray(slot.style) || !slot.style.every(isStyleProperty)) ||
+        slot.data !== undefined && (!nonBlank(slot.data.reason) || !nonBlank(slot.data.source))) fail(`${at}.block`, "invalid block slot contract");
+  }
+  return slots;
+}
+/** 宣言された領域に、その領域で許可されたプロパティだけを指定できる。 */
+function slotStyles(value: unknown, contract: BlockContract, tokens: Record<string, DesignToken>, at: string): { slots?: Record<string, NodeStyle> } {
+  const declared = blockSlots(contract, at);
+  if (value === undefined) return {};
+  const source = record(value, `${at}.slots`), slots: Record<string, NodeStyle> = {};
+  for (const [name, raw] of Object.entries(source)) {
+    const path = `${at}.slots.${name}`;
+    if (!Object.hasOwn(declared, name)) fail(path, "unknown block slot");
+    const style = parseStyle(raw, tokens, path), allowed: readonly string[] = declared[name]!.style ?? [];
+    for (const declarations of [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations)]) {
+      if (Object.keys(declarations).some((property) => !allowed.includes(property))) fail(path, "style not allowed in this slot");
+    }
+    slots[name] = style;
+  }
+  return { slots };
+}
 
 /** @internal 文書の body と部品の root を同じ規則で検証し、新しいノードを返す。 */
 export function parseNodes(input: unknown, path: string, context: NodeContext, depth = 0, parent?: string, insideLink = false, inline = false): PageNode[] {
@@ -166,11 +196,11 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
   }
   if (node.type === "instance" && !context.components) fail(at, "component instance requires a component library");
   if (node.type !== "element" && node.type !== "component" && node.type !== "instance") fail(`${at}.type`, "unknown node type");
-  keys(node, node.type === "element" ? ["type", "id", "tag", "asset", "attrs", "style", "children"] : node.type === "component" ? ["type", "id", "block", "props", "style"] : ["type", "id", "component", "props", "style"], at);
+  keys(node, node.type === "element" ? ["type", "id", "tag", "asset", "attrs", "style", "children"] : node.type === "component" ? ["type", "id", "block", "props", "style", "slots"] : ["type", "id", "component", "props", "style"], at);
   const id = identifier(node.id, `${at}.id`);
   if (ids.has(id)) fail(`${at}.id`, "duplicate node ID");
   ids.add(id);
-  const style = node.style === undefined ? {} : { style: parseStyle(node.style, node.type === "instance" ? context.instanceTokens : tokens, `${at}.style`) };
+  const style = node.style === undefined ? {} : { style: parseStyle(node.style, node.type === "instance" ? context.instanceTokens : tokens, `${at}.style`, context.textStyles) };
   const constrainedParent = parent === "ul" || parent === "ol" ? ["li"] : parent === "dl" ? ["dt", "dd"] : parent === "picture" ? ["source", "img"] : undefined;
   if (node.type === "instance") {
     const component = identifier(node.component, `${at}.component`), shape = context.components?.get(component);
@@ -192,7 +222,7 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
         if (rule.required) fail(`${at}.props.${name}`, "required prop missing");
       } else props[name] = prop(sourceProps[name], rule, `${at}.props.${name}`);
     }
-    return { type: "component", id, block, props, ...style };
+    return { type: "component", id, block, props, ...style, ...slotStyles(node.slots, contract, tokens, at) };
   }
   if (!isElementTag(node.tag)) fail(`${at}.tag`, "unsupported element");
   const tag = node.tag;
@@ -227,7 +257,7 @@ export type PageParseOptions = {
  */
 export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, options: PageParseOptions = {}): PageDocument {
   const source = record(input, "$"), library = options.components;
-  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "body"], "$");
+  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "textStyles", "body"], "$");
   if (source.schemaVersion !== 1) fail("$.schemaVersion", "unsupported schema version");
   const siteId = identifier(source.siteId, "$.siteId"), pageId = identifier(source.pageId, "$.pageId");
   if (library && library.siteId !== siteId) fail("$.siteId", "component library belongs to another site");
@@ -237,11 +267,12 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, o
   if (!title.trim()) fail("$.title", "title is required");
   const meta = source.meta === undefined ? {} : parsePageMeta(source.meta, "$.meta");
   const tokens = parseTokens(source.tokens, "$.tokens");
+  const textStyles = source.textStyles === undefined ? undefined : parseTextStyles(source.textStyles, tokens, "$.textStyles");
   const context: NodeContext = {
-    blocks, tokens, instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
+    blocks, tokens, ...(textStyles ? { textStyles } : {}), instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
     ids: new Set(), htmlIds: new Set(), usage: { nodes: 0, text: 0 }
   };
-  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: parseNodes(source.body, "$.body", context) };
+  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, ...(textStyles ? { textStyles } : {}), body: parseNodes(source.body, "$.body", context) };
   if (library && instancesOf(document.body).length) {
     try {
       parsePageDocument(expandDocument(document, library).document, blocks);

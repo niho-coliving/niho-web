@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PageEditor, type EditorAdapter } from "@niho/web/editor";
 import { createProjectEditorAdapter } from "@niho/web/project-editor";
 import { ProjectManager, type ProjectAdapter } from "@niho/web/project-manager";
+import { ProjectDirectory, type ProjectDirectoryAdapter } from "@niho/web/project-directory";
+import { ProjectDashboard, type ProjectDashboardAdapter } from "@niho/web/project-dashboard";
 import {
   addProject, addProjectMember, parseProjectCatalog,
   removeProjectMember, type Project, type ProjectCatalog, type ProjectMember
@@ -78,17 +80,65 @@ const editorAdapter: EditorAdapter = {
   release: async (plan) => ({ status: "released", snapshot: { document: structuredClone(documents.get(plan.target.siteId)!), version: `document-${documentVersions.get(plan.target.siteId)}` } })
 };
 
-function Demo() {
-  const [opened, setOpened] = useState<Project | null>(null), [openNotice, setOpenNotice] = useState("");
-  const scopedAdapter = useMemo(() => opened ? createProjectEditorAdapter(editorAdapter, opened) : null, [opened]);
-  function open(project: Project) {
-    if (opened && opened.id !== project.id) { setOpenNotice("デモでは編集中の内容を守るため、開いているエディターを自動で切り替えません。実ホストは未保存確認後に切り替えてください。"); return; }
-    setOpenNotice(""); setOpened(project);
+// 表示用の値はProject正本と分ける。日時・解析値・画像はすべて公開可能な合成値。
+const demoTime = "2026-10-20T09:00:00Z";
+const directoryAdapter: ProjectDirectoryAdapter = {
+  loadDirectory: async () => ({ status: "ready", entries: catalog.projects.map((project, index) => ({
+    project,
+    summary: {
+      projectId: project.id, siteId: project.site.id,
+      publicationStatus: index === 0 ? "published" : "unpublished",
+      publishedUrl: index === 0 ? project.site.domains[0] ?? null : null,
+      thumbnail: index < 2 ? { url: index === 0 ? "/preview-public.svg" : "/preview-draft.svg", alt: "合成サイトのプレビュー" } : null,
+      updatedAt: index === 0 ? demoTime : null, lastAccessedAt: null
+    }
+  })) }),
+  isThumbnailUrlAllowed: (url) => ["/preview-public.svg", "/preview-draft.svg"].includes(url)
+};
+const dashboardAdapter: ProjectDashboardAdapter = {
+  loadDashboard: async ({ projectId, siteId }) => {
+    const project = catalog.projects.find((value) => value.id === projectId && value.site.id === siteId);
+    if (!project) return { status: "forbidden", projectId, siteId };
+    const published = project.id === "project_kamakura";
+    return {
+      status: "ready", projectId, siteId, fetchedAt: demoTime,
+      overview: { status: "ready", data: {
+        publicationStatus: published ? "published" : "unpublished", publishedUrl: published ? project.site.domains[0] ?? null : null,
+        lastPublishedAt: published ? demoTime : null, publishedPageCount: published ? 1 : 0, assetBytes: null,
+        recentChanges: published ? [{ id: "demo_change", label: "合成ページの見出しを更新", changedAt: demoTime }] : []
+      } },
+      analytics: published ? { status: "ready", data: { period: { start: "2026-10-01T00:00:00Z", end: demoTime }, fetchedAt: demoTime, uniqueVisitors: 42, pageViews: 184 } } : { status: "disconnected" }
+    };
   }
-  return <><ProjectManager adapter={projectAdapter} onOpenProject={open} />
-    {openNotice && <p role="alert" style={{ font: "13px sans-serif", color: "#8d3026" }}>{openNotice}</p>}
-    {opened && scopedAdapter && <section style={{ marginTop: 24 }}><h2 style={{ font: "700 18px sans-serif" }}>{opened.name}のページ編集</h2><p style={{ font: "13px sans-serif" }}>このエディター接続は選択したプロジェクトの1サイトだけに限定されています。</p><PageEditor adapter={scopedAdapter} /></section>}
-  </>;
+};
+
+function DemoEditor({ project }: { project: Project }) {
+  const scopedAdapter = useMemo(() => createProjectEditorAdapter(editorAdapter, project), [project]);
+  return <PageEditor adapter={scopedAdapter} />;
+}
+function Demo() {
+  const [screen, setScreen] = useState<"directory" | "dashboard" | "manager" | "editor" | "settings">("directory");
+  const [selected, setSelected] = useState<Project | null>(null);
+  const [editors, setEditors] = useState<readonly Project[]>([]);
+  const [setting, setSetting] = useState<"site" | "analytics">("site");
+  const surface = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const heading = Array.from(surface.current?.querySelectorAll<HTMLElement>("h1") ?? []).find((node) => !node.closest("[hidden]"));
+    if (heading) { heading.tabIndex = -1; heading.focus(); }
+  }, [screen, selected]);
+  function openDashboard(project: Project) { setSelected(project); setScreen("dashboard"); }
+  function openEditor(project: Project) {
+    setSelected(project); setEditors((current) => current.some((value) => value.id === project.id) ? current : [...current, project]); setScreen("editor");
+  }
+  return <main ref={surface}>
+    {screen === "directory" && <ProjectDirectory adapter={directoryAdapter} onCreateProject={() => setScreen("manager")} onOpenDashboard={openDashboard} onOpenEditor={openEditor} {...(selected ? { initialFocusProjectId: selected.id } : {})} />}
+    {screen === "manager" && <><button type="button" onClick={() => setScreen("directory")}>‹ プロジェクト一覧</button><ProjectManager adapter={projectAdapter} onOpenProject={openDashboard} /></>}
+    {screen === "dashboard" && selected && <ProjectDashboard project={selected} adapter={dashboardAdapter} onBackToProjects={() => setScreen("directory")} onOpenEditor={openEditor} onOpenSettings={(project, section) => { setSelected(project); setSetting(section); setScreen("settings"); }} />}
+    {screen === "settings" && selected && <section style={{ background: "white", padding: 20, font: "14px/1.6 sans-serif" }}><button type="button" onClick={() => setScreen("dashboard")}>‹ ダッシュボード</button><h1>{setting === "analytics" ? "解析接続設定" : "サイト設定"}</h1><p>{selected.name}</p><p>このデモは設定の接続先を示すだけの合成画面です。実際の接続・認可・保存はホストが実装します。</p>{setting === "site" && <button type="button" onClick={() => setScreen("manager")}>作成・参加者管理</button>}</section>}
+    {editors.map((project) => <section key={project.id} hidden={screen !== "editor" || selected?.id !== project.id}>
+      <button type="button" onClick={() => setScreen("directory")}>‹ プロジェクト一覧</button><h1 style={{ font: "700 18px sans-serif" }}>{project.name}のページ編集</h1><DemoEditor project={project} />
+    </section>)}
+  </main>;
 }
 
 createRoot(document.getElementById("root")!).render(<Demo />);

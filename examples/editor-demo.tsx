@@ -5,8 +5,8 @@ import fixture from "./page.json";
 import type { ElementNode, PageDocument, PageNode } from "@niho/web/core";
 import { createMemoryAssetLibrary } from "./memory-asset-library.mjs";
 
-/** editor-demo.mjs がサーバーで生成した素材のメタデータ。 */
-declare const DEMO_ASSET_SEED: readonly Record<string, unknown>[];
+/** editor-demo.mjs がサーバーで生成した、出所ごとの素材のメタデータ。 */
+declare const DEMO_ASSET_SEED: Readonly<Record<"uploads" | "experience" | "stock", readonly Record<string, unknown>[]>>;
 
 // 公開可能なインメモリ動作例。認証や本番 API には接続しない。
 const domain = "https://demo.example.test", domains = [domain];
@@ -19,7 +19,16 @@ function pageDocument(pageId: string, title: string, children: PageNode[]): Page
 }
 const home = structuredClone(fixture) as PageDocument;
 (home.body[0] as ElementNode).children.push({ type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "seed-sea" }, attrs: { alt: "朝の海辺の景色" }, style: { base: { maxWidth: "100%", height: "auto", borderRadius: 12 } }, children: [] });
-home.body.push({ type: "component", id: "notice", block: "PublicNotice", props: { heading: "今月のお知らせ", count: 3 } }); home.revision++;
+home.body.push({ type: "component", id: "notice", block: "PublicNotice", props: { heading: "今月のお知らせ", count: 3 }, style: { base: { marginTop: 24 } } }); home.revision++;
+// 共通カラーとテキストスタイル（タブレット以上で文字サイズを上書き）の例。
+home.tokens = { ...home.tokens, ink: { type: "color", value: "#172d25", label: "文字の色" }, brand: { type: "color", value: "#195640", label: "メイン" }, accent: { type: "color", value: "#f2b70533", label: "アクセント" } };
+home.textStyles = {
+  heading: { label: "見出し", base: { fontSize: 28, fontWeight: 700, lineHeight: 1.3 }, responsive: [{ minWidth: 768, declarations: { fontSize: 40 } }] },
+  body: { label: "本文", base: { fontSize: 16, lineHeight: 1.8 }, responsive: [{ minWidth: 768, declarations: { fontSize: 17 } }] }
+};
+const [heading, lead] = (home.body[0] as ElementNode).children as ElementNode[];
+heading!.style = { textStyle: "heading", base: { color: { token: "brand" } } };
+lead!.style = { textStyle: "body" };
 const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" }, home],
   [{ siteId: "demo", pageId: "about", locale: "ja-JP", title: "私たちについて", path: "/about" }, pageDocument("about", "私たちについて", [
@@ -91,6 +100,8 @@ const blocks: EditorBlockRegistry = {
     label: "お知らせ",
     props: { heading: { type: "string", required: true }, count: { type: "number", required: true } },
     defaultProps: { heading: "新しいお知らせ", count: 3 }, lockedProps: { count: "公開データの件数です。ホスト側で管理します。" },
+    // このブロックで変えられる見た目（余白・背景色・テキストスタイル）だけをインスペクタに出す。
+    styleProperties: ["marginTop", "marginBottom", "backgroundColor", "textStyle"],
     component: ({ heading, count }) => <aside style={{ margin: 24, padding: 20, border: "1px solid #b8c9bd", borderRadius: 12 }}><strong>{heading}</strong><p>公開データ: {count} 件</p></aside>
   }
 };
@@ -171,9 +182,19 @@ const adapter: EditorAdapter = {
     return { status: "saved", version: `site-${settingsVersion}` };
   }
 };
+// 出所は3つ。体験写真は CMS 側の正本を参照するだけで、ここでは編集・削除しない。ストックは ?stock=connected のときだけ接続する。
+const stockConnected = new URLSearchParams(location.search).get("stock") === "connected";
+const closed = { upload: false, editMetadata: false, delete: false, folders: false, acquire: false };
+const providers = [
+  { id: "uploads", kind: "upload", label: "サイト", origin: "このサイトにアップロードした素材", status: "available", capabilities: { upload: true, editMetadata: true, delete: true, folders: true, acquire: false }, seed: DEMO_ASSET_SEED.uploads },
+  { id: "experience", kind: "cms", label: "体験写真", origin: "NIHO の体験原稿で公開を許可された写真", terms: "体験の公開中だけ表示されます。写真の差し替え・非公開は体験原稿で行います。", status: "available", capabilities: closed, seed: DEMO_ASSET_SEED.experience },
+  stockConnected
+    ? { id: "stock", kind: "stock", label: "ストック", origin: "ライセンスを確認済みのストック素材", status: "available", capabilities: { ...closed, acquire: true }, seed: DEMO_ASSET_SEED.stock }
+    : { id: "stock", kind: "stock", label: "ストック", origin: "ライセンスを確認済みのストック素材", status: "unavailable", unavailableReason: "ライセンス確認済みのストック素材はまだ接続されていません。", capabilities: closed }
+];
 // 素材の保存・配信だけをデモサーバーに任せ、一覧・使用状況・削除の可否はメモリ内で判定する。
 const assets = createMemoryAssetLibrary({
-  siteId: "demo", seed: DEMO_ASSET_SEED, folders: [{ id: "photos", name: "写真" }, { id: "documents", name: "資料" }], quota: { limitBytes: 1024 ** 3 },
+  siteId: "demo", providers, folders: [{ id: "photos", name: "写真" }, { id: "documents", name: "資料" }], quota: { limitBytes: 1024 ** 3 },
   upload: { accept: ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif", "application/pdf"], maxBytes: 5 * 1024 * 1024 },
   documents: () => [...entries.values()].flatMap((item) => [
     { pageId: item.page.pageId, locale: item.page.locale, title: item.page.title, state: "draft", document: item.draft },

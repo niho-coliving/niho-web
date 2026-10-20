@@ -47,6 +47,18 @@
       "types": "./dist/project-manager.d.ts",
       "import": "./dist/project-manager.js"
     },
+    "./project-directory": {
+      "types": "./dist/project-directory.d.ts",
+      "import": "./dist/project-directory.js"
+    },
+    "./project-dashboard": {
+      "types": "./dist/project-dashboard.d.ts",
+      "import": "./dist/project-dashboard.js"
+    },
+    "./project-read-model": {
+      "types": "./dist/project-read-model.d.ts",
+      "import": "./dist/project-read-model.js"
+    },
     "./assets": {
       "types": "./dist/assets.d.ts",
       "import": "./dist/assets.js"

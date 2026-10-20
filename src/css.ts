@@ -25,6 +25,23 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
   // box sizing の規則も文書の外には出さない。
   const owner = `[data-nw-owner="${pageScope(document)}"]`;
   rules.push(`${scope}{box-sizing:border-box;${tokens}}`, `${scope} ${owner}[data-nw-node]{box-sizing:border-box;}`);
+  // 文字スタイルはノード規則より前に出す。selector の詳細度が同じなので、後に出るノード個別の指定が全幅で勝つ。
+  const users = new Map<string, string[]>();
+  (function collect(nodes: PageNode[]): void {
+    for (const node of nodes) {
+      if (node.type === "text") continue;
+      if (node.style?.textStyle) users.set(node.style.textStyle, [...users.get(node.style.textStyle) ?? [], `${scope} ${owner}[data-nw-node="${node.id}"]`]);
+      if (node.type === "element") collect(node.children);
+    }
+  })(document.body);
+  for (const [name, style] of Object.entries(document.textStyles ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+    const selector = users.get(name)?.join(",");
+    if (!selector) continue;
+    if (Object.keys(style.base).length) rules.push(`${selector}{${declarations(style.base, assets)}}`);
+    for (const responsive of style.responsive ?? []) {
+      if (Object.keys(responsive.declarations).length) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets)}}}`);
+    }
+  }
   function visit(nodes: PageNode[]): void {
     for (const node of nodes) {
       if (node.type === "text") continue;
@@ -32,6 +49,12 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
       if (node.style?.base) rules.push(`${selector}{${declarations(node.style.base, assets)}}`);
       for (const responsive of node.style?.responsive ?? []) {
         rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets)}}}`);
+      }
+      if (node.type === "component") for (const [slot, style] of Object.entries(node.slots ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+        // ブロックが data-nw-slot を付けた内側の要素。繰り返すカード等、同じ領域のすべてに適用する。
+        const inner = `${selector} [data-nw-slot="${slot}"]`;
+        if (style.base) rules.push(`${inner}{${declarations(style.base, assets)}}`);
+        for (const responsive of style.responsive ?? []) rules.push(`@media (min-width:${responsive.minWidth}px){${inner}{${declarations(responsive.declarations, assets)}}}`);
       }
       if (node.type === "element") visit(node.children);
     }

@@ -31,6 +31,9 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |
 | `@niho/web/projects` | 1 Project = 1 Site の検証、純粋操作、atomic CAS契約。React不要 |
 | `@niho/web/project-manager` | 認証済みホストadapterへ接続する `ProjectManager`。React / React DOM が必要 |
+| `@niho/web/project-directory` | 管理フォームと独立した日常の `ProjectDirectory`。名前・ドメイン検索、更新順、サイトプレビュー、Dashboard / Editor導線 |
+| `@niho/web/project-dashboard` | 選択した1 Project・1 Siteに固定した `ProjectDashboard`。公開状況・変更履歴・アクセス解析・設定導線 |
+| `@niho/web/project-read-model` | summary / dashboardの型・読み取りadapter・runtime parser。React不要 |
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
 | `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
@@ -119,6 +122,8 @@ const notice = {
 // <PageRenderer document={document} blocks={blocks} />
 ```
 
+ブロックの内側の見た目（カードの見出し・画像の収まり・予約ボタンの色など）をスタッフに整えさせる場合は、registry の `slots` で変更できる領域とプロパティを宣言し、ブロックが該当要素へ `data-nw-slot` を付けます。値の正本は props とホストのデータのままです。詳細は [業務ブロックの表示領域契約](docs/block-slot-contract.md) を参照してください。
+
 props 契約は `string` / `url` / `number` / `boolean` / `enum` です。入れ子のオブジェクト、配列、関数、React の特殊 props、イベント props を文書から渡せません。URL に使う prop には `url` を指定します。既存の型付きコンポーネントへ接続するときは registry の小さな adapter で props を渡してください。
 
 registry は利用側がレビューした信頼できるコードです。文書からモジュールや JS を取得しません。ブロックは同期描画できるよう、必要な公開データを利用側で取得してから接続します。価格や在庫を表示する場合も、計算・認可・取得元の判断は利用側に置きます。Client Component の接続・hydration は各フレームワークの規則に従います。
@@ -163,7 +168,7 @@ const html = renderPageToHtml(document);
 - 未知フィールド、schema の版違い、重複 ID、画像の `alt` 不足、代表的な不正 HTML の入れ子を拒否します。
 - HTML タグ・属性・CSS プロパティは許可リスト方式です。任意 HTML / CSS / selector / JavaScript / event handler は扱いません。
 - URL は資格情報のない HTTPS、`/` から始まる同一サイト内パス、`#id` に限定します。HTTP、protocol relative、data、javascript、制御文字を含む値を拒否します。
-- 色・フォント・寸法・余白・Flex・Grid・位置・画像の収まり等を扱います。任意 CSS 関数や `url()` は許可しません。背景画像は素材参照だけを指定でき、`url()` はホストが解決した安全な URL から描画時に生成します。数値の寸法は px、line-height 等の数値プロパティは単位なしです。
+- 色・フォント・寸法・余白・Flex・Grid・位置・画像の収まり等を扱います。名前付きの文字スタイル（`textStyles`）と表示名付きの token で見た目を共通化できます。任意 CSS 関数や `url()` は許可しません。背景画像は素材参照だけを指定でき、`url()` はホストが解決した安全な URL から描画時に生成します。数値の寸法は px、line-height 等の数値プロパティは単位なしです。
 - レスポンシブ指定は 320–3840px の `minWidth` を昇順に最大 12 個。DOM ノードは最大 5,000、深さは最大 48 段、本文テキスト合計は最大 1,000,000 文字です。
 
 エラーは `DocumentValidationError` で、`path` に対象位置が入ります。公開 API は描画・CSS 生成時にも入力を検証します。詳細と制約は [文書・描画契約](docs/document-contract.md) を参照してください。
@@ -173,7 +178,7 @@ const html = renderPageToHtml(document);
 スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。左の追加・ページ・レイヤーパネル、中央キャンバスでの直接文字編集とドラッグ配置、右インスペクタ、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
 
 ページ一覧（検索・フォルダ・テンプレートと共通枠の区別）、ページの作成・複製・URL変更・公開切替の影響確認、ページ別とサイト共通の公開情報は [ページ管理・公開情報の契約](docs/page-contract.md) を参照してください。公開ページの `<head>` は `@niho/web/pages` の `resolvePageMetadata` で、編集画面と同じ値から作ります。
-画像は URL を直接書く代わりに、サイト別の素材ライブラリの素材ID（`{ provider, id }`）で参照できます。`PageEditor` に `assets` adapter を渡すと、素材のアップロード・検索・代替テキスト編集・配置・置き換え・使用中素材の削除防止を使えます。公開時の URL 解決は `PageRenderer` / `renderPageToHtml` の `assets` で行います。[素材ライブラリ契約](docs/asset-contract.md)を参照してください。
+画像は URL を直接書く代わりに、サイト別の素材ライブラリの素材ID（`{ provider, id }`）で参照できます。`PageEditor` に `assets` adapter を渡すと、素材のアップロード・検索・代替テキスト編集・配置・置き換え・使用中素材の削除防止を使えます。サイトのアップロード素材、NIHO の公開許可済み CMS 画像、ライセンス確認済みストックを出所ごとに分けて、同じパネルから選べます。公開時の URL 解決は `PageRenderer` / `renderPageToHtml` の `assets` で行います。[素材ライブラリ契約](docs/asset-contract.md)を参照してください。
 
 プロジェクト管理は `@niho/web/projects` と `@niho/web/project-manager` を使います。1プロジェクトは唯一のサイトと複数メンバーを持ち、同じメンバーは別プロジェクトにも参加できます。ユーザーIDは数字開始を含む最大128文字のopaque値として扱い、既存Projectの消失やSite差替えを拒否します。権限・ロール・招待・認証・ID採番・本番DB/APIは含まず、認証済みホストのatomic CAS adapterが必要です。[共通プロジェクト契約](docs/project-contract.md)を参照してください。
 
@@ -181,7 +186,7 @@ const html = renderPageToHtml(document);
 npm run demo:projects
 ```
 
-この動作例は架空メンバーを持つ2プロジェクトをメモリ内だけで操作し、選択プロジェクトの1サイトに限定した `PageEditor` 接続も表示します。実アカウント、実サイト、本番永続化には接続しません。
+この動作例は架空メンバーを持つ2プロジェクトの日常一覧、選択した1サイトのDashboard、既存ProjectManagerと `PageEditor` の導線を表示します。表示メタデータは `Project` 正本と分けて読み取りadapterから取得し、未接続の解析・未取得の数値・権限喪失・遅延応答を区別します。[一覧・Dashboardのホスト接続契約](docs/project-views-contract.md)を参照してください。日時・画像・解析値も合成値で、実アカウント、実サイト、本番永続化には接続しません。
 
 サイト分析は `@niho/web/analytics` の `SiteAnalytics` を認証済みホストの読取adapterへ接続します。[サイト分析の契約](docs/analytics-contract.md)と `npm run demo:analytics` の合成データ例を参照してください。
 
