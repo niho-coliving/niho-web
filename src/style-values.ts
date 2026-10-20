@@ -87,6 +87,7 @@ const specs: Record<StyleProperty, PropertySpec> = {
   backgroundPosition: { valid: oneOf("center", "top", "bottom", "left", "right", "top left", "top right", "bottom left", "bottom right") },
   backgroundRepeat: { valid: oneOf("no-repeat", "repeat", "repeat-x", "repeat-y") }
 };
+export const isStyleProperty = (value: unknown): value is StyleProperty => typeof value === "string" && Object.hasOwn(specs, value);
 export function tokenCssValue(token: DesignToken): string {
   return typeof token.value === "number" && token.type === "length" ? `${token.value}px` : String(token.value);
 }

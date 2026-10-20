@@ -33,6 +33,12 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
       for (const responsive of node.style?.responsive ?? []) {
         rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets)}}}`);
       }
+      if (node.type === "component") for (const [slot, style] of Object.entries(node.slots ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+        // ブロックが data-nw-slot を付けた内側の要素。繰り返すカード等、同じ領域のすべてに適用する。
+        const inner = `${selector} [data-nw-slot="${slot}"]`;
+        if (style.base) rules.push(`${inner}{${declarations(style.base, assets)}}`);
+        for (const responsive of style.responsive ?? []) rules.push(`@media (min-width:${responsive.minWidth}px){${inner}{${declarations(responsive.declarations, assets)}}}`);
+      }
       if (node.type === "element") visit(node.children);
     }
   }

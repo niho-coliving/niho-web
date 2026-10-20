@@ -49,6 +49,8 @@ export type ComponentNode = {
   block: string;
   props: Record<string, PublicPropValue>;
   style?: NodeStyle;
+  /** registry が宣言した表示領域ごとの見た目。ブロックが描画する同じ領域（繰り返すカード等）すべてに適用する。 */
+  slots?: Record<string, NodeStyle>;
 };
 /** 共通部品の参照。公開前に resolvePageDocument で element へ展開する。 */
 export type InstanceNode = {
@@ -110,5 +112,16 @@ export type PropRule =
   | { type: "number"; required?: boolean; min?: number; max?: number }
   | { type: "boolean"; required?: boolean }
   | { type: "enum"; required?: boolean; values: readonly string[] };
-export type BlockContract = { props: Readonly<Record<string, PropRule>> };
+/** ブロックの内側で、スタッフが見た目を整えられる領域。値はホストの props・データが正本のまま。 */
+export type BlockSlot = {
+  /** スタッフに見せる領域名（例: カードの見出し、予約ボタン）。 */
+  label: string;
+  /** この領域で変更できる見た目。省略・空なら見た目も変更できない。 */
+  style?: readonly StyleProperty[];
+  /** この領域の文字を変える表示用の string prop。 */
+  text?: string;
+  /** 値がホストのデータ（価格・在庫・予約可否・送信先など）から来る場合の理由と正本。 */
+  data?: { reason: string; source: string };
+};
+export type BlockContract = { props: Readonly<Record<string, PropRule>>; slots?: Readonly<Record<string, BlockSlot>> };
 export type BlockContracts = Readonly<Record<string, BlockContract>>;

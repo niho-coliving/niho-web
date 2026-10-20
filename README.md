@@ -118,6 +118,8 @@ const notice = {
 // <PageRenderer document={document} blocks={blocks} />
 ```
 
+ブロックの内側の見た目（カードの見出し・画像の収まり・予約ボタンの色など）をスタッフに整えさせる場合は、registry の `slots` で変更できる領域とプロパティを宣言し、ブロックが該当要素へ `data-nw-slot` を付けます。値の正本は props とホストのデータのままです。詳細は [業務ブロックの表示領域契約](docs/block-slot-contract.md) を参照してください。
+
 props 契約は `string` / `url` / `number` / `boolean` / `enum` です。入れ子のオブジェクト、配列、関数、React の特殊 props、イベント props を文書から渡せません。URL に使う prop には `url` を指定します。既存の型付きコンポーネントへ接続するときは registry の小さな adapter で props を渡してください。
 
 registry は利用側がレビューした信頼できるコードです。文書からモジュールや JS を取得しません。ブロックは同期描画できるよう、必要な公開データを利用側で取得してから接続します。価格や在庫を表示する場合も、計算・認可・取得元の判断は利用側に置きます。Client Component の接続・hydration は各フレームワークの規則に従います。

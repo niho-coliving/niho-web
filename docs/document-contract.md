@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | `text` | `text` | HTML として解釈せず React が escape |
 | `element` | `id`, `tag`, `attrs?`, `style?`, `children` | 安全な HTML タグ・属性のみ。子配列は必須 |
-| `component` | `id`, `block`, `props`, `style?` | 登録済み名・許可された primitive props のみ。独自の children は持たない |
+| `component` | `id`, `block`, `props`, `style?`, `slots?` | 登録済み名・許可された primitive props のみ。独自の children は持たない。`slots` は registry が宣言した表示領域ごとの見た目（[業務ブロックの表示領域契約](block-slot-contract.md)） |
 | `instance` | `id`, `component`, `props?`, `style?` | 下書きだけで使う共通部品の参照。部品ライブラリを渡した検証でだけ受け付け、公開前に通常の element へ展開する（[共通部品契約](component-contract.md)） |
 
 element / component / instance の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
