@@ -176,6 +176,12 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
     const selection = body.ownerDocument.getSelection(); if (!selection?.rangeCount) return;
     const range = selection.getRangeAt(0); range.deleteContents(); const text = body.ownerDocument.createTextNode(value); range.insertNode(text); range.setStartAfter(text); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
   }
+  function insertLineBreak() {
+    if (!body) return;
+    if (body.ownerDocument.execCommand?.("insertLineBreak", false)) return;
+    const selection = body.ownerDocument.getSelection(); if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0); range.deleteContents(); const breakNode = body.ownerDocument.createElement("br"); range.insertNode(breakNode); range.setStartAfter(breakNode); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+  }
   function applyLink() {
     if (!isSafePublicUrl(linkHref)) { setLinkError("HTTPSまたはサイト内URLを入力してください。"); return; }
     if (!savedRange.current || savedRange.current.collapsed) { setLinkError("リンクにする文字を選択してください。"); return; }
@@ -199,7 +205,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
       const element = editableElement(event.target);
       if (element) { const path = entries.find(({ node }) => node.type !== "text" && node.id === element.dataset.nwNode)?.path; if (path) { select(path); setEditingId(element.dataset.nwNode ?? null); } }
     }} onBlurCapture={(event) => { const target = asElement(event.target), next = asElement(event.relatedTarget); if (target?.dataset.nwNode === editingId && !linkOpen || linkOpen && target?.closest(".nw-text-toolbar") && !next?.closest(".nw-text-toolbar,[contenteditable=true]")) stopEditing(true); }}
-      onKeyDownCapture={(event) => { if (!editingId || event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === "Escape") { event.preventDefault(); stopEditing(false); } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); stopEditing(true); } }}
+      onKeyDownCapture={(event) => { if (!editingId || event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === "Escape") { event.preventDefault(); stopEditing(false); } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); stopEditing(true); } else if (event.key === "Enter" && editing?.node.type === "element" && editing.node.tag !== "div") { event.preventDefault(); insertLineBreak(); } }}
       onPasteCapture={(event) => { if (!editingId || !asElement(event.target)?.closest("[contenteditable=true]")) return; event.preventDefault(); pastePlainText(event.clipboardData.getData("text/plain")); }}
       onDragStartCapture={(event) => { if (!editable || preview || editingId) return; const target = asElement(event.target)?.closest<HTMLElement>("[data-nw-node][draggable=true]"); if (!target?.dataset.nwNode) return; dragItem.current = { kind: "node", id: target.dataset.nwNode }; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", target.dataset.nwNode); }}
       onDragEndCapture={() => { dragItem.current = null; setDropPlace(null); }}
