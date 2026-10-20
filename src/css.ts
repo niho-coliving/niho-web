@@ -33,9 +33,9 @@ export function canvasCss(document: PageDocument, options: CanvasCssOptions, ass
   if (forced) {
     const visit = (nodes: PageNode[]): NodeStyle | undefined => { for (const node of nodes) { if (node.type === "text") continue; if (node.id === forced.nodeId) return node.style; if (node.type === "element") { const found = visit(node.children); if (found) return found; } } return undefined; };
     const values = visit(document.body)?.states?.[forced.state];
-    if (values && Object.keys(values).length) rules.push(`[data-nw-scope="${scope}"] [data-nw-owner="${scope}"][data-nw-node="${forced.nodeId}"]{${declarations(values, assets)}}`);
+    if (values && Object.keys(values).length) rules.push(`[data-nw-scope="${scope}"] [data-nw-owner="${scope}"][data-nw-node="${forced.nodeId}"][data-nw-node="${forced.nodeId}"]{${declarations(values, assets)}}`);
   }
-  if (options.motion === "paused") rules.push("*{animation:none!important;transition:none!important}");
+  if (options.motion === "paused") rules.push(`[data-nw-scope="${scope}"],[data-nw-scope="${scope}"] *{animation:none!important;transition:none!important}`);
   return rules.join("\n");
 }
 /** @internal 検証済み文書と素材マップだけで利用。公開 API は必ず再検証する。 */

@@ -105,7 +105,7 @@ test("old documents keep their exact output and editor canvas options stay inter
   assert.ok(!/hover|keyframes|reduced-motion|display:none/.test(generatePageCss(input)));
   const styled = withStyle({ states: { hover: { color: "#ff0000" } }, base: { transitionDuration: 200 }, appear: { effect: "fade", trigger: "load", duration: 500, delay: 0 } });
   const document = parsePageDocument(styled), scope = pageScope(document);
-  assert.equal(canvasCss(document, { forceState: { nodeId: "link", state: "hover" }, motion: "paused" }), `${link(scope)}{color:#ff0000;}\n*{animation:none!important;transition:none!important}`);
+  assert.equal(canvasCss(document, { forceState: { nodeId: "link", state: "hover" }, motion: "paused" }), `${link(scope)}[data-nw-node="link"]{color:#ff0000;}\n[data-nw-scope="${scope}"],[data-nw-scope="${scope}"] *{animation:none!important;transition:none!important}`);
   assert.equal(canvasCss(document, { motion: "play" }), "");
   assert.equal(canvasCss(document, { forceState: { nodeId: "heading", state: "hover" } }), "");
 });
