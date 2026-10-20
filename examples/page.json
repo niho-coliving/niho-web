@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "siteId": "demo",
+  "pageId": "home",
+  "locale": "ja-JP",
+  "revision": 1,
+  "title": "公開ページの例",
+  "tokens": {
+    "ink": { "type": "color", "value": "#172d25" },
+    "space": { "type": "length", "value": "1.5rem" },
+    "bodyFont": { "type": "fontFamily", "value": "sans-serif" }
+  },
+  "body": [
+    {
+      "type": "element",
+      "id": "hero",
+      "tag": "section",
+      "attrs": { "aria-label": "ページの紹介" },
+      "style": {
+        "base": {
+          "color": { "token": "ink" },
+          "fontFamily": { "token": "bodyFont" },
+          "padding": { "token": "space" },
+          "display": "flex",
+          "flexDirection": "column",
+          "gap": 16
+        },
+        "responsive": [
+          { "minWidth": 768, "declarations": { "maxWidth": "64rem", "margin": "0 auto" } }
+        ]
+      },
+      "children": [
+        { "type": "element", "id": "heading", "tag": "h1", "children": [
+          { "type": "text", "text": "海のそばで過ごす" }
+        ] },
+        { "type": "element", "id": "lead", "tag": "p", "children": [
+          { "type": "text", "text": "同じ文書を複数の公開サイトで描画できます。" }
+        ] },
+        { "type": "element", "id": "link", "tag": "a", "attrs": { "href": "/about" }, "children": [
+          { "type": "text", "text": "詳しく見る" }
+        ] }
+      ]
+    }
+  ]
+}
