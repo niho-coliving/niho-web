@@ -151,7 +151,8 @@ export function StyleInspector(props: StyleInspectorProps) {
   const fontHint = (() => { const value = state("fontFamily").inherited?.value; return value === undefined ? undefined : typeof value === "object" ? text(value) : fontChoices.find(([name]) => name === String(value))?.[1] ?? String(value); })();
 
   const element = node.type === "element" ? node : undefined;
-  const textual = node.type === "component" || !!element && (textTags.has(element.tag) || hasText(element)) || textStyleProperties.some((property) => state(property).own !== undefined);
+  // 業務ブロックと部品のインスタンスは中身を判定できないため、文字の見た目も編集できるようにする。
+  const textual = node.type === "component" || node.type === "instance" || !!element && (textTags.has(element.tag) || hasText(element)) || textStyleProperties.some((property) => state(property).own !== undefined);
   const display = String(effective("display") ?? ""), flex = display === "flex" || display === "inline-flex", grid = display === "grid" || display === "inline-grid";
   const position = String(effective("position") ?? "static");
   const textStyles = Object.entries(document.textStyles ?? {});

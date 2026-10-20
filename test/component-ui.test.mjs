@@ -1,0 +1,480 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+import { parseComponentLibrary, parsePageDocument } from "@niho/web/core";
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: "https://editor.example.test" });
+for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Element", "Event", "MouseEvent"]) globalThis[key] = dom.window[key];
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const { createElement, act } = await import("react");
+const { createRoot } = await import("react-dom/client");
+const { PageEditor } = await import("@niho/web/editor");
+const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
+
+const header = () => ({
+  id: "site_header", name: "サイトヘッダー", kind: "navigation", version: 1,
+  root: { type: "element", id: "n1", tag: "nav", attrs: { "aria-label": "サイト内" }, children: [
+    { type: "element", id: "n2", tag: "a", attrs: { href: "/" }, children: [{ type: "text", text: "ホーム" }] },
+    { type: "element", id: "n3", tag: "a", attrs: { href: "/about" }, children: [{ type: "text", text: "紹介" }] }
+  ] },
+  props: { secondLabel: { label: "2つ目のリンク", node: "n3", field: "text" } }
+});
+const heading = () => ({
+  id: "section_heading", name: "セクション見出し", kind: "section", version: 1,
+  root: { type: "element", id: "n1", tag: "h2", children: [{ type: "text", text: "お知らせ" }] },
+  props: { title: { label: "見出しの文字", node: "n1", field: "text" } }
+});
+const spare = () => ({ id: "spare", name: "予備の帯", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "div", children: [{ type: "element", id: "n2", tag: "p", children: [{ type: "text", text: "予備" }] }] } });
+// 一覧の並び（種類順）と配列の順を変えておく。
+const library = () => ({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [spare(), heading(), header()] });
+const page = (instance = {}) => ({ ...structuredClone(fixture), body: [{ type: "instance", id: "top_nav", component: "site_header", ...instance }, ...structuredClone(fixture.body)] });
+const target = (pageId) => ({ siteId: "demo", pageId, locale: "ja-JP" });
+// role の無い共通枠は、ページ一覧の kind（shared）から種類を補う。
+const defaultUsage = () => [
+  { target: target("home"), title: "ホーム", role: "page", components: { site_header: 1 } },
+  { target: target("other"), title: "別ページ", role: "template", components: { site_header: 1, section_heading: 1 } },
+  { target: target("chrome"), title: "サイトの共通枠", reach: 2, components: { site_header: 1 } }
+];
+
+const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+const wait = (ms) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text);
+const input = (text, scope = document) => [...scope.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
+async function click(target, scope) { const element = typeof target === "string" ? button(target, scope) : target; assert.ok(element, String(target)); await act(async () => element.click()); await flush(); }
+async function change(target, value) {
+  assert.ok(target);
+  await act(async () => {
+    const prototype = target.tagName === "TEXTAREA" ? dom.window.HTMLTextAreaElement.prototype : target.tagName === "SELECT" ? dom.window.HTMLSelectElement.prototype : dom.window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, "value").set.call(target, value);
+    target.dispatchEvent(new dom.window.Event(target.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  });
+  if (target.tagName !== "SELECT") await act(async () => target.dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true })));
+  await flush();
+}
+const pageRow = (title) => [...document.querySelectorAll("button.e-page")].find((node) => node.querySelector(".e-page-name")?.textContent === title);
+const canvas = () => document.querySelector('iframe[title="ページのライブキャンバス"]');
+const rendered = (id) => canvas().contentDocument.querySelector(`[data-nw-node="${id}"]`);
+async function loadCanvas() { const frame = canvas(); assert.ok(frame); await act(async () => frame.dispatchEvent(new dom.window.Event("load"))); await flush(); }
+async function canvasEvent(id, type) {
+  const frame = canvas(), element = rendered(id); assert.ok(element, id);
+  await act(async () => element.dispatchEvent(new frame.contentWindow.MouseEvent(type, { bubbles: true, cancelable: true }))); await flush();
+}
+// jsdom には DragEvent が無いため、React が読む dataTransfer だけを持つイベントを送る。
+async function drag(target, type, win = dom.window) {
+  const event = new win.MouseEvent(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { effectAllowed: "", dropEffect: "", setData() {}, getData: () => "" } });
+  await act(async () => target.dispatchEvent(event)); await flush();
+}
+const card = (name) => document.querySelector(`article.e-part-card[aria-label="${name}"]`);
+const cardNames = () => [...document.querySelectorAll("article.e-part-card")].map((node) => node.getAttribute("aria-label"));
+const dialog = () => document.querySelector('[role="dialog"]');
+const openPanel = () => click(document.querySelector('nav[aria-label="編集ツール"] button[title="部品"]'));
+async function openPage(title) { await click(document.querySelector('nav[aria-label="編集ツール"] button[title="ページ"]')); await click(pageRow(title)); await openPanel(); }
+const text = () => document.body.textContent;
+const status = () => document.querySelector(".e-status").textContent;
+const right = () => document.querySelector('[aria-label="インスペクタ"]');
+const stateButton = (name) => right().querySelector(`[role="group"][aria-label="編集する状態"] button[title="${name}"]`);
+const canvasExtra = () => [...canvas().contentDocument.querySelectorAll("style")].at(-1).textContent;
+
+async function setup(options = {}) {
+  const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+  const calls = { order: [], reads: [], saves: [], prepares: [], releases: [], libraryReads: [], librarySaves: [], usage: [] };
+  let stored = structuredClone(options.document ?? page()), version = "v1", storedLibrary = structuredClone(options.library ?? library()), libraryVersion = 1;
+  const components = {
+    readLibrary: async (siteId) => {
+      calls.order.push("readLibrary"); calls.libraryReads.push(siteId);
+      if (options.readLibrary) return options.readLibrary();
+      return { library: structuredClone(storedLibrary), version: `lib-${libraryVersion}` };
+    },
+    saveLibrary: async (request) => {
+      calls.order.push("saveLibrary"); calls.librarySaves.push(structuredClone(request));
+      const custom = options.saveLibrary && await options.saveLibrary(request);
+      if (custom) return custom;
+      storedLibrary = { ...structuredClone(request.library), revision: storedLibrary.revision + 1 }; libraryVersion++;
+      return { status: "saved", version: `lib-${libraryVersion}`, revision: storedLibrary.revision };
+    },
+    listUsage: async (siteId) => { calls.usage.push(siteId); if (options.listUsage) return options.listUsage(); return defaultUsage(); }
+  };
+  const adapter = {
+    listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }],
+    listPages: async () => {
+      calls.order.push("listPages");
+      return [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }, { siteId: "demo", pageId: "other", locale: "ja-JP", title: "別ページ" }, { siteId: "demo", pageId: "chrome", locale: "ja-JP", title: "サイトの共通枠", kind: "shared" }];
+    },
+    readDocument: async (request) => { calls.order.push("readDocument"); calls.reads.push(structuredClone(request)); return { document: { ...structuredClone(stored), pageId: request.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }] }; },
+    saveDraft: async (request) => {
+      calls.order.push("saveDraft"); calls.saves.push(structuredClone(request));
+      const custom = options.saveDraft && await options.saveDraft(request);
+      if (custom) return custom;
+      stored = { ...structuredClone(request.document), revision: stored.revision + 1 }; version = `v${Number(version.slice(1)) + 1}`; return { status: "saved", version, revision: stored.revision };
+    },
+    prepareRelease: async (request) => { calls.prepares.push(structuredClone(request)); return { ...request, confirmationToken: "reviewed-token", domain: "https://example.test", changes: [] }; },
+    release: async (request) => { calls.releases.push(structuredClone(request)); return { status: "released", snapshot: { document: stored, version: "released-v3" } }; },
+    ...(options.components === false ? {} : { components }), ...options.adapter
+  };
+  await act(async () => root.render(createElement(PageEditor, { adapter, ...(options.blocks ? { blocks: options.blocks } : {}), ...(options.insertableBlocks ? { insertableBlocks: options.insertableBlocks } : {}), ...options.props })));
+  for (let attempt = 0; attempt < 5 && !canvas(); attempt++) await flush();
+  if (canvas()) await loadCanvas();
+  return { calls, adapter, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+}
+
+test("hosts without a component adapter keep today's panels, inspector and requests", async () => {
+  const app = await setup({ components: false, document: fixture });
+  try {
+    assert.deepEqual(app.calls.order, ["listPages", "readDocument"]);
+    await openPanel();
+    const panel = document.querySelector('section[aria-label="部品"]');
+    assert.deepEqual([...panel.querySelectorAll("h3")].map((node) => node.textContent), []);
+    assert.equal(document.querySelector('input[aria-label="共通部品を検索"]'), null);
+    assert.ok(panel.textContent.includes("このサイトの部品はまだ登録されていません。"));
+    await click("section · hero");
+    assert.equal(button("部品にする"), undefined); assert.ok(!text().includes("共通部品"));
+    assert.equal(document.querySelector(".e-hold"), null); assert.equal(button("公開前の確認").getAttribute("title"), null);
+    await click("公開前の確認"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
+  } finally { await app.cleanup(); }
+});
+
+test("the library loads before pages and the panel sorts, searches and summarizes usage", async () => {
+  const app = await setup();
+  try {
+    assert.deepEqual(app.calls.order.slice(0, 3), ["readLibrary", "listPages", "readDocument"]); assert.deepEqual(app.calls.usage, ["demo"]);
+    assert.ok(button("◇ サイトヘッダー"), "instance layers show the component name");
+    assert.equal(rendered("top_nav--n2").textContent, "ホーム");
+    await openPanel();
+    assert.deepEqual(cardNames(), ["サイトヘッダー", "セクション見出し", "予備の帯"]);
+    assert.ok(card("サイトヘッダー").textContent.includes("ナビゲーション · 3文書で使用・共通枠"));
+    assert.ok(card("セクション見出し").textContent.includes("セクション · 1文書で使用"));
+    assert.ok(card("予備の帯").textContent.includes("パーツ · 未使用"));
+    const thumbnail = card("サイトヘッダー").querySelector("iframe");
+    assert.equal(thumbnail.getAttribute("aria-hidden"), "true"); assert.equal(thumbnail.getAttribute("tabindex"), "-1"); assert.equal(thumbnail.getAttribute("sandbox"), "allow-same-origin");
+    await act(async () => thumbnail.dispatchEvent(new dom.window.Event("load"))); await flush();
+    assert.ok(thumbnail.contentDocument.body.textContent.includes("紹介"));
+    const search = document.querySelector('input[type="search"][aria-label="共通部品を検索"]');
+    assert.equal(search.placeholder, "部品名で検索");
+    await change(search, "見出し"); assert.deepEqual(cardNames(), ["セクション見出し"]);
+    await change(search, "ヘッダー"); assert.deepEqual(cardNames(), ["サイトヘッダー"]);
+    await change(search, "存在しない"); assert.deepEqual(cardNames(), []); assert.ok(text().includes("「存在しない」に一致する部品はありません。"));
+  } finally { await app.cleanup(); }
+});
+
+test("配置 adds an instance to the page draft without saving the library", async () => {
+  const app = await setup();
+  try {
+    await openPanel(); await click(button("配置", card("予備の帯")));
+    assert.ok(rendered("node_1--n2"), "the placed instance renders resolved");
+    assert.ok(card("予備の帯").textContent.includes("1文書で使用"));
+    assert.equal(button("削除", card("予備の帯")).disabled, true);
+    await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 0);
+    const saved = app.calls.saves[0].document;
+    assert.deepEqual(saved.body.at(-1), { type: "instance", id: "node_1", component: "spare" });
+    assert.doesNotThrow(() => parsePageDocument(saved, {}, { components: parseComponentLibrary(library()) }));
+  } finally { await app.cleanup(); }
+});
+
+test("部品にする registers the selection and saves the library before the page", async () => {
+  const app = await setup();
+  try {
+    await click("section · hero"); assert.ok(text().includes("選んだ要素を共通部品に登録し、ほかのページでも使えるようにします。"));
+    await click("部品にする");
+    assert.equal(dialog().getAttribute("aria-label"), "共通部品にする"); assert.equal(input("種類", dialog()).value, "section");
+    await click(button("登録する", dialog())); assert.ok(dialog().textContent.includes("部品の名前を入力してください。"));
+    await change(input("部品名", dialog()), "サイトヘッダー"); await click(button("登録する", dialog()));
+    assert.ok(dialog().textContent.includes("同じ名前の部品があります。"));
+    await change(input("部品名", dialog()), "紹介セクション"); await click(button("登録する", dialog()));
+    assert.equal(dialog(), null);
+    assert.ok(button("◇ 紹介セクション")); assert.ok(text().includes("この部品にはページごとに変えられる値がありません。「部品を編集」で設定できます。"));
+    assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
+    assert.equal(button("公開前の確認").disabled, true);
+    await click("下書き保存");
+    assert.deepEqual(app.calls.order.filter((call) => call.startsWith("save")), ["saveLibrary", "saveDraft"]);
+    assert.equal(app.calls.librarySaves[0].expectedVersion, "lib-1"); assert.equal(app.calls.librarySaves[0].siteId, "demo");
+    const sent = parseComponentLibrary(app.calls.librarySaves[0].library), created = sent.components.find((component) => component.name === "紹介セクション");
+    assert.deepEqual([created.kind, created.version, created.root.id, created.root.tag], ["section", 1, "n1", "section"]);
+    const draft = parsePageDocument(app.calls.saves[0].document, {}, { components: sent });
+    assert.deepEqual(draft.body[1], { type: "instance", id: "hero", component: created.id });
+    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, false);
+    // 部品とページの履歴は別。ページが使う部品を消す取り消しは止め、ページ側を戻した後なら部品も戻せる。
+    await openPanel(); await click(button("編集", card("紹介セクション"))); await loadCanvas();
+    await click("元に戻す"); assert.ok(text().includes("共通部品とページの内容が合わなくなるため、この操作はできません。")); assert.ok(card("紹介セクション"));
+    await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
+    await click("元に戻す"); assert.ok(button("section · hero"));
+    await click(button("編集", card("紹介セクション"))); await loadCanvas();
+    await click("元に戻す"); assert.equal(card("紹介セクション"), null); assert.equal(document.querySelector(".e-part-banner"), null, "the removed master leaves component mode");
+  } finally { await app.cleanup(); }
+});
+
+test("master edits reach the page instance, history and banner, and bump the saved version", async () => {
+  const app = await setup();
+  try {
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    assert.equal(document.querySelector(".e-part-banner [role=status]").textContent, "◇ 共通部品「サイトヘッダー」を編集中 · 保存すると使用中の3文書に反映されます");
+    assert.ok(card("サイトヘッダー").textContent.includes("編集中")); assert.equal(button("公開前の確認").disabled, true);
+    assert.ok(text().includes("部品の設定")); assert.ok(text().includes("サイトの共通枠共通枠")); assert.ok(text().includes("別ページテンプレート")); assert.ok(text().includes("ホームページ（編集中・未保存を含む）"));
+    await click("a · n2"); await change(input("テキスト"), "トップ");
+    assert.equal(rendered("n2").textContent, "トップ"); assert.equal(document.querySelector(".e-status").textContent, "未保存の変更あり");
+    await click("元に戻す"); assert.equal(rendered("n2").textContent, "ホーム");
+    await click("やり直す"); assert.equal(rendered("n2").textContent, "トップ");
+    await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
+    assert.equal(document.querySelector(".e-part-banner"), null);
+    assert.equal(rendered("top_nav--n2").textContent, "トップ");
+    assert.equal(button("公開前の確認").disabled, true); assert.equal(document.querySelector(".e-hold").textContent, "部品の変更を保存してから公開を確認してください。");
+    await click("下書き保存");
+    assert.equal(app.calls.saves.length, 0, "an unchanged page is not saved");
+    const sent = app.calls.librarySaves[0].library;
+    assert.deepEqual(sent.components.map(({ id, version }) => [id, version]), [["spare", 1], ["section_heading", 1], ["site_header", 2]]);
+    assert.equal(sent.components.at(-1).root.children[0].children[0].text, "トップ");
+    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, false); assert.deepEqual(app.calls.usage, ["demo", "demo"]);
+    // ダブルクリックで、インスタンス内の対応するノードを選んだ状態で部品の編集を開く。
+    await canvasEvent("top_nav--n3", "click"); assert.ok(document.querySelector(".e-inspector-content h2").textContent.includes("サイトヘッダー"));
+    await canvasEvent("top_nav--n3", "dblclick"); await loadCanvas();
+    assert.ok(document.querySelector(".e-part-banner")); assert.equal(document.querySelector(".e-inspector-content h2").textContent, "a · n3");
+  } finally { await app.cleanup(); }
+});
+
+test("master public props and settings are edited in component mode", async () => {
+  const app = await setup();
+  try {
+    await openPanel(); await click(button("編集", card("セクション見出し"))); await loadCanvas();
+    assert.ok(text().includes("別ページテンプレート")); assert.equal(input("種類").value, "section");
+    await change(input("種類"), "part"); await change(input("部品名"), "小見出し");
+    assert.ok(document.querySelector(".e-part-banner").textContent.includes("「小見出し」"));
+    await click(document.querySelector('button[aria-label="「見出しの文字」の公開をやめる"]'));
+    await click("h2 · n1");
+    const checkbox = [...document.querySelectorAll("label.e-check")].find((label) => label.textContent === "ページごとに変えられるようにする（文字）").querySelector("input");
+    assert.equal(checkbox.checked, false);
+    await click(checkbox); assert.equal(input("値の名前（文字）").value, "文字");
+    await change(input("値の名前（文字）"), "見出し");
+    await click("下書き保存");
+    const saved = app.calls.librarySaves[0].library.components.find((component) => component.id === "section_heading");
+    assert.deepEqual([saved.name, saved.kind, saved.version], ["小見出し", "part", 2]);
+    assert.deepEqual(saved.props, { n1_text: { label: "見出し", node: "n1", field: "text" } });
+  } finally { await app.cleanup(); }
+});
+
+test("page values override public props, can return to the master value and stale values are cleaned", async () => {
+  const app = await setup({ document: page({ props: { oldLabel: "旧" } }) });
+  try {
+    await click("◇ サイトヘッダー");
+    assert.ok(text().includes("ナビゲーション · 3文書で使用・共通枠")); assert.ok(text().includes("外枠の見た目はこのページだけに適用されます。"));
+    assert.equal(input("2つ目のリンク").value, "紹介"); assert.ok(text().includes("部品の値を使用中"));
+    await change(input("2つ目のリンク"), "会社概要");
+    assert.equal(rendered("top_nav--n3").textContent, "会社概要"); assert.ok(text().includes("このページだけの値"));
+    await click("部品の値に戻す"); assert.equal(rendered("top_nav--n3").textContent, "紹介"); assert.ok(text().includes("部品の値を使用中"));
+    await change(input("2つ目のリンク"), "会社概要"); await change(input("2つ目のリンク"), "紹介");
+    assert.ok(text().includes("部品の値を使用中"), "a value equal to the master removes the override");
+    assert.ok(text().includes("部品の更新で使われなくなった値が1件あります。"));
+    await click("整理する"); assert.ok(!text().includes("使われなくなった値"));
+    await change(input("2つ目のリンク"), "会社概要"); await click("下書き保存");
+    assert.deepEqual(app.calls.saves[0].document.body[0], { type: "instance", id: "top_nav", component: "site_header", props: { secondLabel: "会社概要" } });
+    await click("元に戻す"); await click("元に戻す"); await click("◇ サイトヘッダー");
+    assert.ok(text().includes("部品の更新で使われなくなった値が1件あります。"), "cleaning stale values was one history step");
+  } finally { await app.cleanup(); }
+});
+
+test("canvas drag and drop moves an instance as one block and never drops inside it", async () => {
+  const app = await setup();
+  try {
+    await canvasEvent("top_nav--n2", "click");
+    assert.equal(rendered("top_nav").getAttribute("draggable"), "true"); assert.equal(rendered("top_nav--n2").getAttribute("draggable"), null);
+    const win = canvas().contentWindow;
+    await drag(rendered("top_nav--n2"), "dragstart", win); await drag(rendered("lead"), "dragover", win); await drag(rendered("lead"), "drop", win);
+    assert.ok(button("◇ サイトヘッダー").getAttribute("aria-pressed") === "true", "the moved instance stays selected");
+    const palette = [...document.querySelectorAll('section[aria-label="要素を追加"] button')].find((node) => node.textContent.endsWith("テキスト"));
+    await drag(palette, "dragstart"); await drag(rendered("top_nav--n3"), "dragover", win); await drag(rendered("top_nav--n3"), "drop", win);
+    await click("下書き保存");
+    const saved = app.calls.saves[0].document, hero = saved.body.find((node) => node.id === "hero");
+    assert.deepEqual(hero.children.map((node) => node.id), ["heading", "node_1", "top_nav", "lead", "link"]);
+    assert.equal(hero.children[1].tag, "p", "a drop on a node inside the instance lands before the instance");
+  } finally { await app.cleanup(); }
+});
+
+test("部品を解除 asks for confirmation and saves an element with the instance id", async () => {
+  const app = await setup();
+  try {
+    await click("◇ サイトヘッダー"); await click("部品を解除");
+    assert.equal(dialog().getAttribute("aria-label"), "部品を解除");
+    assert.ok(dialog().textContent.includes("この箇所は通常の要素になり、今後は部品の変更を受けません。ページごとの値と外枠の見た目はそのまま残ります。"));
+    await click(button("キャンセル", dialog())); assert.equal(dialog(), null); assert.ok(button("◇ サイトヘッダー"));
+    await click("部品を解除"); await click(button("解除する", dialog()));
+    assert.ok(button("nav · top_nav")); assert.equal(rendered("top_nav").tagName, "NAV");
+    await click("下書き保存");
+    const saved = app.calls.saves[0].document.body[0];
+    assert.deepEqual([saved.type, saved.id, saved.tag], ["element", "top_nav", "nav"]); assert.equal(app.calls.librarySaves.length, 0);
+  } finally { await app.cleanup(); }
+});
+
+test("library save conflicts and failures keep both edits and skip the page save", async () => {
+  let mode = "conflict";
+  const app = await setup({ saveLibrary: async () => { if (mode === "throw409") throw { status: 409 }; if (mode === "throw") throw new Error("offline"); return { status: "conflict" }; } });
+  try {
+    await openPanel(); await click(button("名前を変更", card("予備の帯")));
+    assert.equal(dialog().getAttribute("aria-label"), "名前を変更"); assert.equal(input("部品名", dialog()).value, "予備の帯");
+    await change(input("部品名", dialog()), "予備の帯 改"); await click(button("変更する", dialog()));
+    assert.ok(card("予備の帯 改")); assert.equal(document.querySelector(".e-status").textContent, "未保存の変更あり");
+    await change(input("ページタイトル"), "保持するタイトル");
+    await click("下書き保存");
+    assert.ok(text().includes("共通部品の保存が競合しました（409）。部品とページの変更を保持しています。最新の状態を確認してからやり直してください。"));
+    mode = "throw409"; await click("下書き保存"); assert.ok(text().includes("共通部品の保存が競合しました（409）"));
+    mode = "throw"; await click("下書き保存"); assert.ok(text().includes("共通部品を保存できませんでした。部品とページの変更を保持しています。時間をおいて再試行してください。"));
+    assert.equal(app.calls.saves.length, 0); assert.equal(app.calls.librarySaves.length, 3);
+    assert.ok(app.calls.librarySaves.every((request) => request.expectedVersion === "lib-1"));
+    assert.equal(input("ページタイトル").value, "保持するタイトル"); assert.ok(card("予備の帯 改")); assert.equal(button("下書き保存").disabled, false);
+  } finally { await app.cleanup(); }
+});
+
+test("release requests bind componentsVersion and publishing waits for saved components", async () => {
+  const app = await setup();
+  try {
+    await click("公開前の確認"); assert.equal(app.calls.prepares[0].componentsVersion, "lib-1");
+    const affected = dialog().querySelector(".e-affected");
+    assert.ok(affected.textContent.includes("影響する共通部品・ページ・サイト設定")); assert.ok(affected.textContent.includes("共通部品サイトヘッダーこのページで1か所に配置"));
+    await click("編集に戻る");
+    await openPanel(); await click(button("複製", card("予備の帯"))); assert.ok(card("予備の帯 のコピー"));
+    assert.equal(button("公開前の確認").disabled, true); assert.equal(button("戻す内容を確認").disabled, true);
+    assert.equal(document.querySelector(".e-hold").textContent, "部品の変更を保存してから公開を確認してください。");
+    await click("下書き保存"); assert.equal(button("公開前の確認").disabled, false);
+    await click("公開前の確認"); assert.equal(app.calls.prepares[1].componentsVersion, "lib-2");
+    await act(async () => dialog().querySelector('input[type="checkbox"]').click()); await click("この内容を公開");
+    assert.equal(app.calls.releases[0].componentsVersion, "lib-2");
+    await click(button("複製", card("予備の帯")));
+    await openPage("別ページ");
+    assert.equal(dialog(), null, "page switches keep unsaved components without asking");
+    assert.equal(app.calls.reads.at(-1).pageId, "other");
+    assert.ok(card("予備の帯 のコピー 2")); assert.equal(app.calls.libraryReads.length, 1); assert.equal(document.querySelector(".e-status").textContent, "未保存の変更あり");
+  } finally { await app.cleanup(); }
+});
+
+test("削除 stays disabled while a component is used and removes unused ones after confirmation", async () => {
+  const app = await setup();
+  try {
+    await openPanel();
+    for (const name of ["サイトヘッダー", "セクション見出し"]) { assert.equal(button("削除", card(name)).disabled, true); assert.ok(card(name).textContent.includes("使用中のため削除できません")); }
+    await click(button("削除", card("予備の帯")));
+    assert.equal(dialog().getAttribute("aria-label"), "共通部品を削除"); assert.ok(dialog().textContent.includes("「予備の帯」を削除します。この操作は保存すると確定します。"));
+    assert.equal(button("削除する", dialog()).className, "e-danger");
+    await click(button("削除する", dialog())); assert.equal(card("予備の帯"), null);
+    await click("下書き保存");
+    assert.deepEqual(app.calls.librarySaves[0].library.components.map((component) => component.id), ["section_heading", "site_header"]);
+  } finally { await app.cleanup(); }
+  const unknown = await setup({ listUsage: async () => { throw new Error("offline"); } });
+  try {
+    await openPanel();
+    assert.ok(card("予備の帯").textContent.includes("使用状況を取得できません"));
+    assert.equal(button("削除", card("予備の帯")).disabled, true); assert.ok(card("予備の帯").textContent.includes("使用状況を確認できないため削除できません"));
+  } finally { await unknown.cleanup(); }
+});
+
+test("insertableBlocks restrictions disable 配置 for components containing other blocks", async () => {
+  const blocks = { Notice: { label: "お知らせ", props: { heading: { type: "string", required: true } }, component: ({ heading }) => createElement("p", null, heading) } };
+  const notice = { id: "notice_box", name: "お知らせ枠", kind: "section", version: 1, root: { type: "element", id: "n1", tag: "section", children: [{ type: "component", id: "n2", block: "Notice", props: { heading: "お知らせ" } }] } };
+  const app = await setup({ blocks, insertableBlocks: [], library: { ...library(), components: [...library().components, notice] } });
+  try {
+    await openPanel();
+    assert.equal(button("配置", card("お知らせ枠")).disabled, true);
+    assert.ok(card("お知らせ枠").textContent.includes("追加が許可されていない業務ブロックを含むため配置できません"));
+    assert.equal(button("配置", card("予備の帯")).disabled, false);
+    const panel = document.querySelector('section[aria-label="部品"]');
+    assert.deepEqual([...panel.querySelectorAll("h3")].map((node) => node.textContent), ["共通部品", "業務ブロック"]);
+  } finally { await app.cleanup(); }
+});
+
+test("a failed library read shows a notice and still loads pages without components", async () => {
+  const app = await setup({ document: fixture, readLibrary: async () => { throw new Error("offline"); } });
+  try {
+    assert.ok(text().includes("共通部品を読み込めませんでした。部品を含むページは表示できません。"));
+    assert.deepEqual(app.calls.order, ["readLibrary", "listPages", "readDocument"]); assert.deepEqual(app.calls.usage, []);
+    assert.equal(input("ページタイトル").value, fixture.title);
+    await click("section · hero"); assert.equal(button("部品にする"), undefined);
+    await click("公開前の確認"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
+  } finally { await app.cleanup(); }
+});
+
+test("autosave saves changed components before the page and pauses without saving the page after a library failure", async () => {
+  let fail = false;
+  const app = await setup({ props: { autosave: { delayMs: 100 } }, saveLibrary: async () => fail ? { status: "conflict" } : undefined });
+  try {
+    await openPanel(); await click(button("名前を変更", card("予備の帯"))); await change(input("部品名", dialog()), "予備の帯 改"); await click(button("変更する", dialog()));
+    await change(input("ページタイトル"), "自動保存するタイトル");
+    await wait(400);
+    assert.deepEqual(app.calls.order.filter((call) => call.startsWith("save")), ["saveLibrary", "saveDraft"]);
+    assert.equal(app.calls.librarySaves[0].trigger, "autosave"); assert.equal(app.calls.saves[0].trigger, "autosave");
+    assert.ok(app.calls.librarySaves[0].library.components.some((component) => component.name === "予備の帯 改"));
+    assert.ok(status().startsWith("保存済み"));
+    await click(button("複製", card("予備の帯 改"))); await wait(400);
+    assert.equal(app.calls.librarySaves.length, 2, "a component-only change is autosaved"); assert.equal(app.calls.saves.length, 1);
+    fail = true;
+    await click(button("複製", card("予備の帯 改"))); await change(input("ページタイトル"), "部品に失敗した後のタイトル"); await wait(400);
+    assert.equal(app.calls.librarySaves.length, 3); assert.equal(app.calls.saves.length, 1, "the page is not saved after the component library failed");
+    assert.equal(status(), "保存できませんでした"); assert.ok(text().includes("共通部品の保存が競合しました（409）"));
+    await wait(400); assert.equal(app.calls.librarySaves.length, 3, "autosave pauses after a failure");
+  } finally { await app.cleanup(); }
+});
+
+test("work recovery restores drafts with instances and keeps drafts the current library cannot resolve", async () => {
+  const removed = [], store = (document) => {
+    let entry = { target: target("home"), baseVersion: "v1", baseRevision: 1, document, updatedAt: "2026-10-21T01:02:00.000Z" };
+    return { read: () => entry, write: (next) => { entry = structuredClone(next); }, remove: (place) => { removed.push(place.pageId); entry = null; } };
+  };
+  const restorable = await setup({ props: { recovery: store(page({ props: { secondLabel: "端末の値" } })) } });
+  try {
+    await flush();
+    const banner = document.querySelector(".e-recovery"); assert.ok(banner, "the draft with an instance is offered");
+    await click(button("復元する", banner));
+    assert.equal(rendered("top_nav--n3").textContent, "端末の値"); assert.equal(status(), "未保存の変更あり");
+  } finally { await restorable.cleanup(); }
+  const missing = page(); missing.body[0].component = "removed_component";
+  const unresolved = await setup({ props: { recovery: store(missing) } });
+  try {
+    await flush();
+    assert.equal(document.querySelector(".e-recovery"), null);
+    assert.ok(text().includes("端末に残っていた変更がありますが、共通部品の現在の内容と合わないため復元できません。"));
+    assert.deepEqual(removed, [], "the unresolved draft is kept in the store");
+  } finally { await unresolved.cleanup(); }
+});
+
+test("version history and the 409 comparison read page documents with instances through the library", async () => {
+  let conflicted = true;
+  const entry = { id: "rev-1", revision: 1, kind: "draft", createdAt: "2026-10-20T09:00:00.000Z", actor: "デモ編集者" };
+  const app = await setup({
+    adapter: { listRevisions: async () => ({ entries: [entry] }), readRevision: async () => ({ document: page({ props: { secondLabel: "過去の値" } }) }) },
+    saveDraft: async () => conflicted ? { status: "conflict" } : undefined
+  });
+  try {
+    await click("履歴"); await click([...document.querySelectorAll("button.e-version")].find((node) => !node.classList.contains("is-current")));
+    await loadCanvas(); assert.equal(rendered("top_nav--n3").textContent, "過去の値");
+    await click("閉じる"); await click("履歴"); await loadCanvas();
+    await change(input("ページタイトル"), "競合するタイトル"); await click("下書き保存");
+    assert.ok(dialog().textContent.includes("保存内容が競合しています")); assert.ok(!dialog().textContent.includes("最新の内容を取得できませんでした"));
+    assert.ok(dialog().querySelector("table.e-diff").textContent.includes("競合するタイトル"));
+    conflicted = false;
+  } finally { await app.cleanup(); }
+});
+
+test("hover styles edit an instance's outer box on the page and nodes inside a component master", async () => {
+  const app = await setup();
+  try {
+    await click("◇ サイトヘッダー"); await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");
+    assert.ok(canvasExtra().includes('[data-nw-node="top_nav"]') && canvasExtra().includes("background-color:#eef3ef"), "the hover look is forced on the instance root");
+    await click(stateButton("通常"));
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click("a · n2"); await click(stateButton("ホバー")); await change(input("文字色", right()), "#ff0000");
+    assert.ok(canvasExtra().includes('[data-nw-node="n2"]') && canvasExtra().includes("color:#ff0000"));
+    await click(stateButton("通常")); await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
+    await click("下書き保存");
+    assert.deepEqual(app.calls.saves[0].document.body[0].style.states.hover, { backgroundColor: "#eef3ef" });
+    assert.deepEqual(app.calls.librarySaves[0].library.components.find((component) => component.id === "site_header").root.children[0].style.states.hover, { color: "#ff0000" });
+  } finally { await app.cleanup(); }
+});
+
+test("the project adapter forwards the autosave trigger of component library saves", async () => {
+  const { createProjectEditorAdapter } = await import("@niho/web/project-editor");
+  const project = { id: "project_demo", name: "デモ計画", site: { id: "demo", name: "デモサイト", domains: ["https://example.test"] }, members: [] }, sent = [];
+  const base = { listSites: async () => [project.site], listPages: async () => [], readDocument: async () => ({ document: fixture, version: "v1" }), saveDraft: async () => ({ status: "conflict" }),
+    prepareRelease: async () => { throw new Error("not used"); }, release: async () => ({ status: "conflict" }),
+    components: { readLibrary: async () => ({ library: library(), version: "lib-1" }), saveLibrary: async (request) => { sent.push(request); return { status: "saved", version: "lib-2", revision: 2 }; }, listUsage: async () => [] } };
+  const wrapped = createProjectEditorAdapter(base, project).components, signal = new AbortController().signal, parsed = parseComponentLibrary(library());
+  await wrapped.saveLibrary({ siteId: "demo", library: parsed, expectedVersion: "lib-1", trigger: "autosave" }, signal);
+  await wrapped.saveLibrary({ siteId: "demo", library: parsed, expectedVersion: "lib-1" }, signal);
+  assert.equal(sent[0].trigger, "autosave"); assert.deepEqual(Object.keys(sent[1]).sort(), ["expectedVersion", "library", "siteId"]);
+});
