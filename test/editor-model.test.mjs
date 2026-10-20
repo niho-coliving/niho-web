@@ -240,6 +240,10 @@ test("deleting a token detaches node and text style references into literal valu
   assert.throws(() => editDocument(original, { type: "token", name: "missing", token: undefined }), /見つかりません/);
   const locked = [{ nodeId: "hero", fields: ["style.base.gap"], reason: "ブランドで管理" }];
   assert.throws(() => editDocument(original, { type: "token", name: "gap", token: undefined }, {}, locked), /ブランドで管理/);
+  assert.throws(() => editDocument(original, { type: "token", name: "gap", token: { type: "length", value: 32 } }, {}, locked), /ブランドで管理/);
+  assert.equal(editDocument(original, { type: "token", name: "brand", token: { type: "color", value: "#123456" } }, {}, locked).tokens.brand.value, "#123456");
+  const inheritedLock = [{ nodeId: "lead", fields: ["style.base.fontSize"], reason: "文字サイズは固定" }];
+  assert.throws(() => editDocument(original, { type: "textStyle", name: "heading", style: { ...original.textStyles.heading, base: { ...original.textStyles.heading.base, fontSize: 30 } } }, {}, inheritedLock), /文字サイズは固定/);
 });
 test("deleting or detaching a text style copies declarations without changing the computed appearance", () => {
   const original = styledDoc();
@@ -306,6 +310,11 @@ test("styleRange edits one tier and keeps wider widths by first copying the valu
     assert.throws(() => only(path, "base", 768, values), /広い幅（768px〜）の値が決まっていないため、この幅だけの指定にできません。先に「768px 以上」で値を入れてください。/);
   }
   assert.equal(nodeAt(original, [0, 1]).style.base, undefined);
+  const partial = doc();
+  partial.body[0].children[1].style = { responsive: [{ minWidth: 768, declarations: { marginTop: 12 } }] };
+  assert.throws(() => editDocument(partial, { type: "styleRange", path: [0, 1], breakpoint: "base", until: 768, values: { margin: "8px" } }), /広い幅/);
+  partial.body[0].children[1].style.responsive[0].declarations.margin = "4px";
+  assert.equal(nodeAt(editDocument(partial, { type: "styleRange", path: [0, 1], breakpoint: "base", until: 768, values: { margin: "8px" } }), [0, 1]).style.base.margin, "8px");
   assert.throws(() => only([0], 768, 768, { width: 1 }), /範囲/);
   assert.throws(() => only([0], "base", 768, { width: "1px;}" }), DocumentValidationError);
   assert.throws(() => only([0], "base", 768, { width: 10 }, {}, [{ nodeId: "hero", fields: ["style.responsive"], reason: "幅別は固定" }]), /幅別は固定/);

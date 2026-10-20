@@ -59,10 +59,25 @@ function fieldValue(node: PageNode, field: string): unknown {
 function assertLocks(before: PageDocument, after: PageDocument, locks: readonly EditorLock[]): void {
   const index = (document: PageDocument) => new Map(walkNodes(document).flatMap(({ node }) => node.type === "text" ? [] : [[node.id, node] as const]));
   const previous = index(before), next = index(after);
+  const resolved = (document: PageDocument, value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map((entry) => resolved(document, entry));
+    if (!value || typeof value !== "object") return value;
+    if ("token" in value && typeof value.token === "string") return document.tokens[value.token]?.value;
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolved(document, entry)]));
+  };
+  const projected = (document: PageDocument, node: PageNode, field: string): unknown => {
+    const raw = resolved(document, fieldValue(node, field));
+    if (node.type === "text" || field !== "*" && field !== "style" && !field.startsWith("style.")) return raw;
+    const textStyle = node.style?.textStyle && document.textStyles?.[node.style.textStyle];
+    if (!textStyle) return raw;
+    const property = /^style\.(?:base|responsive)\.([A-Za-z]+)$/.exec(field)?.[1];
+    const inherited = property ? { base: textStyle.base[property as keyof typeof textStyle.base], responsive: textStyle.responsive?.map((entry) => entry.declarations[property as keyof typeof entry.declarations]) } : textStyle;
+    return [raw, resolved(document, inherited)];
+  };
   for (const lock of locks) {
     const oldNode = previous.get(lock.nodeId), newNode = next.get(lock.nodeId);
     if (!oldNode) continue;
-    if (!newNode || lock.fields.some((field) => JSON.stringify(fieldValue(oldNode, field)) !== JSON.stringify(fieldValue(newNode, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
+    if (!newNode || lock.fields.some((field) => JSON.stringify(projected(before, oldNode, field)) !== JSON.stringify(projected(after, newNode, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
   }
 }
 export function lockReason(document: PageDocument, path: NodePath, field: string, locks: readonly EditorLock[]): string | undefined {
@@ -117,8 +132,10 @@ function preserveRange(original: PageDocument, before: ElementNode | ComponentNo
     else if (!boxGroup(property) && values[property] !== undefined) throw refuse();
   }
   for (const group of new Set(properties.flatMap((property) => boxGroup(property) ?? []))) {
-    const members = boxMembers(group);
-    if (!members.some((member) => own(member) || Object.hasOwn(writes, member)) && members.some((member) => values[member] !== undefined)) throw refuse();
+    const sides = boxMembers(group).slice(1);
+    if (Object.hasOwn(values, group) && values[group] !== undefined || sides.some((side) => Object.hasOwn(values, side) && values[side] !== undefined)) {
+      if (!sides.every((side) => own(group as StyleProperty) || Object.hasOwn(writes, group) || own(side) || Object.hasOwn(writes, side))) throw refuse();
+    }
   }
   if (!Object.keys(writes).length) return;
   const responsive = (node.style ??= {}).responsive ??= [];
@@ -193,6 +210,14 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     if (!count) throw new Error("置き換える素材がこのページにありません。");
   } else if (operation.type === "token") {
     styleName(operation.name);
+    const previous = draft.tokens[operation.name];
+    if (previous && JSON.stringify(previous) !== JSON.stringify(operation.token)) {
+      const usesToken = (value: unknown): boolean => !!value && typeof value === "object" && ("token" in value && value.token === operation.name || Object.values(value).some(usesToken));
+      for (const lock of allLocks) {
+        const node = walkNodes(document).find(({ node }) => node.type !== "text" && node.id === lock.nodeId)?.node;
+        if (node && lock.fields.some((field) => usesToken(fieldValue(node, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
+      }
+    }
     if (operation.token) draft.tokens[operation.name] = structuredClone(operation.token);
     else {
       const token = draft.tokens[operation.name];
