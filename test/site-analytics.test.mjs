@@ -58,13 +58,46 @@ test("Search Console property scope preserves www, slash, and domain/path distin
   const input = connection();
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "https://www.kamakura.example/");
   input.searchConsole.property = { kind: "domain", value: "sc-domain:kamakura.example" };
+  input.searchConsole.verificationMethod = "dns";
+  input.searchConsole.reportingState = "property-mismatch";
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "sc-domain:kamakura.example");
   input.searchConsole.property = { kind: "url-prefix", value: "https://www.kamakura.example/pages/" };
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "https://www.kamakura.example/pages/");
+  input.searchConsole.reportingState = "connected";
+  assert.throws(() => parseSiteAnalyticsConnection(input, target), /exact URL-prefix property/u);
+  input.searchConsole.property = { kind: "url-prefix", value: "https://kamakura.example/" };
+  assert.throws(() => parseSiteAnalyticsConnection(input, target), /exact URL-prefix property/u);
   for (const value of ["https://www.kamakura.example", "http://www.kamakura.example/", "https://www.kamakura.example/?x=1", "sc-domain:kamakura.example"]) {
     input.searchConsole.property = { kind: "url-prefix", value };
     assert.throws(() => parseSiteAnalyticsConnection(input), SiteAnalyticsContractError);
   }
+});
+
+test("Search Console domain properties cannot claim meta-tag verification", () => {
+  const input = connection();
+  input.searchConsole.property = { kind: "domain", value: "sc-domain:kamakura.example" };
+  input.searchConsole.verificationMethod = "meta-tag";
+  input.searchConsole.reportingState = "property-mismatch";
+  assert.throws(() => parseSiteAnalyticsConnection(input), /domain properties require DNS verification/u);
+  input.searchConsole.verificationMethod = "dns";
+  assert.equal(parseSiteAnalyticsConnection(input).searchConsole.verificationMethod, "dns");
+});
+
+test("UTC timestamps reject impossible calendar dates and clock values", () => {
+  for (const lastSyncedAt of [
+    "2026-02-30T01:00:00Z",
+    "2026-13-01T01:00:00Z",
+    "2026-10-20T24:00:00Z",
+    "2026-10-20T01:60:00Z",
+    "2026-10-20T01:00:60Z"
+  ]) {
+    const input = connection();
+    input.ga4.lastSyncedAt = lastSyncedAt;
+    assert.throws(() => parseSiteAnalyticsConnection(input), SiteAnalyticsContractError, lastSyncedAt);
+  }
+  const valid = connection();
+  valid.ga4.lastSyncedAt = "2024-02-29T23:59:59.999Z";
+  assert.equal(parseSiteAnalyticsConnection(valid).ga4.lastSyncedAt, "2024-02-29T23:59:59.999Z");
 });
 
 test("reports distinguish known zero from unavailable and retain provider date bases", () => {
@@ -110,6 +143,21 @@ test("verification plan is bound to the exact project, origin, property, and pub
   assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, publishedOrigin: "https://other.example" }, target), SiteAnalyticsContractError);
   assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, instructions: { ...plan.instructions, name: "other" } }, target), SiteAnalyticsContractError);
   assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, confirmationToken: "expired", expiresAt: "2026-10-20T02:00:00Z" }, target), SiteAnalyticsContractError);
+});
+
+test("domain ownership plans accept DNS only when the property covers the selected origin", () => {
+  const plan = {
+    target: { ...target },
+    property: { kind: "domain", value: "sc-domain:kamakura.example" },
+    publishedOrigin: target.siteOrigin,
+    instructions: { method: "dns", recordType: "TXT", name: "kamakura.example", value: "google-site-verification=proof123" },
+    confirmationToken: "one-time-host-token",
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  };
+  assert.equal(parseSearchConsoleVerificationPlan(plan, target).property.value, "sc-domain:kamakura.example");
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, property: { kind: "domain", value: "sc-domain:other.example" } }, target), /property covering the selected origin/u);
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, instructions: { method: "meta-tag", name: "google-site-verification", content: "proof123" } }, target), /requires DNS/u);
+  assert.throws(() => parseSearchConsoleVerificationPlan({ ...plan, property: { kind: "url-prefix", value: "https://www.kamakura.example/pages/" } }, target), /exact URL-prefix/u);
 });
 
 test("change plans identify the exact public origin and impact before a confirmed action", () => {

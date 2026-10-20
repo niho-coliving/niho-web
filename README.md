@@ -36,7 +36,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/project-read-model` | summary / dashboardの型・読み取りadapter・runtime parser。React不要 |
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
 | `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
-| `@niho/web/site-analytics` | GA4 / Search Console の接続状態・所有確認・読取集計の型と境界検証。React不要 |
+| `@niho/web/site-analytics` | GA4 / Search Console の接続状態・所有確認・変更計画の型と境界検証。React不要 |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
 | `@niho/web/history` | 文書の差分（`diffDocuments`）、版履歴の項目の検証、端末内の緊急復元ストア。React不要 |
 | `@niho/web/analytics` | GA4 / Search Console を分けて示す読取専用画面、型付きadapter、応答検証 |
@@ -189,7 +189,7 @@ const html = renderPageToHtml(document);
 
 プロジェクト管理は `@niho/web/projects` と `@niho/web/project-manager` を使います。1プロジェクトは唯一のサイトと複数メンバーを持ち、同じメンバーは別プロジェクトにも参加できます。ユーザーIDは数字開始を含む最大128文字のopaque値として扱い、既存Projectの消失やSite差替えを拒否します。権限・ロール・招待・認証・ID採番・本番DB/APIは含まず、認証済みホストのatomic CAS adapterが必要です。[共通プロジェクト契約](docs/project-contract.md)を参照してください。
 
-サイト分析は `@niho/web/site-analytics` の `SiteAnalyticsAdapter` を使います。GA4測定IDとレポート用プロパティID、Search Consoleの所有確認とAPI読取権限は別々の状態です。認証・Google API・保存・サイト公開設定はホスト側の責務です。[サイト分析・接続契約](docs/site-analytics-contract.md)を参照してください。
+サイト接続の状態・変更計画は `@niho/web/site-analytics` の `SiteAnalyticsConnectionAdapter` を使います。GA4測定IDとレポート用プロパティID、Search Consoleの所有確認とAPI読取権限は別々の状態です。認証・Google API・保存・サイト公開設定はホスト側の責務です。[サイト分析・接続契約](docs/site-analytics-contract.md)を参照してください。
 
 ```sh
 npm run demo:projects

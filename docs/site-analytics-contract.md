@@ -1,6 +1,6 @@
 # サイト分析・Google接続契約
 
-`@niho/web/site-analytics` は、制作プロジェクトの唯一のサイトに限ってGA4 / Search Consoleの接続状態と集計を扱う公開契約です。接続画面は #29、分析画面とDashboard要約は #26 がこの契約を利用します。
+`@niho/web/site-analytics` は、制作プロジェクトの唯一のサイトに限ってGA4 / Search Consoleの接続状態、変更計画、検証結果と集計の境界を扱う公開契約です。接続画面は #29 が利用します。読取専用の分析画面と集計adapterは `@niho/web/analytics`（#26）です。
 
 ## 所有境界と認可
 
@@ -33,10 +33,12 @@
 
 - URL-prefix propertyは `https://www.example.org/` のように `www` と末尾 `/` を含めてそのまま保存・表示します。パス付きURL-prefixは別の範囲です。
 - `sc-domain:example.org` は別種のdomain propertyとして完全な値を保持して表示します。URL-prefixや対象originと同一視しません。
+- `connected` は対象originのルートURL-prefix property（`https://www.example.org/`）だけを受け入れます。別origin、`sc-domain:`、パス付きURL-prefixは `property-mismatch` などの状態で示し、接続済みとして扱いません。
+- Domain propertyの所有権確認はDNS方式だけを受け入れます。meta tag方式はURL-prefix propertyに限ります（[Google公式ヘルプ](https://support.google.com/webmasters/answer/34592?hl=en)）。
 - ホストは運営承認済みサイトに対して完全一致するpropertyだけを接続します。広いdomain propertyや狭いパスpropertyを対象サイトの代わりに使いません。
 - Search Console APIでは現在の閲覧権限をサーバー側で確認し、サイト・propertyの組が承認と異なる場合や権限が失効した場合は集計を返しません。
 
-確認方式は許可されたサイトのmeta tagまたはDNS TXTです。`prepareSearchConsoleVerification` が返す一回・短時間・対象site/origin/property/method束縛のconfirmation planを画面に示し、利用者が確認した後に適用します。meta tagは公開ページだけに反映し、認証付きプレビューや別originへ出しません。APIの接続・解除は確認タグを暗黙に追加・削除しません。
+確認方式は許可されたサイトのmeta tagまたはDNS TXTです。meta tagはURL-prefix property用、DNS TXTはURL-prefix / Domain property用です。`prepareSearchConsoleVerification` が返す一回・短時間・対象site/origin/property/method束縛のconfirmation planを画面に示し、利用者が確認した後に適用します。meta tagは公開ページだけに反映し、認証付きプレビューや別originへ出しません。APIの接続・解除は確認タグを暗黙に追加・削除しません。
 
 Search ConsoleのAPI読取はSearch Analyticsのread-only queryだけを使います。自由入力の検索語は取得しません。URL-prefixの `/`、`www`、パスをAPI・保存・表示の往復で正規化しません。
 
@@ -51,7 +53,7 @@ Search ConsoleのAPI読取はSearch Analyticsのread-only queryだけを使い�
 
 ## Adapter運用
 
-`SiteAnalyticsAdapter` の全methodに `AbortSignal` と完全な対象組を渡します。ホストは認証・認可、site/property照合、Google API呼出し、永続化、cache invalidationを実装します。ライブラリはGoogle APIやNIHO APIへ直接接続せず、認証情報も保存しません。
+`SiteAnalyticsConnectionAdapter` の全methodに `AbortSignal` と完全な対象組を渡します。旧名 `SiteAnalyticsAdapter` は互換aliasとして残しています。ホストは認証・認可、site/property照合、Google API呼出し、永続化、cache invalidationを実装します。ライブラリはGoogle APIやNIHO APIへ直接接続せず、認証情報も保存しません。
 
 状態変更前は対象プロジェクト名、公開origin、変更対象（タグ、property、確認方式、解除対象cache）を確認画面に示します。接続チェックやretryはread-onlyで実行できます。失敗時はホストが最新の状態を返し、別プロジェクトの値や古い集計を一時表示しません。
 
