@@ -3,7 +3,8 @@ import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
 import { findPathConflict, validatePagePath } from "./pages.js";
 import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
-import type { AssetReference, ComponentLibrary, ComponentNode, ElementNode, InstanceNode, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
+import type { AssetReference, ComponentLibrary, ComponentNode, DesignToken, ElementNode, InstanceNode, NodeStyle, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue, TextStyle } from "./types.js";
+import { textStyleProperties } from "./style-values.js";
 import { isSafeHttpsOrigin } from "./validation-utils.js";
 
 export { nodeAt, walkNodes, type NodePath };
@@ -13,7 +14,16 @@ export type EditorOperation =
   | { type: "tag"; path: NodePath; value: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" }
   | { type: "prop"; path: NodePath; name: string; value: PublicPropValue | undefined }
   | { type: "style"; path: NodePath; breakpoint: number | "base"; property: StyleProperty; value: StyleValue | undefined }
-  | { type: "resize"; path: NodePath; breakpoint: number | "base"; width: number; height: number }
+  | { type: "resize"; path: NodePath; breakpoint: number | "base"; width: number; height: number; /** styleRange と同じく、この段だけを変えるときの次の段の開始幅。 */ until?: number }
+  /** 複数プロパティを 1 履歴で変更する。undefined は削除。 */
+  | { type: "styles"; path: NodePath; breakpoint: number | "base"; values: Partial<Record<StyleProperty, StyleValue | undefined>> }
+  /** 段 breakpoint だけを変える。until（次の段の開始幅）以上で効いていた値を先に段 until へ書き、広い幅の見た目を保つ。 */
+  | { type: "styleRange"; path: NodePath; breakpoint: number | "base"; until: number; values: Partial<Record<StyleProperty, StyleValue | undefined>> }
+  /** 作成・更新。undefined は削除で、参照は現在の値の literal へ置き換える。 */
+  | { type: "token"; name: string; token: DesignToken | undefined }
+  /** 作成・更新。undefined は削除で、利用ノードへ宣言をコピーしてから参照を外す。 */
+  | { type: "textStyle"; name: string; style: TextStyle | undefined }
+  | { type: "nodeTextStyle"; path: NodePath; name: string | undefined; detach?: boolean }
   | { type: "title"; value: string }
   | { type: "add"; parentId: string | null; node: PageNode; index?: number }
   | { type: "replaceChildren"; path: NodePath; children: PageNode[] }
@@ -49,10 +59,25 @@ function fieldValue(node: PageNode, field: string): unknown {
 function assertLocks(before: PageDocument, after: PageDocument, locks: readonly EditorLock[]): void {
   const index = (document: PageDocument) => new Map(walkNodes(document).flatMap(({ node }) => node.type === "text" ? [] : [[node.id, node] as const]));
   const previous = index(before), next = index(after);
+  const resolved = (document: PageDocument, value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map((entry) => resolved(document, entry));
+    if (!value || typeof value !== "object") return value;
+    if ("token" in value && typeof value.token === "string") return document.tokens[value.token]?.value;
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolved(document, entry)]));
+  };
+  const projected = (document: PageDocument, node: PageNode, field: string): unknown => {
+    const raw = resolved(document, fieldValue(node, field));
+    if (node.type === "text" || field !== "*" && field !== "style" && !field.startsWith("style.")) return raw;
+    const textStyle = node.style?.textStyle && document.textStyles?.[node.style.textStyle];
+    if (!textStyle) return raw;
+    const property = /^style\.(?:base|responsive)\.([A-Za-z]+)$/.exec(field)?.[1];
+    const inherited = property ? { base: textStyle.base[property as keyof typeof textStyle.base], responsive: textStyle.responsive?.map((entry) => entry.declarations[property as keyof typeof entry.declarations]) } : textStyle;
+    return [raw, resolved(document, inherited)];
+  };
   for (const lock of locks) {
     const oldNode = previous.get(lock.nodeId), newNode = next.get(lock.nodeId);
     if (!oldNode) continue;
-    if (!newNode || lock.fields.some((field) => JSON.stringify(fieldValue(oldNode, field)) !== JSON.stringify(fieldValue(newNode, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
+    if (!newNode || lock.fields.some((field) => JSON.stringify(projected(before, oldNode, field)) !== JSON.stringify(projected(after, newNode, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
   }
 }
 export function lockReason(document: PageDocument, path: NodePath, field: string, locks: readonly EditorLock[]): string | undefined {
@@ -65,6 +90,81 @@ export function lockReason(document: PageDocument, path: NodePath, field: string
     if (lock) return lock.reason;
   }
   return undefined;
+}
+type Declarations = Record<string, StyleValue>;
+export type InheritedStyle = { value: StyleValue; from: number | "base"; via: "node" | "textStyle"; textStyle?: string };
+/** 幅 start で、段 start の直接指定を除いて効く値。ノードの下位の段 → 文字スタイル（base と start 以下の responsive）の順。 */
+export function inheritedStyle(document: PageDocument, node: ElementNode | ComponentNode | InstanceNode, property: StyleProperty, start: number): InheritedStyle | undefined {
+  const style = node.style;
+  for (const entry of [...(style?.responsive ?? [])].reverse()) {
+    const value = entry.declarations[property];
+    if (entry.minWidth < start && value !== undefined) return { value, from: entry.minWidth, via: "node" };
+  }
+  if (start > 0 && style?.base?.[property] !== undefined) return { value: style.base[property]!, from: "base", via: "node" };
+  const name = style?.textStyle, textStyle = name ? document.textStyles?.[name] : undefined;
+  if (!name || !textStyle || !(textStyleProperties as readonly string[]).includes(property)) return undefined;
+  for (const entry of [...(textStyle.responsive ?? [])].reverse()) {
+    const value = (entry.declarations as StyleDeclarations)[property];
+    if (entry.minWidth <= start && value !== undefined) return { value, from: entry.minWidth, via: "textStyle", textStyle: name };
+  }
+  const value = (textStyle.base as StyleDeclarations)[property];
+  return value === undefined ? undefined : { value, from: "base", via: "textStyle", textStyle: name };
+}
+// 広い幅に値が無いときに書く、tag に依存しない初期値。
+const neutral: Partial<Record<StyleProperty, string | number>> = { width: "auto", height: "auto", minWidth: "auto", minHeight: "auto", flexBasis: "auto", maxWidth: "none", maxHeight: "none",
+  top: "auto", right: "auto", bottom: "auto", left: "auto", zIndex: "auto", position: "static", flexDirection: "row", flexWrap: "nowrap", gap: 0, rowGap: 0, columnGap: 0,
+  opacity: 1, borderRadius: 0, backgroundColor: "transparent", borderStyle: "none", overflow: "visible", objectFit: "fill" };
+const boxGroup = (property: string) => /^margin/.test(property) ? "margin" : /^padding/.test(property) ? "padding" : undefined;
+const boxMembers = (group: string) => [group, ...["Top", "Right", "Bottom", "Left"].map((side) => `${group}${side}`)] as StyleProperty[];
+function preserveRange(original: PageDocument, before: ElementNode | ComponentNode | InstanceNode, node: ElementNode | ComponentNode | InstanceNode, breakpoint: number | "base", until: number, values: Partial<Record<StyleProperty, StyleValue | undefined>>): void {
+  if (!Number.isInteger(until) || until <= (breakpoint === "base" ? 0 : breakpoint)) throw new Error("反映する範囲が不正です。");
+  const refuse = () => new Error(`広い幅（${until}px〜）の値が決まっていないため、この幅だけの指定にできません。先に「${until}px 以上」で値を入れてください。`);
+  const own = (property: StyleProperty) => before.style?.responsive?.find((entry) => entry.minWidth === until)?.declarations[property] !== undefined;
+  const properties = Object.keys(values) as StyleProperty[], writes: Declarations = {};
+  // 余白は shorthand と上下左右が重なるため、組ごとに広い幅の値を保つ。
+  const targets = new Set(properties.flatMap((property) => { const group = boxGroup(property); return group ? boxMembers(group) : [property]; }));
+  const current = breakpoint === "base" ? before.style?.base : before.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations;
+  for (const property of targets) {
+    // 無い値の削除は何も変えないので、広い幅に書き足さない。
+    if (own(property) || Object.hasOwn(values, property) && values[property] === undefined && current?.[property] === undefined) continue;
+    const value = inheritedStyle(original, before, property, until)?.value ?? (boxGroup(property) || values[property] === undefined ? undefined : neutral[property]);
+    if (value !== undefined) writes[property] = structuredClone(value);
+    else if (!boxGroup(property) && values[property] !== undefined) throw refuse();
+  }
+  for (const group of new Set(properties.flatMap((property) => boxGroup(property) ?? []))) {
+    const sides = boxMembers(group).slice(1);
+    if (Object.hasOwn(values, group) && values[group] !== undefined || sides.some((side) => Object.hasOwn(values, side) && values[side] !== undefined)) {
+      if (!sides.every((side) => own(group as StyleProperty) || Object.hasOwn(writes, group) || own(side) || Object.hasOwn(writes, side))) throw refuse();
+    }
+  }
+  if (!Object.keys(writes).length) return;
+  const responsive = (node.style ??= {}).responsive ??= [];
+  let entry = responsive.find((item) => item.minWidth === until);
+  if (!entry) { entry = { minWidth: until, declarations: {} }; responsive.push(entry); responsive.sort((a, b) => a.minWidth - b.minWidth); }
+  Object.assign(entry.declarations, writes);
+}
+const styleName = (name: string) => { if (!/^[a-z][A-Za-z0-9-]*$/.test(name)) throw new Error("名前は英小文字で始まる英数字と - で指定してください。"); };
+function eachDeclarations(document: PageDocument, visit: (declarations: Declarations) => void): void {
+  for (const { node } of walkNodes(document)) if (node.type !== "text" && node.style) [node.style.base, ...(node.style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => values && visit(values as Declarations));
+  for (const style of Object.values(document.textStyles ?? {})) [style.base, ...(style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => visit(values));
+}
+/** 見た目を変えずに文字スタイルを外す。ノードの値が効く幅（同じ段以下）に無いプロパティだけをコピーする。 */
+function detachTextStyle(node: ElementNode | ComponentNode | InstanceNode, style: TextStyle): void {
+  const own: NodeStyle = node.style ??= {}, original = structuredClone(own);
+  const has = (property: string, minWidth: number) => Object.hasOwn(original.base ?? {}, property) || (original.responsive ?? []).some((entry) => entry.minWidth <= minWidth && Object.hasOwn(entry.declarations, property));
+  for (const [property, value] of Object.entries(style.base)) if (!Object.hasOwn(original.base ?? {}, property)) ((own.base ??= {}) as Declarations)[property] = structuredClone(value);
+  for (const entry of style.responsive ?? []) for (const [property, value] of Object.entries(entry.declarations)) {
+    if (has(property, entry.minWidth)) continue;
+    const responsive = own.responsive ??= [];
+    let target = responsive.find((item) => item.minWidth === entry.minWidth);
+    if (!target) { target = { minWidth: entry.minWidth, declarations: {} }; responsive.push(target); responsive.sort((a, b) => a.minWidth - b.minWidth); }
+    (target.declarations as Declarations)[property] = structuredClone(value);
+  }
+  delete own.textStyle;
+}
+function assertStyleProperties(node: ElementNode | ComponentNode | InstanceNode, properties: readonly string[], blocks: EditorBlockRegistry): void {
+  const allowed = node.type === "component" ? blocks[node.block]?.styleProperties : undefined;
+  if (allowed && properties.some((property) => !(allowed as readonly string[]).includes(property))) throw new Error("このブロックでは変更できない見た目です。");
 }
 /** components はインスタンスを含む文書の検証に使う、同じサイトの検証済みライブラリ。 */
 export function editDocument(document: PageDocument, operation: EditorOperation, blocks: EditorBlockRegistry = {}, locks: readonly EditorLock[] = [], components?: ComponentLibrary): PageDocument {
@@ -108,6 +208,34 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       }
     }
     if (!count) throw new Error("置き換える素材がこのページにありません。");
+  } else if (operation.type === "token") {
+    styleName(operation.name);
+    const previous = draft.tokens[operation.name];
+    if (previous && JSON.stringify(previous) !== JSON.stringify(operation.token)) {
+      const usesToken = (value: unknown): boolean => !!value && typeof value === "object" && ("token" in value && value.token === operation.name || Object.values(value).some(usesToken));
+      for (const lock of allLocks) {
+        const node = walkNodes(document).find(({ node }) => node.type !== "text" && node.id === lock.nodeId)?.node;
+        if (node && lock.fields.some((field) => usesToken(fieldValue(node, field)))) throw new Error(`データ連動値は変更できません。${lock.reason}`);
+      }
+    }
+    if (operation.token) draft.tokens[operation.name] = structuredClone(operation.token);
+    else {
+      const token = draft.tokens[operation.name];
+      if (!token) throw new Error("共通の値が見つかりません。");
+      eachDeclarations(draft, (values) => { for (const [property, value] of Object.entries(values)) if (typeof value === "object" && "token" in value && value.token === operation.name) values[property] = token.value; });
+      delete draft.tokens[operation.name];
+    }
+  } else if (operation.type === "textStyle") {
+    styleName(operation.name);
+    const styles = draft.textStyles ??= {};
+    if (operation.style) styles[operation.name] = structuredClone(operation.style);
+    else {
+      const style = styles[operation.name];
+      if (!style) throw new Error("テキストスタイルが見つかりません。");
+      for (const { node } of walkNodes(draft)) if (node.type !== "text" && node.style?.textStyle === operation.name) detachTextStyle(node, style);
+      delete styles[operation.name];
+      if (!Object.keys(styles).length) delete draft.textStyles;
+    }
   } else {
     const node = nodeAt(draft, operation.path);
     if (operation.type === "text") {
@@ -152,13 +280,24 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       const next = { ...(Object.keys(base).length ? { base } : {}), ...(responsive.length ? { responsive } : {}) };
       if (Object.keys(next).length) slots[operation.slot] = next; else delete slots[operation.slot];
       if (Object.keys(slots).length) node.slots = slots; else delete node.slots;
-    } else if (operation.type === "style" || operation.type === "resize") {
+    } else if (operation.type === "nodeTextStyle") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      assertStyleProperties(node, ["textStyle"], blocks);
+      if (operation.name !== undefined) (node.style ??= {}).textStyle = operation.name;
+      else if (node.style?.textStyle) {
+        const style = draft.textStyles?.[node.style.textStyle];
+        if (operation.detach && style) detachTextStyle(node, style); else delete node.style.textStyle;
+      }
+    } else if (operation.type === "style" || operation.type === "styles" || operation.type === "styleRange" || operation.type === "resize") {
+      if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      if (operation.type === "resize" && ![operation.width, operation.height].every((value) => Number.isFinite(value) && value >= 1 && value <= 10000)) throw new Error("幅と高さは1〜10000pxで指定してください。");
+      const values: Partial<Record<StyleProperty, StyleValue | undefined>> = operation.type === "style" ? { [operation.property]: operation.value }
+        : operation.type === "resize" ? { width: Math.round(operation.width), height: Math.round(operation.height) } : operation.values;
+      const until = operation.type === "styleRange" ? operation.until : operation.type === "resize" ? operation.until : undefined;
+      assertStyleProperties(node, Object.keys(values), blocks);
+      if (until !== undefined) preserveRange(document, nodeAt(document, operation.path) as ElementNode | ComponentNode | InstanceNode, node, operation.breakpoint, until, values);
       const declarations = declarationsAt(node, operation.breakpoint);
-      if (operation.type === "resize") {
-        if (![operation.width, operation.height].every((value) => Number.isFinite(value) && value >= 1 && value <= 10000)) throw new Error("幅と高さは1〜10000pxで指定してください。");
-        declarations.width = Math.round(operation.width); declarations.height = Math.round(operation.height);
-      } else if (operation.value === undefined) delete declarations[operation.property]; else declarations[operation.property] = operation.value;
+      for (const [property, value] of Object.entries(values) as [StyleProperty, StyleValue | undefined][]) if (value === undefined) delete declarations[property]; else declarations[property] = value;
       pruneResponsive(node);
     } else if (operation.type === "image") {
       if (node.type !== "element" || node.tag !== "img") throw new Error("画像を選択してください。");

@@ -164,7 +164,7 @@ const html = renderPageToHtml(document);
 - 未知フィールド、schema の版違い、重複 ID、画像の `alt` 不足、代表的な不正 HTML の入れ子を拒否します。
 - HTML タグ・属性・CSS プロパティは許可リスト方式です。任意 HTML / CSS / selector / JavaScript / event handler は扱いません。
 - URL は資格情報のない HTTPS、`/` から始まる同一サイト内パス、`#id` に限定します。HTTP、protocol relative、data、javascript、制御文字を含む値を拒否します。
-- 色・フォント・寸法・余白・Flex・Grid・位置・画像の収まり等を扱います。任意 CSS 関数や `url()` は許可しません。背景画像は素材参照だけを指定でき、`url()` はホストが解決した安全な URL から描画時に生成します。数値の寸法は px、line-height 等の数値プロパティは単位なしです。
+- 色・フォント・寸法・余白・Flex・Grid・位置・画像の収まり等を扱います。名前付きの文字スタイル（`textStyles`）と表示名付きの token で見た目を共通化できます。任意 CSS 関数や `url()` は許可しません。背景画像は素材参照だけを指定でき、`url()` はホストが解決した安全な URL から描画時に生成します。数値の寸法は px、line-height 等の数値プロパティは単位なしです。
 - レスポンシブ指定は 320–3840px の `minWidth` を昇順に最大 12 個。DOM ノードは最大 5,000、深さは最大 48 段、本文テキスト合計は最大 1,000,000 文字です。
 
 エラーは `DocumentValidationError` で、`path` に対象位置が入ります。公開 API は描画・CSS 生成時にも入力を検証します。詳細と制約は [文書・描画契約](docs/document-contract.md) を参照してください。
