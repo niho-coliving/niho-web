@@ -120,13 +120,22 @@ function source<T extends ReportWindow>(input: unknown, path: string, name: "ga4
     default: return fail(`${path}.state`, "unknown state");
   }
 }
+function validatePeriod(result: SourceResult<ReportWindow>, period: AnalyticsPeriod, path: string): void {
+  const window = "report" in result ? result.report : "metadata" in result ? result.metadata : null;
+  if (!window) return;
+  const days = (Date.parse(window.range.end) - Date.parse(window.range.start)) / 86400000 + 1;
+  const [minimum, maximum] = period === "7d" ? [7, 7] : period === "28d" ? [28, 28] : period === "3m" ? [89, 92] : [365, 366];
+  if (days < minimum || days > maximum) fail(`${path}.range`, "range does not match period");
+}
 export function parseSiteAnalyticsSnapshot(input: unknown, scope: AnalyticsScope): SiteAnalyticsSnapshot {
   const value = object(input, "snapshot", ["projectId", "siteId", "period", "ga4", "searchConsole"]);
   const projectId = id(value.projectId, "snapshot.projectId"), siteId = id(value.siteId, "snapshot.siteId");
   const period = value.period;
   if (!["7d", "28d", "3m", "12m"].includes(period as string)) fail("snapshot.period", "invalid period");
   if (projectId !== scope.projectId || siteId !== scope.siteId || period !== scope.period) fail("snapshot", "scope mismatch");
-  return { projectId, siteId, period: period as AnalyticsPeriod,
-    ga4: source(value.ga4, "snapshot.ga4", "ga4", ga4),
-    searchConsole: source(value.searchConsole, "snapshot.searchConsole", "searchConsole", gsc) };
+  const ga4Result = source(value.ga4, "snapshot.ga4", "ga4", ga4);
+  const searchConsoleResult = source(value.searchConsole, "snapshot.searchConsole", "searchConsole", gsc);
+  validatePeriod(ga4Result, period as AnalyticsPeriod, "snapshot.ga4");
+  validatePeriod(searchConsoleResult, period as AnalyticsPeriod, "snapshot.searchConsole");
+  return { projectId, siteId, period: period as AnalyticsPeriod, ga4: ga4Result, searchConsole: searchConsoleResult };
 }

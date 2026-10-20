@@ -21,7 +21,12 @@ function Meta({ value }: { value: SourceMetadata }) {
 }
 function Daily({ rows, label, color = "green" }: { rows: readonly { date: string; value: number | null }[]; label: string; color?: "green" | "blue" }) {
   const maximum = Math.max(1, ...rows.map((row) => row.value ?? 0));
-  const points = rows.map((row, index) => row.value === null ? null : `${10 + index * 300 / Math.max(1, rows.length - 1)},${90 - row.value / maximum * 78}`);
+  const firstDay = rows.length ? Date.parse(rows[0]!.date) : 0;
+  const span = rows.length ? Math.max(86400000, Date.parse(rows[rows.length - 1]!.date) - firstDay) : 86400000;
+  const points = rows.flatMap((row, index) => {
+    const gap = index > 0 && Date.parse(row.date) - Date.parse(rows[index - 1]!.date) !== 86400000 ? [null] : [];
+    return [...gap, row.value === null ? null : `${10 + (Date.parse(row.date) - firstDay) * 300 / span},${90 - row.value / maximum * 78}`];
+  });
   const segments: string[] = []; let current: string[] = [];
   for (const point of [...points, null]) { if (point) current.push(point); else if (current.length) { segments.push(current.join(" ")); current = []; } }
   return <div className="an-panel"><h3>{label}の日別推移</h3>{rows.length ? <><svg className="an-chart" viewBox="0 0 320 100" role="img" aria-label={`${label}の日別折れ線。詳細な数値は下の一覧に表示`}><path d="M10 90H310" stroke="#dce2dd" fill="none" />{segments.map((segment, index) => <polyline key={index} points={segment} fill="none" stroke={color === "blue" ? "#38677c" : "#195640"} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}</svg><ol className="an-daily" aria-label={`${label}の日別数値`}>{rows.map((row) => <li key={row.date}><time dateTime={row.date}>{row.date.slice(5)}</time><strong>{format(row.value)}</strong></li>)}</ol></> : <p className="an-empty">日別データはありません。</p>}</div>;

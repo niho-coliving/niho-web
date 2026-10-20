@@ -23,6 +23,16 @@ test("scope and period mismatch are rejected before rendering", () => {
     assert.throws(() => parseSiteAnalyticsSnapshot({ ...fixture(), ...patch }, scope), AnalyticsValidationError);
   }
 });
+test("report and empty metadata ranges must match the selected period", () => {
+  const reportInput = fixture();
+  reportInput.ga4.report.range.start = "2026-10-13";
+  reportInput.ga4.report.previousRange.start = "2026-10-05";
+  reportInput.ga4.report.previousRange.end = "2026-10-12";
+  assert.throws(() => parseSiteAnalyticsSnapshot(reportInput, scope), AnalyticsValidationError);
+  const emptyInput = fixture();
+  emptyInput.ga4 = { state: "empty", metadata: { ...meta("Asia/Tokyo"), range: { start: "2026-10-01", end: "2026-10-20", timezone: "Asia/Tokyo" }, previousRange: { start: "2026-09-11", end: "2026-09-30", timezone: "Asia/Tokyo" } } };
+  assert.throws(() => parseSiteAnalyticsSnapshot(emptyInput, scope), AnalyticsValidationError);
+});
 test("source states are independent and empty keeps its own metadata", () => {
   const input = fixture(); input.ga4 = { state: "failed" }; input.searchConsole = { state: "empty", metadata: meta("America/Los_Angeles") };
   const parsed = parseSiteAnalyticsSnapshot(input, scope);

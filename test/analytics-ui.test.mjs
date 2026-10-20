@@ -9,10 +9,14 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SiteAnalytics } = await import("@niho/web/analytics");
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-const meta = (timezone) => ({ range: { start: "2026-10-14", end: "2026-10-20", timezone }, previousRange: { start: "2026-10-07", end: "2026-10-13", timezone }, lastUpdatedAt: "2026-10-21T08:00:00+09:00", dataThrough: "2026-10-19" });
+const meta = (timezone, period = "28d") => {
+  const days = period === "7d" ? 7 : 28;
+  const shift = (offset) => new Date(Date.parse("2026-10-20T00:00:00Z") + offset * 86400000).toISOString().slice(0, 10);
+  return { range: { start: shift(1 - days), end: shift(0), timezone }, previousRange: { start: shift(1 - 2 * days), end: shift(-days), timezone }, lastUpdatedAt: "2026-10-21T08:00:00+09:00", dataThrough: "2026-10-19" };
+};
 const metric = (current, previous) => ({ current, previous });
 const report = { range: meta("Asia/Tokyo").range, previousRange: meta("Asia/Tokyo").previousRange, sessions: metric(0, null), activeUsers: metric(10, 8), pageViews: metric(11, 9), daily: [{ date: "2026-10-14", sessions: 0 }, { date: "2026-10-15", sessions: null }], sources: [{ name: "自然検索", sessions: metric(0, null) }], topPages: [{ page: { path: "/about", title: "会社概要" }, pageViews: metric(11, 9) }] };
-const snapshot = (scope) => ({ ...scope, ga4: { state: "delayed", lastUpdatedAt: meta("Asia/Tokyo").lastUpdatedAt, dataThrough: "2026-10-19", report }, searchConsole: { state: "failed" } });
+const snapshot = (scope) => ({ ...scope, ga4: { state: "delayed", lastUpdatedAt: meta("Asia/Tokyo").lastUpdatedAt, dataThrough: "2026-10-19", report: { ...report, range: meta("Asia/Tokyo", scope.period).range, previousRange: meta("Asia/Tokyo", scope.period).previousRange } }, searchConsole: { state: "failed" } });
 async function setup(adapter) {
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   const render = async (props = {}) => { await act(async () => root.render(createElement(SiteAnalytics, { projectId: "project_one", siteId: "site_one", adapter, ...props }))); await flush(); };
@@ -44,6 +48,15 @@ test("bad scope response is hidden and retry loads a valid response", async () =
     await act(async () => button.click()); await flush();
     assert.equal(calls, 2); assert.match(app.container.textContent, /会社概要/);
   } finally { await app.cleanup(); }
+});
+test("a missing calendar day breaks the chart line", async () => {
+  const adapter = { loadAnalytics: async (scope) => {
+    const result = snapshot(scope);
+    return { ...result, ga4: { ...result.ga4, report: { ...result.ga4.report, daily: [{ date: "2026-10-14", sessions: 2 }, { date: "2026-10-16", sessions: 4 }] } } };
+  } };
+  const app = await setup(adapter);
+  try { assert.equal(app.container.querySelectorAll("polyline").length, 2); }
+  finally { await app.cleanup(); }
 });
 test("site switch aborts old read and ignores a late result", async () => {
   let resolveOld, oldSignal, calls = 0;

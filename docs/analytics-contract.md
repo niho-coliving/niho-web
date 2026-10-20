@@ -15,7 +15,7 @@ interface SiteAnalyticsAdapter {
 
 ホストは**現在の利用者が projectId と siteId の組にアクセスできること**を、すべての呼出しで確認してください。`siteId` 単独を信頼してはいけません。画面は応答の `projectId`、`siteId`、`period` が要求と完全一致するか検証し、不一致なら描画を拒否します。`unknown` の応答は `parseSiteAnalyticsSnapshot(input, scope)` を通してから使います。接続先やスコープの変更時、進行中の `AbortSignal` は中断されます。
 
-既定期間は28日で、選択肢は7日・28日・3か月・12か月です。比較対象は直前の同じ長さの期間です。各 `report` は当期と直前期の**ローカル日付範囲**とIANA時間帯を持ち、結果は別に最終更新時刻と取得済み日 `dataThrough` を持ちます。`empty` はこれらをまとめた `metadata` を持ちます。両範囲は同じ時間帯で連続し、日数が等しくなければ拒否します。Search Console は `America/Los_Angeles`、GA4 はプロパティの時間帯です。
+既定期間は28日で、選択肢は7日・28日・3か月・12か月です。応答の日付幅は7日・28日は厳密に一致させ、3か月は89〜92日、12か月は365〜366日とします。比較対象は直前の同じ長さの期間です。各 `report` は当期と直前期の**ローカル日付範囲**とIANA時間帯を持ち、結果は別に最終更新時刻と取得済み日 `dataThrough` を持ちます。`empty` はこれらをまとめた `metadata` を持ちます。両範囲は同じ時間帯で連続し、日数が等しくなければ拒否します。Search Console は `America/Los_Angeles`、GA4 はプロパティの時間帯です。
 
 ## ソースと数値
 
