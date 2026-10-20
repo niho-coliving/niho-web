@@ -139,6 +139,14 @@ test("editor slot operations set and clear allowed appearance and reject everyth
   assert.throws(() => editDocument(page([cards()]), { type: "slotStyle", path: [0], slot: "title", breakpoint: "base", property: "color", value: "#000000" }, blocks, [{ nodeId: "cards", fields: ["slots"], reason: "ホストが固定しています。" }]), /ホストが固定しています/);
 });
 
+test("editing a block slot keeps the page's public metadata", () => {
+  const source = { ...page([cards()]), meta: { description: "体験を探す", noindex: true } };
+  const edited = editDocument(source, { type: "slotStyle", path: [0], slot: "title", breakpoint: "base", property: "color", value: "#123456" }, blocks);
+  assert.deepEqual(edited.meta, source.meta);
+  assert.deepEqual(parsePageDocument(edited, blocks).meta, source.meta);
+  assert.ok(generatePageCss(edited, blocks).includes('[data-nw-slot="title"]{color:#123456;}'));
+});
+
 test("slot designs inside shared components resolve with the instance IDs and the same contract", () => {
   const library = parseComponentLibrary({ schemaVersion: 1, siteId: "experience", revision: 1, tokens: { accent: { type: "color", value: "#195640" } }, components: [{
     id: "featured", name: "おすすめ体験", kind: "section", version: 1,
