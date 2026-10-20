@@ -60,6 +60,18 @@ test("duplicate IDs, void children and invalid HTML nesting cannot break hydrati
   image.body[0].attrs.alt = ""; assert.doesNotThrow(() => parsePageDocument(image));
 });
 
+test("picture requires source elements before exactly one fallback image", () => {
+  const source = () => ({ type: "element", id: "source", tag: "source", attrs: { srcSet: "/image.avif", type: "image/avif" }, children: [] });
+  const image = (id = "image") => ({ type: "element", id, tag: "img", attrs: { src: "/image.jpg", alt: "風景" }, children: [] });
+  const picture = (children) => { const input = doc(); input.body = [{ type: "element", id: "picture", tag: "picture", children }]; return input; };
+
+  assert.doesNotThrow(() => parsePageDocument(picture([source(), image()])));
+  assert.doesNotThrow(() => parsePageDocument(picture([image()])));
+  reject(picture([source()]));
+  reject(picture([image("first"), image("second")]));
+  reject(picture([image(), source()]));
+});
+
 test("depth and node limits reject pathological documents", () => {
   const deep = doc(); let children = deep.body;
   for (let i = 0; i < 50; i++) {

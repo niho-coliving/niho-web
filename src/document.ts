@@ -134,6 +134,12 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}): 
       if (tag === "img" && !attrs.attrs) fail(at, "img requires attributes");
       const children = nodes(node.children, `${at}.children`, depth + 1, tag, insideLink || tag === "a", inline || phrasingParents.has(tag));
       if (voidTags.has(tag) && children.length) fail(at, "void element cannot have children");
+      if (tag === "picture") {
+        const childTags = children.flatMap((child) => child.type === "element" ? [child.tag] : []);
+        if (childTags[childTags.length - 1] !== "img" || childTags.filter((childTag) => childTag === "img").length !== 1) {
+          fail(`${at}.children`, "picture requires source elements followed by one img");
+        }
+      }
       return { type: "element", id, tag, ...attrs, ...style, children };
     });
   }
