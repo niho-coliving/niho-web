@@ -51,6 +51,16 @@ export type ComponentNode = {
   style?: NodeStyle;
 };
 export type PageNode = TextNode | ElementNode | ComponentNode;
+export type PageImage = { src: string; alt: string };
+/** 公開メタ情報。値が無い項目は保存しない。 */
+export type PageMeta = {
+  description?: string;
+  ogImage?: PageImage;
+  favicon?: string;
+  noindex?: boolean;
+  /** ホストが許可した構造化データの ID。JSON-LD はホストが生成する。 */
+  structuredData?: string[];
+};
 export type PageDocument = {
   schemaVersion: 1;
   siteId: string;
@@ -58,6 +68,7 @@ export type PageDocument = {
   locale: string;
   revision: number;
   title: string;
+  meta?: PageMeta;
   tokens: Record<string, DesignToken>;
   body: PageNode[];
 };

@@ -32,6 +32,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/projects` | 1 Project = 1 Site の検証、純粋操作、atomic CAS契約。React不要 |
 | `@niho/web/project-manager` | 認証済みホストadapterへ接続する `ProjectManager`。React / React DOM が必要 |
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
+| `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
 
 React は optional peer dependency です。API サーバーなど React を入れない利用先では `import { parsePageDocument } from '@niho/web/core'` を使います。root と `/react` は React runtime を import します。
@@ -152,6 +153,7 @@ const html = renderPageToHtml(document);
 
 スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。左の追加・ページ・レイヤーパネル、中央キャンバスでの直接文字編集とドラッグ配置、右インスペクタ、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
 
+ページ一覧（検索・フォルダ・テンプレートと共通枠の区別）、ページの作成・複製・URL変更・公開切替の影響確認、ページ別とサイト共通の公開情報は [ページ管理・公開情報の契約](docs/page-contract.md) を参照してください。公開ページの `<head>` は `@niho/web/pages` の `resolvePageMetadata` で、編集画面と同じ値から作ります。
 画像は URL を直接書く代わりに、サイト別の素材ライブラリの素材ID（`{ provider, id }`）で参照できます。`PageEditor` に `assets` adapter を渡すと、素材のアップロード・検索・代替テキスト編集・配置・置き換え・使用中素材の削除防止を使えます。公開時の URL 解決は `PageRenderer` / `renderPageToHtml` の `assets` で行います。[素材ライブラリ契約](docs/asset-contract.md)を参照してください。
 
 プロジェクト管理は `@niho/web/projects` と `@niho/web/project-manager` を使います。1プロジェクトは唯一のサイトと複数メンバーを持ち、同じメンバーは別プロジェクトにも参加できます。ユーザーIDは数字開始を含む最大128文字のopaque値として扱い、既存Projectの消失やSite差替えを拒否します。権限・ロール・招待・認証・ID採番・本番DB/APIは含まず、認証済みホストのatomic CAS adapterが必要です。[共通プロジェクト契約](docs/project-contract.md)を参照してください。

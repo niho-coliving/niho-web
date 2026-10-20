@@ -1,6 +1,7 @@
 import { parsePageDocument } from "./document.js";
-import type { EditorBlockRegistry, EditorLock, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
-import type { AssetReference, ComponentNode, ElementNode, PageDocument, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
+import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
+import { findPathConflict, validatePagePath } from "./pages.js";
+import type { AssetReference, ComponentNode, ElementNode, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
 import { isSafeHttpsOrigin } from "./validation-utils.js";
 
 export type NodePath = readonly number[];
@@ -18,7 +19,10 @@ export type EditorOperation =
   | { type: "background"; path: NodePath; breakpoint: number | "base"; asset: AssetReference | undefined }
   | { type: "replaceAsset"; from: AssetReference; to: AssetReference }
   | { type: "duplicate" | "remove"; path: NodePath }
-  | { type: "move"; path: NodePath; parentId: string | null; index: number };
+  | { type: "move"; path: NodePath; parentId: string | null; index: number }
+  | MetaOperation;
+/** undefined・空文字・false・空配列はその項目を削除する。 */
+export type MetaOperation = { [K in keyof PageMeta]-?: { type: "meta"; field: K; value: PageMeta[K] | undefined } }[keyof PageMeta];
 export type EditorHistory = { past: PageDocument[]; present: PageDocument; future: PageDocument[] };
 export const fingerprint = (document: PageDocument): string => JSON.stringify(document);
 export function nodeAt(document: PageDocument, path: NodePath): PageNode {
@@ -102,6 +106,12 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
   };
   const pruneResponsive = (node: ElementNode | ComponentNode) => { if (node.style?.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length); };
   if (operation.type === "title") draft.title = operation.value;
+  else if (operation.type === "meta") {
+    const meta: Record<string, unknown> = { ...draft.meta }, value = operation.value;
+    if (value === undefined || value === "" || value === false || Array.isArray(value) && !value.length) delete meta[operation.field];
+    else meta[operation.field] = structuredClone(value);
+    if (Object.keys(meta).length) draft.meta = meta as PageMeta; else delete draft.meta;
+  }
   else if (operation.type === "add") {
     const destination = targetChildren(operation.parentId), index = operation.index ?? destination.length;
     if (!Number.isInteger(index) || index < 0 || index > destination.length) throw new Error("追加先の位置が不正です。");
@@ -219,6 +229,87 @@ export function validateReleasePlan(plan: EditorReleasePlan, request: EditorRele
     typeof plan.confirmationToken !== "string" || !plan.confirmationToken || !Array.isArray(plan.changes) ||
     plan.changes.some((change) => !change || typeof change.path !== "string" || typeof change.before !== "string" || typeof change.after !== "string") ||
     (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1))) throw new Error("公開対象または差分確認の情報が一致しません。再取得してください。");
+}
+const changeTarget = (change: EditorPageChange): EditorTarget | undefined => change.action === "create" ? undefined : change.action === "duplicate" ? change.source : change.target;
+type PageChangeProblem = { field: "title" | "path" | "change"; message: string };
+/** 入力欄ごとに表示するための問題。対象・権限の問題は change として1件だけ返す。 */
+export function pageChangeProblems(change: EditorPageChange, pages: readonly EditorPage[], site: EditorSite): PageChangeProblem[] {
+  const target = changeTarget(change), siteId = target ? target.siteId : change.action === "create" ? change.siteId : undefined;
+  if (siteId !== site.id) return [{ field: "change", message: "別のサイトのページは操作できません。" }];
+  const page = target && pages.find((page) => sameTarget(page, target));
+  if (target && !page) return [{ field: "change", message: "対象のページが見つかりません。ページ一覧を再読込してください。" }];
+  if (page && (page.kind ?? "page") !== "page") return [{ field: "change", message: "テンプレートと共通枠はホストが管理します。" }];
+  if (change.action === "visibility") {
+    if (change.visibility !== "public" && change.visibility !== "private") return [{ field: "change", message: "公開状態を選択してください。" }];
+    if ((page?.visibility ?? "public") === change.visibility) return [{ field: "change", message: change.visibility === "private" ? "このページはすでに非公開です。" : "このページはすでに公開状態です。" }];
+    return [];
+  }
+  const locale = page ? page.locale : change.action === "create" ? change.locale : "";
+  if (!/^[a-z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(locale)) return [{ field: "change", message: "ページの言語を確認できません。" }];
+  const problems: PageChangeProblem[] = [];
+  if (typeof change.title !== "string" || !change.title.trim()) problems.push({ field: "title", message: "ページ名を入力してください。" });
+  else if (change.title.length > 120) problems.push({ field: "title", message: "ページ名は120文字以内にしてください。" });
+  else if (/[\u0000-\u001f\u007f]/u.test(change.title)) problems.push({ field: "title", message: "ページ名に改行や制御文字は使えません。" });
+  const pathProblem = validatePagePath(change.path);
+  const conflict = pathProblem ? undefined : findPathConflict(pages, { siteId: site.id, locale, path: change.path, ...(change.action === "update" && page ? { exceptPageId: page.pageId } : {}) });
+  if (pathProblem) problems.push({ field: "path", message: pathProblem });
+  else if (conflict) problems.push({ field: "path", message: conflict.kind === "template" ? `テンプレート「${conflict.title}」の URL と重なります。` : `「${conflict.title}」と同じ URL です。` });
+  if (!problems.length && change.action === "update" && page && page.title === change.title && page.path === change.path) problems.push({ field: "change", message: "ページ名か URL パスを変更してください。" });
+  return problems;
+}
+/** UI 補助の事前確認。ホストは applyPageChange でも同じ規則と予約パスを検査する。 */
+export function checkPageChange(change: EditorPageChange, pages: readonly EditorPage[], site: EditorSite): string | undefined {
+  return pageChangeProblems(change, pages, site)[0]?.message;
+}
+const planText = (value: unknown, max: number): value is string => typeof value === "string" && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
+function normalizedTarget(value: unknown): EditorTarget | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { siteId, pageId, locale } = value as Record<string, unknown>;
+  return typeof siteId === "string" && typeof pageId === "string" && typeof locale === "string" ? { siteId, pageId, locale } : undefined;
+}
+/** 既知の項目だけを持つ変更要求。形が合わなければ undefined。 */
+export function normalizePageChange(value: unknown): EditorPageChange | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const change = value as Record<string, unknown>, { title, path } = change;
+  if (change.action === "visibility") {
+    const target = normalizedTarget(change.target);
+    return target && (change.visibility === "public" || change.visibility === "private") ? { action: "visibility", target, visibility: change.visibility } : undefined;
+  }
+  if (typeof title !== "string" || typeof path !== "string") return undefined;
+  if (change.action === "create") return typeof change.siteId === "string" && typeof change.locale === "string" ? { action: "create", siteId: change.siteId, locale: change.locale, title, path } : undefined;
+  if (change.action === "duplicate") { const source = normalizedTarget(change.source); return source && { action: "duplicate", source, title, path }; }
+  if (change.action === "update") { const target = normalizedTarget(change.target); return target && { action: "update", target, title, path }; }
+  return undefined;
+}
+/** 要求と一致し、許可済みドメインの影響だけを持つ plan の複製を返す。 */
+export function validatePageChangePlan(plan: unknown, change: EditorPageChange, site: EditorSite): EditorPageChangePlan {
+  const invalid = (): never => { throw new Error("ページ変更の対象または影響の情報が一致しません。再取得してください。"); };
+  if (!plan || typeof plan !== "object") return invalid();
+  const source = plan as Record<string, unknown>, domain = source.domain, requested = normalizePageChange(change), returned = normalizePageChange(source.change);
+  if (!isSafeHttpsOrigin(domain) || !site.domains.includes(domain) || !requested || !returned || JSON.stringify(requested) !== JSON.stringify(returned)) return invalid();
+  const target = changeTarget(requested);
+  if ((target ? target.siteId : requested.action === "create" ? requested.siteId : "") !== site.id) return invalid();
+  if (typeof source.confirmationToken !== "string" || !source.confirmationToken || source.confirmationToken.length > 4096) return invalid();
+  const impact = source.impact as Record<string, unknown> | null | undefined;
+  if (!impact || typeof impact !== "object") return invalid();
+  const pageUrl = (value: unknown): string => planText(value, 2048) && value.startsWith(`${domain}/`) ? value : invalid();
+  const texts = (value: unknown): string[] => Array.isArray(value) && value.length <= 100 && value.every((item) => planText(item, 300)) ? [...value] : invalid();
+  const redirect = impact.redirect as Record<string, unknown> | null | undefined;
+  if (redirect !== undefined && (!redirect || typeof redirect !== "object" || !planText(redirect.from, 2048) || !planText(redirect.to, 2048))) return invalid();
+  if (!Array.isArray(impact.linkedFrom) || impact.linkedFrom.length > 500) return invalid();
+  const linkedFrom = (impact.linkedFrom as unknown[]).map((entry) => {
+    const { pageId, locale, title, count } = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    if (typeof pageId !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(pageId) || !planText(locale, 40) || !planText(title, 300) ||
+      typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return invalid();
+    return { pageId, locale, title, count };
+  });
+  const result: EditorPageImpact = {
+    ...(impact.before === undefined ? {} : { before: pageUrl(impact.before) }),
+    ...(impact.after === undefined ? {} : { after: pageUrl(impact.after) }),
+    ...(redirect ? { redirect: { from: redirect.from as string, to: redirect.to as string } } : {}),
+    linkedFrom, navigation: texts(impact.navigation), notes: texts(impact.notes)
+  };
+  return { change: requested, confirmationToken: source.confirmationToken, domain, impact: result };
 }
 export function newElement(tag: ElementNode["tag"], id: string): ElementNode {
   return tag === "img" ? { type: "element", id, tag, attrs: { src: "/placeholder.webp", alt: "画像の説明" }, children: [] }

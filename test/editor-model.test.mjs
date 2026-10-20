@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { DocumentValidationError } from "@niho/web/core";
-import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, travelHistory, validateReleasePlan, walkNodes } from "../dist/editor-model.js";
+import { acceptSavedRevision, checkPageChange, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, travelHistory, validatePageChangePlan, validateReleasePlan, walkNodes } from "../dist/editor-model.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
 const doc = () => structuredClone(fixture);
@@ -92,6 +92,62 @@ test("release confirmation binds domain, target, version, action and rollback re
   assert.doesNotThrow(() => validateReleasePlan(plan, request, site));
   for (const invalid of [{ ...plan, domain: "https://evil.example" }, { ...plan, domain: "https://example.com/path" }, { ...plan, expectedVersion: "v1" },
     { ...plan, target: { ...plan.target, pageId: "other" } }, { ...plan, action: "rollback", revision: 1 }, { ...plan, confirmationToken: "" }]) assert.throws(() => validateReleasePlan(invalid, request, site));
+});
+test("meta operations add, replace and remove public information through the core validator", () => {
+  let next = editDocument(doc(), { type: "meta", field: "structuredData", value: ["organization"] });
+  next = editDocument(next, { type: "meta", field: "noindex", value: true });
+  next = editDocument(next, { type: "meta", field: "ogImage", value: { src: "/cover.jpg", alt: "" } });
+  next = editDocument(next, { type: "meta", field: "description", value: "海のそばの暮らし" });
+  assert.deepEqual(Object.keys(next.meta), ["description", "ogImage", "noindex", "structuredData"]);
+  assert.deepEqual(Object.keys(next), ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "body"]);
+  for (const [field, value] of [["description", ""], ["ogImage", undefined], ["noindex", false], ["structuredData", []]]) next = editDocument(next, { type: "meta", field, value });
+  assert.equal("meta" in next, false);
+  for (const operation of [{ type: "meta", field: "favicon", value: "javascript:alert(1)" }, { type: "meta", field: "description", value: "改行\nあり" }, { type: "meta", field: "structuredData", value: ["a", "a"] }])
+    assert.throws(() => editDocument(doc(), operation), DocumentValidationError);
+  const history = commitHistory({ past: [], present: doc(), future: [] }, editDocument(doc(), { type: "meta", field: "favicon", value: "/icon.png" }));
+  assert.equal(travelHistory(history, "undo", {}, []).present.meta, undefined);
+});
+const pages = [
+  { siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" },
+  { siteId: "demo", pageId: "about", locale: "ja-JP", title: "私たちについて", path: "/about" },
+  { siteId: "demo", pageId: "detail", locale: "ja-JP", title: "体験詳細", path: "/experiences/[slug]", kind: "template" },
+  { siteId: "demo", pageId: "header", locale: "ja-JP", title: "ヘッダー", kind: "shared" },
+  { siteId: "demo", pageId: "secret", locale: "ja-JP", title: "準備中", path: "/secret", visibility: "private" }
+];
+const site = { id: "demo", name: "Demo", domains: ["https://example.com"] };
+const target = (pageId) => ({ siteId: "demo", pageId, locale: "ja-JP" });
+test("page changes are checked for title, path, conflicts, host-owned kinds and site", () => {
+  assert.equal(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: "新しいページ", path: "/new" }, pages, site), undefined);
+  assert.equal(checkPageChange({ action: "update", target: target("about"), title: "会社概要", path: "/about" }, pages, site), undefined);
+  assert.match(checkPageChange({ action: "update", target: target("about"), title: "私たちについて", path: "/about" }, pages, site), /変更してください/);
+  assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: "重複", path: "/about" }, pages, site), /「私たちについて」と同じ URL/);
+  assert.match(checkPageChange({ action: "duplicate", source: target("about"), title: "体験", path: "/experiences/kayak" }, pages, site), /テンプレート「体験詳細」/);
+  assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: "大文字", path: "/About" }, pages, site), /半角英小文字/);
+  assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: " ", path: "/x" }, pages, site), /ページ名/);
+  assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: "a".repeat(121), path: "/x" }, pages, site), /120文字/);
+  for (const change of [{ action: "duplicate", source: target("detail"), title: "複製", path: "/copy" }, { action: "update", target: target("header"), title: "ヘッダー", path: "/header" },
+    { action: "visibility", target: target("detail"), visibility: "private" }]) assert.equal(checkPageChange(change, pages, site), "テンプレートと共通枠はホストが管理します。");
+  assert.match(checkPageChange({ action: "create", siteId: "other", locale: "ja-JP", title: "別", path: "/x" }, pages, site), /別のサイト/);
+  assert.match(checkPageChange({ action: "update", target: { ...target("about"), siteId: "other" }, title: "別", path: "/x" }, pages, site), /別のサイト/);
+  assert.match(checkPageChange({ action: "update", target: target("missing"), title: "無い", path: "/x" }, pages, site), /見つかりません/);
+  assert.match(checkPageChange({ action: "visibility", target: target("secret"), visibility: "private" }, pages, site), /すでに非公開/);
+  assert.match(checkPageChange({ action: "visibility", target: target("about"), visibility: "public" }, pages, site), /すでに公開/);
+  assert.equal(checkPageChange({ action: "visibility", target: target("secret"), visibility: "public" }, pages, site), undefined);
+});
+test("page change plans bind the request, approved domain and impact shape", () => {
+  const change = { action: "update", target: target("about"), title: "会社概要", path: "/company" };
+  const plan = { change: { ...change, target: { ...change.target } }, confirmationToken: "one-use", domain: "https://example.com", impact: {
+    before: "https://example.com/about", after: "https://example.com/company", redirect: { from: "/about", to: "/company" },
+    linkedFrom: [{ pageId: "home", locale: "ja-JP", title: "ホーム", count: 2 }], navigation: ["ヘッダー"], notes: ["sitemap の URL が変わります。"] } };
+  const reviewed = validatePageChangePlan({ ...plan, extra: "dropped", impact: { ...plan.impact, extra: true } }, change, site);
+  assert.deepEqual(reviewed, plan);
+  for (const invalid of [{ ...plan, domain: "https://evil.example" }, { ...plan, domain: "https://example.com/" }, { ...plan, change: { ...change, path: "/other" } },
+    { ...plan, change: { ...change, target: target("home") } }, { ...plan, change: { action: "visibility", target: target("about"), visibility: "private" } }, { ...plan, confirmationToken: "" },
+    { ...plan, impact: { ...plan.impact, before: "https://evil.example/about" } }, { ...plan, impact: { ...plan.impact, after: "https://example.com.evil.test/x" } },
+    { ...plan, impact: { ...plan.impact, linkedFrom: [{ pageId: "home", locale: "ja-JP", title: "ホーム", count: -1 }] } }, { ...plan, impact: { ...plan.impact, navigation: "ヘッダー" } },
+    { ...plan, impact: { ...plan.impact, notes: ["a".repeat(301)] } }, { ...plan, impact: { ...plan.impact, redirect: { from: "/about" } } }, { ...plan, impact: undefined }, null])
+    assert.throws(() => validatePageChangePlan(invalid, change, site), /ページ変更の対象/);
+  assert.throws(() => validatePageChangePlan({ ...plan, change: { action: "create", siteId: "other", locale: "ja-JP", title: "x", path: "/x" } }, { action: "create", siteId: "other", locale: "ja-JP", title: "x", path: "/x" }, site), /ページ変更の対象/);
 });
 
 const withPhoto = (node = { attrs: { src: "/photo.webp", alt: "旧い写真" } }) => { const original = doc(); original.body[0].children.push({ type: "element", id: "photo", tag: "img", children: [], ...node }); return original; };
