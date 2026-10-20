@@ -19,6 +19,16 @@ export function string(value: unknown, path: string, max = 4096): string {
   if (typeof value !== "string" || value.length > max || /[\u0000\u000b\u000c]/u.test(value)) fail(path, "invalid string");
   return value;
 }
+/** 改行・制御文字を含まない1行の文字列。 */
+export function line(value: unknown, path: string, max: number, allowEmpty = false): string {
+  if (typeof value !== "string" || value.length > max || /[\u0000-\u001f\u007f]/u.test(value) || (!allowEmpty && !value.trim())) fail(path, "invalid text");
+  return value;
+}
+export function localeCode(value: unknown, path: string): string {
+  const locale = string(value, path, 40);
+  if (!/^[a-z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(locale)) fail(path, "invalid locale");
+  return locale;
+}
 export function identifier(value: unknown, path: string): string {
   const result = string(value, path, 80);
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(result)) fail(path, "invalid identifier");

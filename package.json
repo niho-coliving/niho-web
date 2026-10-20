@@ -31,6 +31,10 @@
       "types": "./dist/editor.d.ts",
       "import": "./dist/editor.js"
     },
+    "./pages": {
+      "types": "./dist/pages.d.ts",
+      "import": "./dist/pages.js"
+    },
     "./projects": {
       "types": "./dist/projects.d.ts",
       "import": "./dist/projects.js"

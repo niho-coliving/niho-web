@@ -7,18 +7,20 @@ import { parsePageDocument } from "./document.js";
 import { pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
 import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
-import { editorCss } from "./editor-style.js";
+import { editorCss, pagesCss } from "./editor-style.js";
+import { Dialog } from "./editor-dialog.js";
+import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
-import type { EditorBlockRegistry, EditorLock, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
+import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ElementTag, PageDocument, PageNode, StyleProperty, StyleValue } from "./types.js";
 
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
 type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]> };
 type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorTarget } | { type: "reload" };
-const message = (error: unknown) => error instanceof DocumentValidationError ?
-  /nesting|parent|void element/.test(error.message) ? "この場所には要素を配置できません。別のセクションかボックスを選んでください。" : "文書のルールに合いません。URL・単位・親要素を確認してください。" :
+const message = (error: unknown) => error instanceof DocumentValidationError ? publicInfoMessage(error) ??
+  (/nesting|parent|void element/.test(error.message) ? "この場所には要素を配置できません。別のセクションかボックスを選んでください。" : "文書のルールに合いません。URL・単位・親要素を確認してください。") :
   error instanceof Error ? error.message : "入力を適用できません。";
 const conflict = (error: unknown) => !!error && typeof error === "object" && "status" in error && error.status === 409;
 const label = (node: PageNode, blocks: EditorBlockRegistry) => node.type === "text" ? `文字: ${node.text.slice(0, 24) || "（空）"}` : node.type === "component" ? `${blocks[node.block]?.label ?? node.block} · ${node.id}` : `${node.tag} · ${node.id}`;
@@ -28,9 +30,9 @@ function sessionFrom(snapshot: EditorSnapshot, target: EditorTarget, blocks: Edi
   return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] };
 }
 
-function Field({ name, value, apply, pending, fieldKey, disabled = false, reason, multiline = false, placeholder }: {
+function Field({ name, value, apply, pending, fieldKey, disabled = false, reason, multiline = false, placeholder, hint }: {
   name: string; value: string; apply: (value: string) => string | undefined; pending: (key: string, value: boolean) => void; fieldKey: string;
-  disabled?: boolean; reason?: string | undefined; multiline?: boolean; placeholder?: string | undefined;
+  disabled?: boolean; reason?: string | undefined; multiline?: boolean; placeholder?: string | undefined; hint?: ((value: string) => ReactNode) | undefined;
 }) {
   const [buffer, setBuffer] = useState(value), [error, setError] = useState("");
   const inputId = useId();
@@ -45,23 +47,11 @@ function Field({ name, value, apply, pending, fieldKey, disabled = false, reason
     onBlur: commit };
   return <label className="e-field" htmlFor={inputId}><span>{name}</span>
     {multiline ? <textarea {...props} /> : <input {...props} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } }} />}
+    {hint && <small className="e-help">{hint(buffer)}</small>}
     {reason && <small className="e-help">ロック: {reason}</small>}
     {error && <small className="e-help e-problem" role="alert">{error}</small>}
     {buffer !== value && <button className="e-small" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setBuffer(value); setError(""); pending(fieldKey, false); }}>入力を取り消す</button>}
   </label>;
-}
-
-function Dialog({ name, children, dismiss }: { name: string; children: ReactNode; dismiss: () => void }) {
-  const root = useRef<HTMLElement>(null);
-  useEffect(() => { const previous = window.document.activeElement; return () => { if (previous && "focus" in previous && typeof previous.focus === "function") previous.focus(); }; }, []);
-  return <div className="e-dialog-backdrop"><section ref={root} className="e-dialog" role="dialog" aria-modal="true" aria-label={name} onKeyDown={(event) => {
-    if (event.key === "Escape") { event.preventDefault(); dismiss(); }
-    if (event.key !== "Tab") return;
-    const controls = Array.from(root.current!.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]"));
-    const first = controls[0], last = controls.at(-1);
-    if (event.shiftKey && event.target === first) { event.preventDefault(); last?.focus(); }
-    else if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus(); }
-  }}>{children}</section></div>;
 }
 
 class PreviewBoundary extends Component<{ document: PageDocument; children: ReactNode }, { failed: boolean }> {
@@ -260,26 +250,28 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
   const [navigation, setNavigation] = useState<Navigation | null>(null), [plan, setPlan] = useState<EditorReleasePlan | null>(null), [confirmed, setConfirmed] = useState(false);
   const [addType, setAddType] = useState("p"), [parentId, setParentId] = useState(""), [rollbackRevision, setRollbackRevision] = useState("");
   const [panel, setPanel] = useState<"add" | "pages" | "layers" | "styles" | "assets" | "components">("add");
-  const [inspector, setInspector] = useState<"element" | "page" | "site">("page"), [preview, setPreview] = useState(false), [pageFilter, setPageFilter] = useState("");
+  const [inspector, setInspector] = useState<"element" | "page" | "site">("page"), [preview, setPreview] = useState(false);
   const [layerDrop, setLayerDrop] = useState<{ id: string; position: "before" | "inside" | "after" } | null>(null);
   const dragItem = useRef<DragItem | null>(null);
-  const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null);
+  const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null), pageList = useRef<AbortController | null>(null);
+  const [pageChange, setPageChange] = useState<PageChangeStart | null>(null), siteSettings = useSiteSettings(adapter, siteId);
   const pending = useCallback((key: string, value: boolean) => setPendingFields((previous) => {
     if (!!previous[key] === value) return previous;
     const next = { ...previous }; if (value) next[key] = true; else delete next[key]; return next;
   }), []);
   const hasInput = Object.values(pendingFields).some(Boolean), dirty = !!session && fingerprint(session.history.present) !== session.saved;
-  const blocked = !!busy || !!plan, editBlocked = blocked && busy !== "保存中";
+  const blocked = !!busy || !!plan || !!pageChange, editBlocked = blocked && busy !== "保存中";
   const replace = useCallback((next: Session | null) => { sessionRef.current = next; setSession(next); }, []);
-  const load = useCallback(async (target: EditorTarget) => {
+  const load = useCallback(async (target: EditorTarget): Promise<boolean> => {
     const editorTarget: EditorTarget = { siteId: target.siteId, pageId: target.pageId, locale: target.locale };
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     setBusy("読込中"); setNotice("");
     try {
       const snapshot = await adapter.readDocument(editorTarget, controller.signal);
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return false;
       replace(sessionFrom(snapshot, editorTarget, blocks)); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({}); setPlan(null); setRollbackRevision(""); setParentId("");
-    } catch { if (!controller.signal.aborted) setNotice("文書を読み込めませんでした。現在の編集内容は保持されています。"); }
+      return true;
+    } catch { if (!controller.signal.aborted) setNotice("文書を読み込めませんでした。現在の編集内容は保持されています。"); return false; }
     finally { if (!controller.signal.aborted) setBusy(""); }
   }, [adapter, blocks, replace]);
   useEffect(() => {
@@ -296,14 +288,30 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
       if (result.some((page) => page.siteId !== siteId)) throw new Error("site mismatch");
       setPages(result); if (result[0]) void load(result[0]); else { replace(null); setBusy(""); }
     }).catch(() => { if (!controller.signal.aborted) { setNotice("ページ一覧を読み込めませんでした。"); setBusy(""); } });
-    return () => { controller.abort(); request.current?.abort(); };
+    return () => { controller.abort(); request.current?.abort(); pageList.current?.abort(); };
   }, [adapter, siteId, load, replace]);
-  useEffect(() => () => { request.current?.abort(); action.current?.abort(); }, []);
+  useEffect(() => () => { request.current?.abort(); action.current?.abort(); pageList.current?.abort(); }, []);
   useEffect(() => {
     function prevent(event: BeforeUnloadEvent) { event.preventDefault(); }
-    if (dirty || hasInput) window.addEventListener("beforeunload", prevent);
+    if (dirty || hasInput || siteSettings.dirty) window.addEventListener("beforeunload", prevent);
     return () => window.removeEventListener("beforeunload", prevent);
-  }, [dirty, hasInput]);
+  }, [dirty, hasInput, siteSettings.dirty]);
+  /** 開いている文書は保持したまま、ページ一覧だけを取り直す。 */
+  async function reloadPages(): Promise<boolean> {
+    const current = siteId; if (!current) return false;
+    pageList.current?.abort(); const controller = new AbortController(); pageList.current = controller;
+    try {
+      const result = await adapter.listPages(current, controller.signal);
+      if (controller.signal.aborted) return false;
+      if (result.some((page) => page.siteId !== current)) throw new Error("site mismatch");
+      setPages(result); return true;
+    } catch { if (!controller.signal.aborted) setNotice("ページ一覧を読み込めませんでした。"); return false; }
+  }
+  async function pageApplied(page: EditorPage, change: EditorPageChange) {
+    setPageChange(null); const done = pageChangeNotice(change);
+    const listed = await reloadPages(), loaded = await load({ siteId: page.siteId, pageId: page.pageId, locale: page.locale });
+    setNotice(listed && loaded ? done : `${done}${loaded ? "ページ一覧" : "変更後の文書"}を読み込めませんでした。再読込してください。`);
+  }
 
   function navigate(next: Navigation) {
     setNavigation(null); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({});
@@ -311,7 +319,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     else if (next.type === "page") void load(next.target);
     else if (sessionRef.current) void load(sessionRef.current.target);
   }
-  function requestNavigation(next: Navigation) { if (blocked) return; if (dirty || hasInput) setNavigation(next); else navigate(next); }
+  function requestNavigation(next: Navigation) { if (blocked || next.type === "site" && siteSettings.busy) return; if (dirty || hasInput || next.type === "site" && siteSettings.dirty) setNavigation(next); else navigate(next); }
   function select(path: NodePath | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setInspector(path ? "element" : "page"); setBreakpoint("base"); } }
   function apply(operation: EditorOperation): string | undefined {
     const current = sessionRef.current; if (!current || editBlocked) return "処理が完了してから編集してください。";
@@ -374,7 +382,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
   const locks = document ? effectiveLocks(document, session?.locks ?? [], blocks) : [];
   const reason = (field: string) => document && selection ? lockReason(document, selection, field, locks) : undefined;
   const pathKey = `${fieldEpoch}-${selection?.join(".") ?? "page"}`;
-  function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: { reason?: string | undefined; multiline?: boolean; placeholder?: string } = {}) {
+  function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: FieldOptions = {}) {
     return <Field key={`${pathKey}-${key}`} name={name} value={value} fieldKey={`${pathKey}-${key}`} pending={pending} disabled={editBlocked}
       apply={(value) => apply(operation(value))} {...options} />;
   }
@@ -460,8 +468,12 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     dragItem.current = item; event.dataTransfer.effectAllowed = item.kind === "node" ? "move" : "copy";
     event.dataTransfer.setData("text/plain", item.kind === "palette" ? item.type : item.id);
   };
-  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss }} />
-    <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
+  const site = sites.find((site) => site.id === siteId), page = session ? pages.find((page) => sameTarget(page, session.target)) : undefined;
+  const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
+  const pageOperationsDisabled = unsaved || blocked || !!navigation || !site;
+  const startPageChange = (start: PageChangeStart) => { if (pageOperations && !pageOperationsDisabled) setPageChange(start); };
+  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss }} />
+    <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation || !!pageChange; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       <span className={`e-status${dirty ? " is-dirty" : ""}`} role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
       <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>
       <button onClick={() => travel("redo")} disabled={!session?.history.future.length || blocked || hasInput}>やり直す</button>
@@ -470,7 +482,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
       <button className="e-primary" onClick={() => void prepare("publish")} disabled={!session || dirty || blocked || hasInput}>公開前の確認</button>
     </header>
     {notice && <div className="e-notice" role="alert">{notice}</div>}
-    <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
+    <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation || !!pageChange; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
       <nav className="e-tools" aria-label="編集ツール">{([
         ["add", "追加", "＋"], ["pages", "ページ", "▤"], ["layers", "レイヤー", "▦"], ["styles", "スタイル", "◐"], ["assets", "素材", "▧"], ["components", "部品", "◇"]
       ] as const).map(([key, name, glyph]) => <button key={key} type="button" aria-pressed={panel === key} title={name} onClick={() => setPanel(key)}><span aria-hidden="true">{glyph}</span><small>{name}</small></button>)}</nav>
@@ -481,13 +493,11 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
             <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="box">ボックス</option><option value="richtext">リッチテキスト</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{availableBlocks.map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
             <button onClick={() => add()} disabled={!document || editBlocked || hasInput}>要素を追加</button></details>
         </section>
-        <section hidden={panel !== "pages"} aria-label="ページ一覧"><div className="e-panel-head"><h2>ページ</h2><p>編集するページを選択</p></div>
-          <label className="e-field"><span>編集するサイト</span><select aria-label="編集するサイト" value={siteId} disabled={blocked} onChange={(event) => requestNavigation({ type: "site", id: event.target.value })}>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
-          <label className="e-field"><span>ページ</span><select aria-label="ページ" value={session ? `${session.target.pageId}/${session.target.locale}` : ""} disabled={blocked || !pages.length} onChange={(event) => { const page = pages.find((page) => `${page.pageId}/${page.locale}` === event.target.value); if (page) requestNavigation({ type: "page", target: page }); }}>
-            {!session && <option value="">選択してください</option>}{pages.map((page) => <option key={`${page.pageId}/${page.locale}`} value={`${page.pageId}/${page.locale}`}>{page.title} · {page.locale}</option>)}
-          </select></label>
-          <input className="e-search" aria-label="ページを検索" placeholder="ページを検索" value={pageFilter} onChange={(event) => setPageFilter(event.target.value)} />
-          <div className="e-page-list">{pages.filter((page) => `${page.title} ${page.pageId}`.toLowerCase().includes(pageFilter.toLowerCase())).map((page) => <button key={`${page.pageId}/${page.locale}`} type="button" aria-current={session?.target.pageId === page.pageId ? "page" : undefined} onClick={() => requestNavigation({ type: "page", target: page })} disabled={blocked}><span aria-hidden="true">▤</span><span>{page.title}<small>/{page.pageId}</small></span></button>)}</div>
+        <section hidden={panel !== "pages"} aria-label="ページ一覧">
+          <PagePanel pages={pages} current={session?.target} disabled={blocked} operations={pageOperations} operationsDisabled={pageOperationsDisabled} unsaved={unsaved}
+            select={(target) => { if (!session || !sameTarget(session.target, target)) requestNavigation({ type: "page", target }); }} start={startPageChange}>
+            <label className="e-field"><span>編集するサイト</span><select aria-label="編集するサイト" value={siteId} disabled={blocked} onChange={(event) => requestNavigation({ type: "site", id: event.target.value })}>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
+          </PagePanel>
           <button className="e-small" onClick={() => requestNavigation({ type: "reload" })} disabled={!session || blocked}>最新の文書を再読込</button>
         </section>
         <section hidden={panel !== "layers"} aria-label="レイヤー一覧"><div className="e-panel-head"><h2>レイヤー</h2><p>ドラッグで並べ替え、中央にも配置できます</p></div>
@@ -510,8 +520,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     </aside>
     <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div><label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ"><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
-      {inspector === "site" && <section className="e-inspector-content"><h2>サイト情報</h2><p className="e-help">{sites.find((site) => site.id === siteId)?.name ?? "サイトを選択してください"}</p>{sites.find((site) => site.id === siteId)?.domains.map((domain) => <p className="e-domain-small" key={domain}>{domain}</p>)}</section>}
-      {inspector === "page" && <section className="e-inspector-content"><h2>ページ設定</h2>{document && field("ページタイトル", document.title, (value) => ({ type: "title", value }), "title")}</section>}
+      {inspector === "site" && <section className="e-inspector-content"><SiteSettingsPanel site={site} state={siteSettings} /></section>}
+      {inspector === "page" && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked}
+        operations={pageOperations} operationsDisabled={pageOperationsDisabled} unsaved={unsaved} start={startPageChange} />}</section>}
       {inspector === "element" && <section className="e-inspector-content"><h2>{node ? label(node, blocks) : "要素を選択してください"}</h2>
       {node?.type === "text" && selection && field("テキスト", node.text, (value) => ({ type: "text", path: selection, value }), "text", { multiline: true, reason: document ? lockReason(document, selection, "text", locks) : undefined })}
       {node?.type === "element" && selection && <>{["p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(node.tag) && <label className="e-field"><span>文字の種類</span><select aria-label="文字の種類" value={node.tag} disabled={editBlocked || !!reason("tag")} onChange={(event) => { const problem = apply({ type: "tag", path: selection, value: event.target.value as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" }); if (problem) setNotice(problem); }}><option value="p">段落</option><option value="h1">見出し 1</option><option value="h2">見出し 2</option><option value="h3">見出し 3</option><option value="h4">見出し 4</option><option value="h5">見出し 5</option><option value="h6">見出し 6</option></select></label>}{node.children.length === 1 && node.children[0]?.type === "text" && field("テキスト", node.children[0].text, (value) => ({ type: "text", path: [...selection, 0], value }), "child-text", { multiline: true, reason: document ? lockReason(document, [...selection, 0], "text", locks) : undefined })}
@@ -535,9 +546,14 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
       </section>}
     </aside></div>
     {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => navigate(navigation)}>変更を破棄して移動</button></div></Dialog>}
-    {plan && <Dialog name="公開前の対象と差分" dismiss={() => { if (!busy) setPlan(null); }}><h2>{plan.action === "rollback" ? `版 ${plan.revision} に戻す前の確認` : "公開前の確認"}</h2><p>反映先のドメイン</p><p className="e-domain">{plan.domain}</p><p>{session?.target.pageId} · {session?.target.locale}</p><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
+    {plan && <Dialog name="公開前の対象と差分" dismiss={() => { if (!busy) setPlan(null); }}><h2>{plan.action === "rollback" ? `版 ${plan.revision} に戻す前の確認` : "公開前の確認"}</h2><p>反映先のドメイン</p><p className="e-domain">{plan.domain}</p><p>{session?.target.pageId} · {session?.target.locale}</p>
+      <ReleaseSearchSummary document={document} page={page} domain={plan.domain} settings={siteSettings.settings} rollback={plan.action === "rollback"} /><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
       <label className="e-check"><input type="checkbox" checked={confirmed} disabled={!!busy} onChange={(event) => setConfirmed(event.target.checked)} />このドメインと差分を確認し、反映する内容に同意しました</label>
       <div className="e-actions"><button autoFocus disabled={!!busy} onClick={() => setPlan(null)}>編集に戻る</button><button className="e-primary" disabled={!confirmed || !!busy} onClick={() => void release()}>{plan.action === "rollback" ? "この版に戻す" : "この内容を公開"}</button></div>
     </Dialog>}
+    {pageChange && site && adapter.preparePageChange && adapter.applyPageChange && <PageChangeDialog start={pageChange} site={site} pages={pages} locale={session?.target.locale ?? pages[0]?.locale ?? siteSettings.settings?.locale ?? "ja"}
+      prepare={(change, signal) => adapter.preparePageChange!(change, signal)} apply={(plan, signal) => adapter.applyPageChange!(plan, signal)}
+      applied={(page, change) => void pageApplied(page, change)} conflicted={() => void reloadPages()} close={() => setPageChange(null)}
+      reload={() => { const current = sessionRef.current?.target; setPageChange(null); void reloadPages().then(() => current && load(current)); }} />}
   </div>;
 }
