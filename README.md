@@ -145,7 +145,7 @@ const { document: resolved } = resolvePageDocument(draft, library, blocks);
 const published = { ...resolved, revision: nextRevision };
 ```
 
-`PageRenderer`・`renderPageToHtml`・CSS 生成は展開済みの文書だけを描画し、未展開の instance は拒否します。公開版の形は従来の v1 文書のままなので、公開サイトの renderer を更新しなくても導入できます。詳細は [共通部品契約](docs/component-contract.md) を参照してください。
+`PageRenderer`・`renderPageToHtml`・CSS 生成は展開済みの文書だけを描画し、未展開の instance は拒否します。公開版の形は従来の v1 文書のままなので、公開サイトの renderer を更新しなくても導入できます。詳細は [共通部品契約](docs/component-contract.md) を参照してください。`PageEditor` では、adapter に `components` を渡すと「部品」パネル・インスタンスの設定・部品の編集を使えます（[エディター契約の「共通部品」](docs/editor-contract.md#共通部品)）。
 
 ## Astro の静的 / サーバー HTML
 
