@@ -20,7 +20,7 @@ import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSe
 import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
-import type { ComponentUsageEntry, EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
+import type { ComponentUsageEntry, EditorBlockRegistry, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
@@ -33,6 +33,7 @@ import {
   relabelComponentProp, releaseAffected, resolveCanvas, summarizeUsage, textStylePaths, travelLibrary, usageText, type LibrarySession
 } from "./component-session.js";
 import { LanguageSelector, LocalizationPanel, localizationEditorCss, localizedOperationProblem, useEditorLocalization, type EditorLocalizationCommandOutcome, type EditorLocalizationManualBuffer } from "./editor-localization.js";
+import { parseEditorLocaleReleaseApplyResult, parseEditorLocaleReleasePlan, parseEditorLocaleReleaseState } from "./editor-locale-release.js";
 import { documentLocaleFor, localizationLocaleFor, validateLocalizedDocumentSave, type LocalizationLocale } from "./localization.js";
 
 export type * from "./editor-types.js";
@@ -253,6 +254,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
 export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
+  const adapterRef = useRef(adapter); adapterRef.current = adapter;
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -266,6 +268,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const breakpoints = normalizeBreakpoints(hostBreakpoints);
   const [busy, setBusy] = useState(""), [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [navigation, setNavigation] = useState<Navigation | null>(null), [plan, setPlan] = useState<EditorReleasePlan | null>(null), [confirmed, setConfirmed] = useState(false);
+  const [localeRelease, setLocaleRelease] = useState<EditorLocaleReleaseState | null>(null), [localeReleasePlan, setLocaleReleasePlan] = useState<EditorLocaleReleasePlan | null>(null);
+  const [localeReleaseConfirmed, setLocaleReleaseConfirmed] = useState(false), [localeReleaseLoading, setLocaleReleaseLoading] = useState(false), [localeReleaseEpoch, setLocaleReleaseEpoch] = useState(0);
+  const [localeRollbackId, setLocaleRollbackId] = useState("");
   const [addType, setAddType] = useState("p"), [parentId, setParentId] = useState(""), [rollbackRevision, setRollbackRevision] = useState("");
   const [panel, setPanel] = useState<"add" | "pages" | "layers" | "styles" | "assets" | "components">("add");
   const [inspector, setInspector] = useState<Inspector>("page"), [preview, setPreview] = useState(false);
@@ -279,7 +284,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const libraryPresent = library?.history.present;
   const [libraryFailed, setLibraryFailed] = useState(false), [usage, setUsage] = useState<readonly ComponentUsageEntry[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<string | null>(null), [componentDialog, setComponentDialog] = useState<ComponentDialogState | null>(null), usageRequest = useRef<AbortController | null>(null);
-  const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null), pageList = useRef<AbortController | null>(null);
+  const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null), pageList = useRef<AbortController | null>(null), releaseRead = useRef<AbortController | null>(null);
+  useEffect(() => () => action.current?.abort(), [adapter]);
   const [pageChange, setPageChange] = useState<PageChangeStart | null>(null), siteSettings = useSiteSettings(adapter, siteId);
   const [problem, setProblem] = useState<SaveProblem | null>(null), [savedAt, setSavedAt] = useState<Date | null>(null), [loadEpoch, setLoadEpoch] = useState(0);
   const [conflictView, setConflictView] = useState(0), [recoveryCompare, setRecoveryCompare] = useState(false), [autosaveOn, setAutosaveOn] = useState(true);
@@ -287,6 +293,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   let selectedLocale: LocalizationLocale | undefined;
   try { if (localization.site && session) selectedLocale = localizationLocaleFor(localization.site.config, session.target.locale); } catch { /* read hook reports the invalid mapping */ }
   const targetMode = !!localization.site && !!selectedLocale && selectedLocale !== localization.site.config.sourceLocale;
+  const localePublication = !!adapter.localization?.readRelease && !!adapter.localization.prepareRelease && !!adapter.localization.applyRelease && !!adapter.localization.rollbackRelease;
   const localizationReady = !localization.supported || localization.siteState === "ready" && !!localization.site && !!selectedLocale &&
     (selectedLocale === localization.site.config.sourceLocale || localization.pageState === "ready" && !!localization.context && !!session && sameTarget(localization.context.target, session.target));
   const problemRef = useRef(problem); problemRef.current = problem;
@@ -299,7 +306,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const hasInput = pageInputPending || manualInputPending, dirty = !!session && fingerprint(session.history.present) !== session.saved;
   const masterId = editing && libraryPresent?.components.some((component) => component.id === editing) ? editing : null;
   const libraryDirty = !!library && libraryFingerprint(library.history.present) !== library.saved, pendingChanges = dirty || libraryDirty, locale = session?.target.locale ?? "ja";
-  const blocked = !!busy || !!plan || !!pageChange;
+  const blocked = !!busy || !!plan || !!localeReleasePlan || !!pageChange;
   const versions = useVersionHistory({ adapter, blocks, components: libraryPresent, target: session?.target, version: session?.version, epoch: loadEpoch, report: setNotice,
     guard: () => hasInput ? "入力を適用するか取り消してから版を選んでください。" : busy ? "処理が完了してから版を選んでください。" : undefined });
   // 部品の保存中はライブラリの編集だけを止め、ページは保存中と同じく編集を続けられる。版の表示中はどちらも止める。
@@ -311,7 +318,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const autosaveMs = autosaveDelay(autosave), autosaveActive = autosaveMs !== undefined && autosaveOn;
   // オフラインで失敗した後、接続が戻ったら自動保存は1回だけ再試行する。
   const online = useOnline(() => { if (problemRef.current !== "offline") return; if (!autosaveActive) setProblem("failed"); else if (!pendingChanges) setProblem(null); else void save("auto"); });
-  const modal = !!plan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null || !!componentDialog;
+  const modal = !!plan || !!localeReleasePlan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null || !!componentDialog;
   // 自動保存は手動保存と同じく部品 → ページの順に保存する。部品とページのどちらが変わっても待ち直す。
   const autosaveSubject = useMemo(() => [session?.history.present, libraryPresent], [session?.history.present, libraryPresent]);
   // ページが無いサイトでも、部品の変更は部品ライブラリ単位の key で自動保存する（部品は端末の退避の対象外のため）。
@@ -320,6 +327,16 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     (key) => { if (autosaveKey(sessionRef.current?.target, libraryRef.current) === key) void save("auto"); });
   const replace = useCallback((next: Session | null) => { sessionRef.current = next; setSession(next); }, []);
   const replaceLibrary = useCallback((next: LibrarySession | null) => { libraryRef.current = next; setLibrary(next); }, []);
+  useEffect(() => {
+    releaseRead.current?.abort(); setLocaleRelease(null); setLocaleRollbackId("");
+    if (!targetMode || !localePublication || !localization.site || !selectedLocale) { setLocaleReleaseLoading(false); return; }
+    const controller = new AbortController(); releaseRead.current = controller; setLocaleReleaseLoading(true);
+    adapter.localization!.readRelease!({ siteId: localization.site.config.siteId, locale: selectedLocale }, controller.signal).then((value) => {
+      if (!controller.signal.aborted) setLocaleRelease(parseEditorLocaleReleaseState(value, localization.site!.config.siteId, selectedLocale!));
+    }).catch(() => { if (!controller.signal.aborted) setNotice("この言語の公開状態を読み込めませんでした。管理者権限と接続を確認して再試行してください。"); })
+      .finally(() => { if (!controller.signal.aborted) setLocaleReleaseLoading(false); });
+    return () => controller.abort();
+  }, [adapter, localePublication, targetMode, localization.site?.config.siteId, selectedLocale, localeReleaseEpoch]);
   const refreshUsage = useCallback((siteId: string) => {
     if (!components) return;
     usageRequest.current?.abort(); const controller = new AbortController(); usageRequest.current = controller;
@@ -368,7 +385,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     }).catch(() => { if (!controller.signal.aborted) { setNotice("ページ一覧を読み込めませんでした。"); setBusy(""); } });
     return () => { controller.abort(); request.current?.abort(); pageList.current?.abort(); };
   }, [adapter, siteId, load, replace, components, openLibrary, replaceLibrary]);
-  useEffect(() => () => { request.current?.abort(); action.current?.abort(); pageList.current?.abort(); }, []);
+  useEffect(() => () => { request.current?.abort(); action.current?.abort(); pageList.current?.abort(); releaseRead.current?.abort(); }, []);
   useEffect(() => () => usageRequest.current?.abort(), []);
   useEffect(() => {
     function prevent(event: BeforeUnloadEvent) { event.preventDefault(); }
@@ -563,6 +580,57 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       setPicker(null);
     } catch { if (!controller.signal.aborted) { setNotice("反映結果を確認できませんでした。再試行前に公開状態をホスト側で確認してください。編集内容は保持しています。"); setPlan(null); } }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
+  }
+  async function prepareLocaleRelease(actionType: "publish" | "rollback") {
+    const current = sessionRef.current, siteState = localization.site, selected = selectedLocale, rollback = localeRelease?.history.find((entry) => entry.releaseId === localeRollbackId);
+    if (!current || !siteState || !selected || !targetMode || !localePublication || !localeRelease || localeReleaseLoading || action.current || blocked || dirty || libraryDirty || masterId || hasInput || historyMode || !localizationReady || actionType === "rollback" && !rollback) return;
+    const controller = new AbortController(), startedAdapter = adapter, startedTarget = current.target; action.current = controller; setBusy(actionType === "rollback" ? "言語全体の復元内容を取得中" : "言語全体の公開内容を取得中"); setNotice("");
+    const input = { siteId: siteState.config.siteId, locale: selected, action: actionType, expectedSiteVersion: siteState.version, expectedCurrentVersion: localeRelease.current?.version ?? null,
+      ...(actionType === "rollback" ? { rollbackReleaseId: rollback!.releaseId } : {}) } as const;
+    try {
+      const result = await adapter.localization!.prepareRelease!(input, controller.signal);
+      if (controller.signal.aborted || adapterRef.current !== startedAdapter || !sessionRef.current || !sameTarget(sessionRef.current.target, startedTarget)) return;
+      const site = sites.find((entry) => entry.id === input.siteId);
+      if (!site) throw new Error("release site is unavailable");
+      const reviewed = parseEditorLocaleReleasePlan(structuredClone(result), input, site.domains);
+      const expectedPages = siteState.pages.filter((page) => page.kind !== "shared" && page.visibility !== "private" && page.published !== false).map((page) => page.pageId).sort();
+      const preparedPages = reviewed.pages.map((page) => page.pageId).sort();
+      if (!preparedPages.length || (actionType === "publish" ? JSON.stringify(preparedPages) !== JSON.stringify(expectedPages) : preparedPages.some((id) => !expectedPages.includes(id))))
+        throw new Error("release plan does not match the public page catalogue");
+      setLocaleReleasePlan(reviewed); setLocaleReleaseConfirmed(false);
+    } catch (error) {
+      if (!controller.signal.aborted && adapterRef.current === startedAdapter && sessionRef.current && sameTarget(sessionRef.current.target, startedTarget)) {
+        const refreshed = await load(startedTarget, { preserveView: true });
+        if (!controller.signal.aborted && adapterRef.current === startedAdapter && sessionRef.current && sameTarget(sessionRef.current.target, startedTarget)) {
+          localization.reloadAll(); setLocaleReleaseEpoch((value) => value + 1);
+          setNotice(classifySaveError(error) === "conflict"
+            ? "原文または公開状態が更新されています（409）。最新状態を読み直してから、公開内容を確認し直してください。"
+            : refreshed ? "公開内容を確認できませんでした。最新状態を読み直しました。対象と権限を確認して再試行してください。"
+              : "公開内容と最新の文書を読み込めませんでした。下書きは保持しています。接続と権限を確認して再試行してください。");
+        }
+      }
+    }
+    finally { if (!controller.signal.aborted && action.current === controller) setBusy(""); if (action.current === controller) action.current = null; }
+  }
+  async function applyLocaleRelease() {
+    const current = sessionRef.current, localePlan = localeReleasePlan;
+    if (!current || !localePlan || !localePlan.complete || !localeReleaseConfirmed || !targetMode || !localePublication || action.current || busy || dirty || libraryDirty || masterId || hasInput || historyMode || !localizationReady) return;
+    const controller = new AbortController(), startedAdapter = adapter, startedTarget = current.target; action.current = controller; setBusy(localePlan.action === "rollback" ? "言語全体を復元中" : "言語全体を公開中");
+    const request = { confirmationToken: localePlan.confirmationToken, siteId: localePlan.siteId, locale: localePlan.locale, expectedCurrentVersion: localePlan.expectedCurrentVersion,
+      optimisticVersion: localePlan.optimisticVersion, preparedReleaseId: localePlan.prepared.releaseId, preparedVersion: localePlan.prepared.version };
+    try {
+      const response = localePlan.action === "rollback" ? await adapter.localization!.rollbackRelease!(request, controller.signal) : await adapter.localization!.applyRelease!(request, controller.signal);
+      if (controller.signal.aborted || adapterRef.current !== startedAdapter || !sessionRef.current || !sameTarget(sessionRef.current.target, startedTarget)) return;
+      const result = parseEditorLocaleReleaseApplyResult(response, localePlan);
+      setLocaleReleasePlan(null);
+      if (result.status === "conflict") setNotice("言語全体の公開状態が競合しました（409）。下書きは変更していません。最新状態を確認してからやり直してください。");
+      else if (result.status === "expired") setNotice("確認の有効期限が切れました。下書きは変更していません。もう一度、公開内容を確認してください。");
+      else setNotice(localePlan.action === "rollback" ? "以前の言語全体版を新しい公開版として復元しました。" : "言語全体を公開しました。");
+    } catch { if (!controller.signal.aborted) { setLocaleReleasePlan(null); setNotice("反映結果を確認できませんでした。再実行する前に現在の言語公開状態を確認してください。下書きは保持しています。"); } }
+    finally {
+      if (!controller.signal.aborted && action.current === controller) { setBusy(""); setLocaleReleaseEpoch((value) => value + 1); localization.reloadAll(); }
+      if (action.current === controller) action.current = null;
+    }
   }
   /** 版・退避内容を通常の編集として作業コピーへ適用する。履歴モード中も呼べる。 */
   async function restoreDocument(source: PageDocument): Promise<string | undefined> {
@@ -879,7 +947,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     requestNavigation({ type: "page", target: { siteId: current.target.siteId, pageId: current.target.pageId, locale: documentLocaleFor(currentSite.config, locale) } });
   };
   const panelLocale = selectedLocale ?? localization.site?.config.sourceLocale;
-  const panelPages: readonly EditorPage[] = localization.site && panelLocale ? localization.site.pages.map(({ locales: _locales, ...page }) => ({ ...page, locale: documentLocaleFor(localization.site!.config, panelLocale) })) : pages;
+  const panelPages: readonly EditorPage[] = localization.site && panelLocale ? localization.site.pages.map(({ locales, ...page }) => ({
+    ...page, locale: documentLocaleFor(localization.site!.config, panelLocale), ...(locales[panelLocale]?.published === undefined ? {} : { published: locales[panelLocale]!.published })
+  })) : pages;
   const site = sites.find((site) => site.id === siteId), page = session ? panelPages.find((page) => page.pageId === session.target.pageId) ?? pages.find((page) => page.pageId === session.target.pageId) : undefined;
   const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
   const pageOperationsDisabled = unsaved || blocked || !!navigation || !site || historyMode || targetMode;
@@ -906,8 +976,12 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       {versions.supported && <button aria-pressed={versions.open} onClick={versions.toggle} disabled={!session || preview || !!masterId || targetMode}>履歴</button>}
       <button aria-pressed={preview} onClick={() => setPreview((value) => !value)} disabled={!document || blocked || historyMode}>{preview ? "編集に戻る" : "プレビュー"}</button>
       <button onClick={() => void save()} disabled={!pendingChanges || blocked || hasInput || historyMode || !localizationReady}>下書き保存</button>
-      <button className="e-primary" title={targetMode ? "言語別公開は公開契約を実装するホストで行います" : publishHold} onClick={() => void prepare("publish")} disabled={targetMode || !session || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>
+      {targetMode ? localePublication ? <button className="e-primary" title="この言語の全ページと共通内容をまとめて確認します" onClick={() => void prepareLocaleRelease("publish")}
+        disabled={!localeRelease || localeReleaseLoading || !session || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>言語全体の公開確認</button>
+        : <button className="e-primary" title="このサイトでは訳文の公開を利用できません。管理者に確認してください。" disabled>公開前の確認</button>
+        : <button className="e-primary" title={publishHold} onClick={() => void prepare("publish")} disabled={!session || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
       {publishHold && !targetMode && <small className="e-hold">{publishHold}</small>}
+      {targetMode && !localePublication && <small className="e-hold">このサイトでは訳文の公開を利用できません。管理者に確認してください。</small>}
     </header>
     {notice && <div className="e-notice" role="alert">{notice}</div>}
     {components && libraryFailed && <div className="e-notice" role="alert">共通部品を読み込めませんでした。部品を含むページは表示できません。</div>}
@@ -958,7 +1032,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
             rename={(id) => setComponentDialog({ type: "rename", componentId: id })} duplicate={(id) => reportProblem(updateLibrary((library) => duplicateComponent(library, id, blocks).library))}
             remove={(id) => setComponentDialog({ type: "remove", componentId: id })} /><h3>業務ブロック</h3></>}
           {!targetMode && (availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">{components ? "このサイトの業務ブロックはまだ登録されていません。" : "このサイトの部品はまだ登録されていません。"}</p>)}</section>
-        <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked || targetMode} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={targetMode || !rollbackRevision || dirty || libraryDirty || !!masterId || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">{targetMode ? "共通デザインは原文側で編集してください。" : "未保存の変更がある間は実行できません。"}</small>{publishHold && !targetMode && <small className="e-help">{publishHold}</small>}</details>
+        {targetMode ? <details className="e-history"><summary>以前の言語全体版へ戻す</summary>{localePublication ? <><label className="e-field"><span>戻す言語全体版</span><select aria-label="戻す言語全体版" value={localeRollbackId} disabled={blocked || localeReleaseLoading} onChange={(event) => setLocaleRollbackId(event.target.value)}><option value="">版を選択</option>{localeRelease?.history.map((release) => <option key={release.releaseId} value={release.releaseId}>{release.label}（{release.pages}ページ）</option>)}</select></label>
+          <button disabled={!localeRollbackId || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady} onClick={() => void prepareLocaleRelease("rollback")}>言語全体の復元内容を確認</button><small className="e-help">ページ単位ではなく、当時のページ・共通部品・ナビ・スタイルをまとめて復元します。現在非公開のページは復元されません。</small></> : <small className="e-help">このサイトでは訳文の復元を利用できません。管理者に確認してください。</small>}</details>
+          : <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || libraryDirty || !!masterId || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small>{publishHold && <small className="e-help">{publishHold}</small>}</details>}
       </div>
     </aside>
     <section className="e-canvas" aria-label="ライブプレビュー">{masterComponent && <ComponentBanner name={masterComponent.name} count={usageSummary?.get(masterComponent.id)?.rows.length} back={leaveComponent} />}<div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}{document && <button type="button" className="e-small e-motion-toggle" aria-pressed={motion || preview} disabled={preview} title={preview ? "プレビュー中は動きを再生します" : "登場や状態の変化の動きを再生します"}
@@ -1010,6 +1086,16 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       <ReleaseSearchSummary document={pageDocument} page={page} domain={plan.domain} settings={siteSettings.settings} rollback={plan.action === "rollback"} url={plan.url} /><ReleaseAffected affected={releaseAffected(plan.affected, pageDocument, libraryPresent)} /><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
       <label className="e-check"><input type="checkbox" checked={confirmed} disabled={!!busy} onChange={(event) => setConfirmed(event.target.checked)} />このドメインと差分を確認し、反映する内容に同意しました</label>
       <div className="e-actions"><button autoFocus disabled={!!busy} onClick={() => setPlan(null)}>編集に戻る</button><button className="e-primary" disabled={!confirmed || !!busy} onClick={() => void release()}>{plan.action === "rollback" ? "この版に戻す" : "この内容を公開"}</button></div>
+    </Dialog>}
+    {localeReleasePlan && <Dialog name="言語全体の公開前確認" dismiss={() => { if (!busy) setLocaleReleasePlan(null); }}><h2>{localeReleasePlan.action === "rollback" ? "言語全体を復元する前の確認" : "言語全体を公開する前の確認"}</h2>
+      <p>反映先のドメイン</p><p className="e-domain">{localeReleasePlan.domain}</p>
+      <dl className="e-rows"><div><dt>言語</dt><dd>{localeReleasePlan.locale === "ja" ? "日本語" : "English"}</dd></div><div><dt>現在の公開版</dt><dd>{localeReleasePlan.previous ? `${localeReleasePlan.previous.label} / ${localeReleasePlan.previous.version}` : "未公開"}</dd></div><div><dt>準備した版</dt><dd>{localeReleasePlan.prepared.label} / {localeReleasePlan.prepared.version}</dd></div><div><dt>確認期限</dt><dd>{new Date(localeReleasePlan.expiresAt).toLocaleString("ja-JP")}</dd></div></dl>
+      {localeReleasePlan.action === "rollback" && <p className="e-help">現在非公開のページは復元されません。</p>}
+      {localeReleasePlan.incompleteReasons.length > 0 && <div role="alert" className="e-release-incomplete"><strong>この言語はまだ公開できません。</strong><ul>{localeReleasePlan.incompleteReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></div>}
+      <h3>対象ページ（{localeReleasePlan.pages.length}件）</h3><table><thead><tr><th>ページ</th><th>URL</th><th>準備状況</th></tr></thead><tbody>{localeReleasePlan.pages.map((page) => <tr key={page.pageId}><td>{page.title}</td><td>{page.path}</td><td>{page.complete ? "完了" : page.reasons.join("\n") || "未完了"}</td></tr>)}</tbody></table>
+      <h3>共通内容（{localeReleasePlan.sharedResources.length}件）</h3><table><thead><tr><th>共通内容</th><th>種類</th><th>準備状況</th></tr></thead><tbody>{localeReleasePlan.sharedResources.map((resource) => <tr key={resource.id}><td>{resource.label}</td><td>{({ component: "共通部品", navigation: "ナビ", style: "スタイル", resource: "関連データ" } as const)[resource.kind]}</td><td>{resource.complete ? "完了" : resource.reasons.join("\n") || "未完了"}</td></tr>)}</tbody></table>
+      <label className="e-check"><input type="checkbox" checked={localeReleaseConfirmed} disabled={!!busy || !localeReleasePlan.complete} onChange={(event) => setLocaleReleaseConfirmed(event.target.checked)} />このドメイン、全ページ、共通内容と公開版の切り替えに同意しました</label>
+      <div className="e-actions"><button autoFocus disabled={!!busy} onClick={() => setLocaleReleasePlan(null)}>編集に戻る</button><button className="e-primary" disabled={!localeReleasePlan.complete || !localeReleaseConfirmed || !!busy} onClick={() => void applyLocaleRelease()}>{localeReleasePlan.action === "rollback" ? "この言語全体版を復元" : "この言語全体を公開"}</button></div>
     </Dialog>}
     {componentDialog && libraryPresent && <Dialog name={componentDialogTitle(componentDialog)} dismiss={() => setComponentDialog(null)}>
       <ComponentDialogBody dialog={componentDialog} library={libraryPresent} cancel={() => setComponentDialog(null)} submit={(values) => submitComponentDialog(componentDialog, values)} notice={componentDialogNotice} /></Dialog>}

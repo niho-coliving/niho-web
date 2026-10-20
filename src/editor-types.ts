@@ -48,12 +48,66 @@ export type EditorLocalizationCommand =
   | { action: "set-value"; target: EditorTarget; unitId: string; value: LocalizationValue; sourceFingerprint: string; expectedEntryVersion: number;
     expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number };
 export type EditorLocalizationCommandResult = { status: "applied"; version: string } | { status: "conflict" };
+export type EditorLocaleReleaseSummary = {
+  releaseId: string;
+  version: string;
+  label: string;
+  publishedAt: string;
+  pages: number;
+  sharedResources: number;
+};
+export type EditorLocaleReleaseState = {
+  siteId: string;
+  locale: LocalizationLocale;
+  /** CAS identity of the current locale release; null before first activation. */
+  current: EditorLocaleReleaseSummary | null;
+  /** Immutable prior whole-locale releases, newest first. */
+  history: readonly EditorLocaleReleaseSummary[];
+};
+export type EditorLocaleReleasePrepareRequest = {
+  siteId: string;
+  locale: LocalizationLocale;
+  action: "publish" | "rollback";
+  expectedSiteVersion: string;
+  expectedCurrentVersion: string | null;
+  rollbackReleaseId?: string;
+};
+export type EditorLocaleReleasePlan = EditorLocaleReleasePrepareRequest & {
+  confirmationToken: string;
+  domain: string;
+  expiresAt: string;
+  optimisticVersion: string;
+  previous: EditorLocaleReleaseSummary | null;
+  prepared: EditorLocaleReleaseSummary;
+  pages: readonly { pageId: string; title: string; path: string; complete: boolean; reasons: readonly string[] }[];
+  sharedResources: readonly { id: string; label: string; kind: "component" | "navigation" | "style" | "resource"; complete: boolean; reasons: readonly string[] }[];
+  incompleteReasons: readonly string[];
+  complete: boolean;
+};
+export type EditorLocaleReleaseApplyRequest = {
+  confirmationToken: string;
+  siteId: string;
+  locale: LocalizationLocale;
+  expectedCurrentVersion: string | null;
+  optimisticVersion: string;
+  preparedReleaseId: string;
+  preparedVersion: string;
+};
+export type EditorLocaleReleaseApplyResult =
+  | { status: "applied"; siteId: string; locale: LocalizationLocale; current: EditorLocaleReleaseSummary }
+  | { status: "conflict" | "expired" };
 export interface EditorLocalizationAdapter {
   readSite(siteId: string, signal: AbortSignal): Promise<EditorLocalizationSiteSnapshot>;
   readPage(target: EditorTarget, signal: AbortSignal): Promise<EditorLocalizationPageSnapshot>;
   command(request: EditorLocalizationCommand, signal: AbortSignal): Promise<EditorLocalizationCommandResult>;
   /** Optional host-owned site-wide async translation queue. The library never calls a provider. */
   requestSiteTranslation?(request: { siteId: string; targetLocale: LocalizationLocale; expectedVersion: string }, signal: AbortSignal): Promise<EditorLocalizationCommandResult>;
+  /** Optional host-owned whole-locale publication. All four methods are required to enable translated publication. */
+  readRelease?(request: { siteId: string; locale: LocalizationLocale }, signal: AbortSignal): Promise<EditorLocaleReleaseState>;
+  prepareRelease?(request: EditorLocaleReleasePrepareRequest, signal: AbortSignal): Promise<EditorLocaleReleasePlan>;
+  applyRelease?(request: EditorLocaleReleaseApplyRequest, signal: AbortSignal): Promise<EditorLocaleReleaseApplyResult>;
+  /** Applies a prepared whole-locale rollback; never a per-page numeric revision. */
+  rollbackRelease?(request: EditorLocaleReleaseApplyRequest, signal: AbortSignal): Promise<EditorLocaleReleaseApplyResult>;
 }
 /** フィールドは props.name / attrs.href / children / style 等。* はノード全体。 */
 export type EditorLock = { nodeId: string; fields: readonly string[]; reason: string };

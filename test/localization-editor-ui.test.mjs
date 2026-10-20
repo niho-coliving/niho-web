@@ -57,7 +57,7 @@ async function localizedSite(siteId, sourceLocale, labels) {
   const targetDocument = (await materializeLocalizedPage(cfg, sourceDocument, collection, overlay)).document;
   return { cfg, sourceDocument, targetDocument, collection, overlay, labels, documentVersion: 1, localizationVersion: 1, siteVersion: 1, job: { state: "failed", message: "合成した失敗" } };
 }
-async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, recovery } = {}) {
+async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, extraPublicPage = false, recovery, localeRelease } = {}) {
   const kamakura = await localizedSite("kamakura", "ja", { source: "鎌倉ホーム", manual: "Manual Kamakura", candidate: "Candidate Kamakura" });
   const experience = await localizedSite("experience", "en", { source: "Experience home", manual: "体験（手修正）", candidate: "体験（翻訳案）" });
   const sites = { kamakura, experience }, calls = { saves: [], commands: [], siteReads: 0, pageReads: 0 }; let conflict = conflictOnce, rejectCommand = rejectCommandOnce, delayedResolve, delayedSiteResolve, failSite = rejectSiteOnce, failPage = rejectPageOnce;
@@ -93,7 +93,8 @@ async function setup({ conflictOnce = false, conflictSourceChange = false, rejec
       readSite: async (siteId, signal) => { calls.siteReads++; if (failSite) { failSite = false; throw new Error("synthetic site failure"); }
         if (delayedSite || delayedSiteAfterFirst && calls.siteReads > 1) await new Promise((resolve) => { delayedSiteResolve = resolve; signal.addEventListener("abort", resolve, { once: true }); });
         const state = sites[siteId]; return { config: structuredClone(state.cfg), version: `site-${state.siteVersion}`, job: structuredClone(state.job), pages: [
-        { siteId, pageId: "home", title: state.labels.source, path: "/", locales: { ja: { state: state.cfg.sourceLocale === "ja" ? "source" : "review-needed" }, en: { state: state.cfg.sourceLocale === "en" ? "source" : "review-needed" } } }
+        { siteId, pageId: "home", title: state.labels.source, path: "/", locales: { ja: { state: state.cfg.sourceLocale === "ja" ? "source" : "review-needed" }, en: { state: state.cfg.sourceLocale === "en" ? "source" : "review-needed" } } },
+        ...(extraPublicPage && siteId === "kamakura" ? [{ siteId, pageId: "newSourceOnly", title: "New source page", path: "/new", locales: { ja: { state: "source", published: true }, en: { state: "missing", published: false } } }] : [])
       ] }; },
       readPage,
       command: async (request) => {
@@ -128,9 +129,12 @@ async function setup({ conflictOnce = false, conflictSourceChange = false, rejec
       requestSiteTranslation: async ({ siteId }) => { const state = sites[siteId]; state.siteVersion++; state.job = { state: "queued" }; return { status: "applied", version: `site-${state.siteVersion}` }; }
     }
   };
+  if (localeRelease) Object.assign(adapter.localization, localeRelease);
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   await act(async () => root.render(createElement(PageEditor, { adapter, ...(recovery ? { recovery } : {}) }))); await flush(6);
-  return { sites, calls, adapter, resolveDelayed: () => delayedResolve?.(), resolveDelayedSite: () => delayedSiteResolve?.(), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  return { sites, calls, adapter, resolveDelayed: () => delayedResolve?.(), resolveDelayedSite: () => delayedSiteResolve?.(),
+    rerenderAdapter: async (next) => { await act(async () => root.render(createElement(PageEditor, { adapter: next, ...(recovery ? { recovery } : {}) }))); await flush(4); },
+    cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
 async function setupSharedComponents() {
@@ -471,6 +475,159 @@ test("a target save stays fail closed while site and page localization state rel
     app.resolveDelayedSite(); await flush(8);
     assert.equal(input("テキスト").disabled, false);
     assert.equal(app.calls.saves.at(-1).localization.expectedOverlayVersion > 0, true);
+  } finally { await app.cleanup(); }
+});
+
+test("optional locale release host shows the whole-language plan and applies only after explicit confirmation", async () => {
+  const calls = { reads: 0, prepares: [], applies: [] };
+  const summary = (releaseId, version, label) => ({ releaseId, version, label, publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 3 });
+  const current = summary("en-1", "release-v1", "English v1"), prepared = summary("en-2", "release-v2", "English v2");
+  const app = await setup({ localeRelease: {
+    readRelease: async ({ siteId, locale }) => { calls.reads++; return { siteId, locale, current, history: [summary("en-0", "release-v0", "English v0")] }; },
+    prepareRelease: async (request) => { calls.prepares.push(structuredClone(request)); return { ...request, confirmationToken: "one-use-demo", domain: "https://kamakura.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "prepare-cas-2", previous: current, prepared,
+      pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }],
+      sharedResources: [{ id: "header", label: "Header", kind: "component", complete: true, reasons: [] }, { id: "nav", label: "Navigation", kind: "navigation", complete: true, reasons: [] }, { id: "css", label: "Site CSS", kind: "style", complete: true, reasons: [] }], incompleteReasons: [], complete: true }; },
+    applyRelease: async (request) => { calls.applies.push(structuredClone(request)); return { status: "applied", siteId: request.siteId, locale: request.locale, current: prepared }; },
+    rollbackRelease: async () => ({ status: "conflict" })
+  } });
+  try {
+    await click("English（訳文）"); await flush(7);
+    assert.equal(button("言語全体の公開確認").disabled, false);
+    await click("言語全体の公開確認");
+    assert.ok(document.querySelector('[role="dialog"][aria-label="言語全体の公開前確認"]'));
+    assert.match(document.body.textContent, /kamakura\.example/); assert.match(document.body.textContent, /English v1/); assert.match(document.body.textContent, /English v2/);
+    assert.doesNotMatch(document.body.textContent, /prepare-cas-2/); assert.match(document.body.textContent, /Home/); assert.match(document.body.textContent, /Site CSS/);
+    const dialogText = document.querySelector('[role="dialog"]').textContent; assert.doesNotMatch(dialogText, /楽観version|ホストが除外/);
+    assert.equal(document.querySelectorAll('[role="dialog"] small.e-help').length, 0, "opaque page/resource IDs are not primary dialog copy");
+    assert.equal(button("この言語全体を公開").disabled, true);
+    const confirm = document.querySelector('[role="dialog"] input[type="checkbox"]'); await act(async () => confirm.click()); await flush();
+    assert.equal(button("この言語全体を公開").disabled, false); await click("この言語全体を公開"); await flush(8);
+    assert.equal(calls.prepares.length, 1); assert.equal(calls.applies.length, 1); assert.deepEqual(calls.applies[0], { confirmationToken: "one-use-demo", siteId: "kamakura", locale: "en", expectedCurrentVersion: "release-v1", optimisticVersion: "prepare-cas-2", preparedReleaseId: "en-2", preparedVersion: "release-v2" });
+    assert.match(document.body.textContent, /言語全体を公開しました/); assert.ok(calls.reads >= 2, "current whole-language state is refreshed after apply"); assert.ok(app.calls.siteReads >= 2, "same-page localization status is refreshed after apply");
+  } finally { await app.cleanup(); }
+});
+
+test("locale release conflicts and unknown outcomes keep drafts, close stale plans and refresh current status", async () => {
+  let mode = "conflict", reads = 0, applyCalls = 0;
+  const summary = { releaseId: "en-1", version: "release-v1", label: "English v1", publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 1 };
+  const releaseHost = {
+    readRelease: async ({ siteId, locale }) => { reads++; return { siteId, locale, current: summary, history: [] }; },
+    prepareRelease: async (request) => ({ ...request, confirmationToken: `token-${applyCalls}`, domain: "https://kamakura.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "prepare-v1", previous: summary, prepared: { ...summary, releaseId: "en-2", version: "release-v2", label: "English v2" },
+      pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }], sharedResources: [{ id: "nav", label: "Navigation", kind: "navigation", complete: true, reasons: [] }], incompleteReasons: [], complete: true }),
+    applyRelease: async () => { applyCalls++; if (mode === "unknown") throw new Error("lost response"); return { status: "conflict" }; }, rollbackRelease: async () => ({ status: "expired" })
+  };
+  const app = await setup({ localeRelease: releaseHost });
+  async function prepareAndConfirm() { await click("言語全体の公開確認"); const confirm = document.querySelector('[role="dialog"] input[type="checkbox"]'); await act(async () => confirm.click()); await flush(); await click("この言語全体を公開"); await flush(8); }
+  try {
+    await click("English（訳文）"); await flush(6); const draftBefore = structuredClone(app.sites.kamakura.targetDocument);
+    await prepareAndConfirm(); assert.match(document.body.textContent, /競合しました/); assert.equal(document.querySelector('[role="dialog"]'), null); assert.deepEqual(app.sites.kamakura.targetDocument, draftBefore);
+    mode = "unknown"; await prepareAndConfirm(); assert.match(document.body.textContent, /反映結果を確認できませんでした/); assert.equal(document.querySelector('[role="dialog"]'), null); assert.deepEqual(app.sites.kamakura.targetDocument, draftBefore);
+    assert.ok(reads >= 3); assert.equal(applyCalls, 2);
+  } finally { await app.cleanup(); }
+});
+
+test("old localization hosts keep target publication disabled and source publication page-scoped", async () => {
+  const app = await setup();
+  try {
+    assert.equal(button("公開前の確認").disabled, false, "source legacy publish remains available");
+    await click("English（訳文）"); await flush(5);
+    assert.equal(button("公開前の確認").disabled, true); assert.match(document.body.textContent, /このサイトでは訳文の公開を利用できません/);
+    assert.equal(button("言語全体の公開確認"), undefined);
+  } finally { await app.cleanup(); }
+});
+
+test("late locale-release reads are ignored and incomplete page/shared reasons block apply", async () => {
+  let resolveOld;
+  const summary = { releaseId: "ja-1", version: "release-ja-1", label: "日本語 v1", publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 1 };
+  const app = await setup({ localeRelease: {
+    readRelease: async ({ siteId, locale }) => siteId === "kamakura" ? new Promise((resolve) => { resolveOld = () => resolve({ siteId, locale, current: null, history: [] }); }) : { siteId, locale, current: summary, history: [] },
+    prepareRelease: async (request) => ({ ...request, confirmationToken: "incomplete-token", domain: "https://experience.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "prepare-ja-2", previous: summary,
+      prepared: { ...summary, releaseId: "ja-2", version: "release-ja-2", label: "日本語 v2" }, pages: [{ pageId: "home", title: "ホーム", path: "/ja/", complete: false, reasons: ["見出しが未確認です"] }],
+      sharedResources: [{ id: "nav", label: "Navigation", kind: "navigation", complete: false, reasons: ["メニュー翻訳が未確認です"] }], incompleteReasons: ["未確認の内容が2件あります"], complete: false }),
+    applyRelease: async () => { throw new Error("must not apply"); }, rollbackRelease: async () => ({ status: "conflict" })
+  } });
+  try {
+    await click("English（訳文）"); await flush(4);
+    await change(document.querySelector('select[aria-label="編集するサイト"]'), "experience"); await flush(7);
+    resolveOld(); await flush(4);
+    await click("日本語（訳文）"); await flush(7);
+    assert.equal(button("言語全体の公開確認").disabled, false);
+    await click("言語全体の公開確認");
+    assert.match(document.body.textContent, /experience\.example/); assert.match(document.body.textContent, /見出しが未確認/); assert.match(document.body.textContent, /メニュー翻訳が未確認/); assert.match(document.body.textContent, /未確認の内容が2件/);
+    assert.equal(button("この言語全体を公開").disabled, true); assert.equal(document.querySelector('[role="dialog"] input[type="checkbox"]').disabled, true);
+  } finally { await app.cleanup(); }
+});
+
+test("late whole-locale prepare and apply replies cannot install state after adapter replacement", async () => {
+  const summary = { releaseId: "en-1", version: "release-v1", label: "English v1", publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 1 };
+  const prepared = { ...summary, releaseId: "en-2", version: "release-v2", label: "English v2" };
+  const plan = (request) => ({ ...request, confirmationToken: "late-token", domain: "https://kamakura.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "late-live", previous: summary, prepared,
+    pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }], sharedResources: [{ id: "nav", label: "Navigation", kind: "navigation", complete: true, reasons: [] }], incompleteReasons: [], complete: true });
+  let resolvePrepare;
+  let app = await setup({ localeRelease: { readRelease: async ({ siteId, locale }) => ({ siteId, locale, current: summary, history: [] }), prepareRelease: async (request) => new Promise((resolve) => { resolvePrepare = () => resolve(plan(request)); }),
+    applyRelease: async (request) => ({ status: "applied", siteId: request.siteId, locale: request.locale, current: prepared }), rollbackRelease: async () => ({ status: "conflict" }) } });
+  try {
+    await click("English（訳文）"); await flush(5); await click("言語全体の公開確認");
+    await app.rerenderAdapter({ ...app.adapter, localization: { ...app.adapter.localization } }); resolvePrepare(); await flush(6);
+    assert.equal(document.querySelector('[role="dialog"][aria-label="言語全体の公開前確認"]'), null);
+  } finally { await app.cleanup(); }
+
+  let resolveApply;
+  app = await setup({ localeRelease: { readRelease: async ({ siteId, locale }) => ({ siteId, locale, current: summary, history: [] }), prepareRelease: async (request) => plan(request),
+    applyRelease: async (request) => new Promise((resolve) => { resolveApply = () => resolve({ status: "applied", siteId: request.siteId, locale: request.locale, current: prepared }); }), rollbackRelease: async () => ({ status: "conflict" }) } });
+  try {
+    await click("English（訳文）"); await flush(5); await click("言語全体の公開確認"); const confirm = document.querySelector('[role="dialog"] input[type="checkbox"]');
+    await act(async () => confirm.click()); await flush(); await click("この言語全体を公開");
+    await app.rerenderAdapter({ ...app.adapter, localization: { ...app.adapter.localization } }); resolveApply(); await flush(6);
+    assert.doesNotMatch(document.body.textContent, /言語全体を公開しました/);
+  } finally { await app.cleanup(); }
+});
+
+test("translated rollback preserves an older catalogue while newly published source-only pages exist", async () => {
+  const calls = { prepares: [], rollbacks: [] }, summary = (releaseId, version, label) => ({ releaseId, version, label, publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 1 });
+  const current = summary("en-2", "release-v2", "English v2"), prior = summary("en-1", "release-v1", "English v1"), prepared = summary("en-rollback-3", "release-v3", "English rollback v3");
+  const app = await setup({ extraPublicPage: true, localeRelease: {
+    readRelease: async ({ siteId, locale }) => ({ siteId, locale, current, history: [prior] }),
+    prepareRelease: async (request) => { calls.prepares.push(structuredClone(request)); return { ...request, confirmationToken: "rollback-token", domain: "https://kamakura.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "rollback-cas", previous: current, prepared,
+      pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }], sharedResources: [{ id: "nav", label: "Navigation", kind: "navigation", complete: true, reasons: [] }], incompleteReasons: [], complete: true }; },
+    applyRelease: async () => ({ status: "conflict" }), rollbackRelease: async (request) => { calls.rollbacks.push(structuredClone(request)); return { status: "applied", siteId: request.siteId, locale: request.locale, current: prepared }; }
+  } });
+  try {
+    await click("English（訳文）"); await flush(6);
+    assert.match(document.body.textContent, /公開中 1 \/ 2 ページ/);
+    await change(input("戻す言語全体版"), "en-1"); await click("言語全体の復元内容を確認");
+    assert.match(document.body.textContent, /English v2/); assert.match(document.body.textContent, /English rollback v3/);
+    assert.doesNotMatch(document.querySelector('[role="dialog"]').textContent, /New source page/);
+    const confirm = document.querySelector('[role="dialog"] input[type="checkbox"]'); await act(async () => confirm.click()); await flush(); await click("この言語全体版を復元"); await flush(7);
+    assert.equal(calls.prepares[0].action, "rollback"); assert.equal(calls.prepares[0].rollbackReleaseId, "en-1"); assert.equal(calls.rollbacks[0].preparedReleaseId, "en-rollback-3"); assert.match(document.body.textContent, /言語全体版を新しい公開版として復元/);
+  } finally { await app.cleanup(); }
+});
+
+test("a prepare conflict refreshes source and release versions before a manual retry", async () => {
+  const versions = [], summary = { releaseId: "en-1", version: "release-v1", label: "English v1", publishedAt: "2026-10-20T00:00:00.000Z", pages: 1, sharedResources: 1 };
+  let app;
+  app = await setup({ localeRelease: {
+    readRelease: async ({ siteId, locale }) => ({ siteId, locale, current: summary, history: [] }),
+    prepareRelease: async (request) => {
+      versions.push(request.expectedSiteVersion);
+      if (request.expectedSiteVersion !== "site-2") { app.sites.kamakura.siteVersion = 2; throw Object.assign(new Error("changed source"), { status: 409 }); }
+      return { ...request, confirmationToken: "fresh-token", domain: "https://kamakura.example", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "fresh-cas", previous: summary,
+        prepared: { ...summary, releaseId: "en-2", version: "release-v2", label: "English v2" },
+        pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }], sharedResources: [{ id: "nav", label: "Navigation", kind: "navigation", complete: true, reasons: [] }], incompleteReasons: [], complete: true };
+    },
+    applyRelease: async () => ({ status: "conflict" }), rollbackRelease: async () => ({ status: "conflict" })
+  } });
+  try {
+    await click("English（訳文）"); await flush(7);
+    const original = structuredClone(app.sites.kamakura.targetDocument), reads = app.calls.siteReads;
+    await click("言語全体の公開確認"); await flush(8);
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.match(document.body.textContent, /409/);
+    assert.ok(app.calls.siteReads > reads);
+    assert.deepEqual(app.sites.kamakura.targetDocument, original);
+    await click("言語全体の公開確認"); await flush(5);
+    assert.ok(document.querySelector('[role="dialog"]'));
+    assert.deepEqual(versions, ["site-1", "site-2"]);
   } finally { await app.cleanup(); }
 });
 

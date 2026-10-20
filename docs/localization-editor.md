@@ -28,6 +28,8 @@ const adapter: EditorAdapter = {
 ```
 
 - `readSite(siteId, signal)` は、`SiteLocalizationConfig`、論理ページ1行ごとの日英状態、opaqueなversion、任意のサイト翻訳job状態を返します。`sourceLocale` は必須で、サイト名やlocaleから推測しません。
+
+公開連携を実装するホストは、各ページの`locales.ja.published`／`locales.en.published`を現在の言語別公開版の所属から返してください。選択中の言語の公開状態・公開中ページ数に使用し、原文だけに公開した新ページを訳文側で公開済みと表示しません。
 - `readPage(target, signal)` は、現在の正本原文、`sourceVersion`、現在のoverlay、opaqueなversion、任意のblock allowlist・旧原文値・job状態を返します。遅い応答はsite / page / localeと読込epochで破棄されます。`components`を併用するホストでは、部品ライブラリは`components.readLibrary`から得た`LibrarySession`を使い、`readPage.components`は返しません。後者は旧ホスト向けのfallbackです。
 - `command` は `request-translation`、`adopt-candidate`、`review-current`、`set-value` を処理します。すべて `expectedSourceVersion`、opaque version、overlay versionをCASし、409は `{ status: "conflict" }` に変換します。手修正の`set-value`はさらに`sourceFingerprint`と`expectedEntryVersion`（未作成は0）を比較し、指定unit以外を変更しません。
 - `requestSiteTranslation` は任意です。実装すると「サイト全体を翻訳」を表示します。queued / running / failedを`readSite`で返してください。エディターは常時pollせず、操作・保存・再読込時だけ状態を読み直します。
@@ -83,7 +85,7 @@ const checked = await validateLocalizedDocumentSave(
 
 共通部品のunitは定義ID＋定義内node IDで一度だけ表示します。通常文字・空alt・rich text・asset referenceの手修正、候補採用、確認は`command`でoverlayへ保存します。ホストはshared-component unitをサイト＋target localeの共有値として永続化し、同じ定義を使う全ページの`readPage`で同じ値・確認状態を返してください。ページごとのoverlay表現を採る場合も、1ページでの`set-value`／採用／確認を同一transactionまたは整合する更新処理で全利用ページへ反映し、ページ移動で値を巻き戻してはいけません。正本`ComponentLibrary`自体は変更しません。
 
-訳文のundo/redoは、そのセッション内で許可済みのcontent操作だけを戻します。端末内の緊急復元は現在の正本原文に対して`validateLocalizedDocumentSave`を再実行し、文字・画像だけの復元を許可して、ID・href・style・構造を変えた退避を拒否します。サイト全体／言語全体の履歴とrollbackは#43の公開契約とは分離したままです。
+訳文のundo/redoは、そのセッション内で許可済みのcontent操作だけを戻します。端末内の緊急復元は現在の正本原文に対して`validateLocalizedDocumentSave`を再実行し、文字・画像だけの復元を許可して、ID・href・style・構造を変えた退避を拒否します。編集undo/redoと、下記の不変な言語全体公開履歴・rollbackは別の操作です。
 
 ## 動作デモ
 
@@ -93,6 +95,18 @@ npm run demo:localization
 
 `http://127.0.0.1:4176` に、NIHOkamakura（日本語→英語）とNIHO experience（英語→日本語）、各2ページを表示します。実際の`ComponentLibrary` instanceとして共有するヘッダー／フッター、ページ本文、画像を持ち、静的辞書による候補生成、手編集、採用、確認、原文更新後の再materialize、遅延、失敗、409をインメモリで試せます。本番AI・実サイト・認証情報・永続化には接続しません。
 
+## 言語全体の公開
+
+訳文の公開には `EditorLocalizationAdapter` の `readRelease / prepareRelease / applyRelease / rollbackRelease` を4つとも実装します。実装済みhostでは、従来無効だった訳文の公開ボタンが「言語全体の公開確認」になり、全ページ、共通部品、ナビ、style、外部resource、domain、現在版、準備版、期限、確認用の依存版、未完了理由を表示します。未完了項目が1つでもあればapplyできません。
+
+未保存ページ、未保存のsource component library、入力途中の翻訳手動bufferはprepareを止めます。applyはhost発行のopaqueなconfirmation tokenと準備時identityだけを返し、任意snapshotを送りません。409、期限切れ、通信断では下書きを保持して確認を閉じ、現在の言語releaseと同じページの翻訳公開状態を読み直します。通信断は成立状況不明なので、再実行前に現在状態を確認します。
+
+prepare自体が競合した場合も、現在の文書・サイト版・言語公開版を読み直し、利用者が改めて確認します。同じ古い版で自動再試行しません。新規公開の確認は現在の原文公開ページ全体を対象にし、過去版の復元は現在も公開可能な過去版のページだけを対象にします。後から追加された原文だけのページを過去の訳文版へ混ぜません。
+
+rollbackはページrevisionではなく、完全な過去の言語releaseを対象にprepareしてから実行します。現在の削除・非公開・権限取消は過去版より優先します。詳細は[言語別公開・ルート・SEO契約](localization-release.md)を正とします。
+
+4メソッドのどれかが無い旧hostでは訳文公開を無効のままにし、運用者向けの説明を表示します。source言語の既存ページ単位公開は従来どおりで、別ページのsource draftをまとめて公開しません。
+
 ## 今回含まないもの
 
-言語別の公開snapshot、route / canonical / hreflang / sitemap、公開版の原子的切り替えはIssue #43の範囲です。実ホストのDB/API・認可・翻訳worker接続はniho-app #19244以降で実装します。エディターライブラリ単体では翻訳内容を永続化せず、公開中の訳文も変更しません。
+実ホストのDB/API・認可・confirmation token保管、翻訳worker、CDN、public-site renderer接続はniho-app #19244以降で実装します。エディターライブラリ単体では翻訳内容や公開snapshotを永続化せず、実サイトを公開しません。

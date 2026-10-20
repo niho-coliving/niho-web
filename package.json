@@ -78,6 +78,10 @@
     "./localization": {
       "types": "./dist/localization.d.ts",
       "import": "./dist/localization.js"
+    },
+    "./localization-release": {
+      "types": "./dist/localization-release.d.ts",
+      "import": "./dist/localization-release.js"
     }
   },
   "types": "./dist/index.d.ts",
