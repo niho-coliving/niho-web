@@ -71,6 +71,7 @@ type EditorPageChangePlan = {
 
 - 公開済みページのパスを変える場合、旧URLから新URLへの恒久 redirect を追加し、`impact.redirect` に示します。
 - 内部リンクの書換えは、`rewriteInternalLinks(document, from, to, domains)` で各文書の `href` を置き換え、新しい revision として保存します。`to` が正しいページパスでない場合は `DocumentValidationError` を投げます。書き換えた文書は公開確認を経て公開します。
+- 共通部品のライブラリを持つサイトでは、影響に `findComponentLinks(library, path, domains)`（部品の中のリンク）と `findInstanceLinks(document, library, path, domains)`（インスタンスのページごとのリンク先）も含めます。書換えでは `rewriteComponentLinks`（変わった部品の version を上げたライブラリ）と、各文書への `rewriteInstanceLinks` も行い、ライブラリも新しい revision で保存します。
 - canonical は `resolvePageMetadata` の結果を使い、sitemap は `shouldIncludeInSitemap` が `true` のページだけを含めます。
 - private のページは公開サイトで 404 またはホストの認証画面にし、sitemap から外し、検索エンジン向けには `noindex` を出します。
 
