@@ -6,6 +6,7 @@ import { DocumentValidationError, generatePageCss, parseComponentLibrary, parseP
 import { PageRenderer } from "@niho/web/react";
 import { renderPageToHtml } from "@niho/web/server";
 import { editDocument } from "../dist/editor-model.js";
+import { createComponentFromNode } from "../dist/component-model.js";
 
 // 架空の体験データ。ブロックは props 以外の値（料金・予約先）をホストのデータから描画する。
 const experiences = [
@@ -147,4 +148,14 @@ test("slot designs inside shared components resolve with the instance IDs and th
   assert.deepEqual(document.body[0].children[0].slots, { title: { base: { color: { token: "accent" } } } });
   assert.ok(generatePageCss(document, blocks).includes('[data-nw-node="featured1--n2"] [data-nw-slot="title"]{color:var(--nw-accent);}'));
   assert.throws(() => parseComponentLibrary({ ...structuredClone(library), components: [{ ...structuredClone(library.components[0]), root: { type: "element", id: "n1", tag: "section", children: [{ type: "component", id: "n2", block: "ExperienceCards", props: {}, slots: { price: { base: { backgroundColor: "#000000" } } } }] } }] }, blocks), /style not allowed in this slot/);
+});
+
+test("making and detaching components carry tokens used only by slot styles", () => {
+  const empty = parseComponentLibrary({ schemaVersion: 1, siteId: "experience", revision: 1, tokens: {}, components: [] }, blocks);
+  const source = parsePageDocument(page([{ type: "element", id: "wrap", tag: "section", children: [cards({ slots: { title: { base: { color: { token: "accent" } } } } })] }]), blocks);
+  const made = createComponentFromNode(source, [0], empty, { name: "体験の一覧", kind: "section" }, blocks);
+  assert.deepEqual(made.library.tokens, { accent: { type: "color", value: "#195640" } });
+  const page2 = parsePageDocument(page([{ type: "instance", id: "list1", component: made.componentId }], {}), blocks, { components: made.library });
+  const detached = editDocument(page2, { type: "detach", path: [0] }, blocks, [], made.library);
+  assert.deepEqual(detached.body[0].children[0].slots, { title: { base: { color: "#195640" } } });
 });
