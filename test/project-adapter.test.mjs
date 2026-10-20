@@ -52,6 +52,8 @@ test("legal read and save preserve compatibility while forwarding identity field
   await wrapped.saveDraft({ target, document, expectedVersion: "v1", ignored: true }, signal());
   assert.deepEqual(calls.saves[0].target, { siteId: "demo", pageId: "home", locale: "ja-JP" });
   assert.deepEqual(Object.keys(calls.saves[0]).sort(), ["document", "expectedVersion", "target"]);
+  await wrapped.saveDraft({ target, document, expectedVersion: "v2", trigger: "autosave" }, signal());
+  assert.equal(calls.saves[1].trigger, "autosave");
   await assert.rejects(() => wrapped.saveDraft({ target, document: { ...document, siteId: "other" }, expectedVersion: "v1" }, signal()), /文書の対象/);
 });
 
@@ -122,4 +124,49 @@ test("page changes and site settings are limited to the project site and re-vali
   await assert.rejects(() => wrapped.saveSiteSettings({ siteId: "demo", settings: { title: "x", locale: "ja", script: "x" }, expectedVersion: "s1" }, signal()));
   assert.deepEqual(await wrapped.saveSiteSettings({ siteId: "demo", settings: { title: "x", locale: "ja" }, expectedVersion: "s1" }, signal()), { status: "saved", version: "s2" });
   assert.deepEqual(calls.settings, ["demo"]); assert.deepEqual(calls.settingsSaves, [{ siteId: "demo", settings: { title: "x", locale: "ja" }, expectedVersion: "s1" }]);
+});
+
+const revisionEntry = { id: "rev_2", revision: 2, kind: "draft", createdAt: "2026-10-21T00:00:00.000Z", actor: "編集者" };
+const revisionMethods = (calls, overrides = {}) => ({
+  listRevisions: async (request) => { calls.lists.push(structuredClone(request)); return { entries: [revisionEntry], next: "c2" }; },
+  readRevision: async (request) => { calls.readsRevision.push(structuredClone(request)); return { document: { ...fixture, ...request.target } }; },
+  createSnapshot: async (request) => { calls.snapshots.push(structuredClone(request)); return { status: "saved", entry: { ...revisionEntry, id: "snap_1", kind: "snapshot", label: request.label } }; },
+  ...overrides
+});
+test("revision methods are wrapped only when present, limited to the project site and validated", async () => {
+  const { wrapped: legacy } = setup();
+  for (const name of ["listRevisions", "readRevision", "createSnapshot"]) assert.equal(name in legacy, false, name);
+  const calls = { lists: [], readsRevision: [], snapshots: [] };
+  const only = setup({ listRevisions: revisionMethods(calls).listRevisions }).wrapped;
+  assert.equal(typeof only.listRevisions, "function"); assert.equal("readRevision" in only, false); assert.equal("createSnapshot" in only, false);
+  const { wrapped } = setup(revisionMethods(calls));
+  const target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
+  assert.deepEqual(await wrapped.listRevisions({ target: { ...target, ignored: true }, cursor: "c1" }, signal()), { entries: [revisionEntry], next: "c2" });
+  assert.deepEqual(calls.lists[0], { target, cursor: "c1" });
+  assert.deepEqual(Object.keys(await wrapped.readRevision({ target, id: "rev_2" }, signal())), ["document"]);
+  assert.deepEqual(calls.readsRevision[0], { target, id: "rev_2" });
+  assert.deepEqual(await wrapped.createSnapshot({ target, expectedVersion: "v1", label: "公開前" }, signal()), { status: "saved", entry: { ...revisionEntry, id: "snap_1", kind: "snapshot", label: "公開前" } });
+  assert.deepEqual(calls.snapshots[0], { target, expectedVersion: "v1", label: "公開前" });
+  const other = { ...target, siteId: "other" };
+  await assert.rejects(() => wrapped.listRevisions({ target: other }, signal()), /一致しません/);
+  await assert.rejects(() => wrapped.readRevision({ target: other, id: "rev_2" }, signal()), /一致しません/);
+  await assert.rejects(() => wrapped.createSnapshot({ target: other, expectedVersion: "v1", label: "x" }, signal()), /一致しません/);
+  assert.equal(calls.lists.length, 1); assert.equal(calls.readsRevision.length, 1); assert.equal(calls.snapshots.length, 1);
+  await assert.rejects(() => setup(revisionMethods(calls, { readRevision: async () => ({ document: { ...fixture, siteId: "other" } }) })).wrapped.readRevision({ target, id: "rev_2" }, signal()), /文書の対象/);
+  await assert.rejects(() => setup(revisionMethods(calls, { listRevisions: async () => ({ entries: [{ ...revisionEntry, email: "x@example.test" }] }) })).wrapped.listRevisions({ target }, signal()));
+  await assert.rejects(() => setup(revisionMethods(calls, { createSnapshot: async () => ({ status: "saved", entry: { ...revisionEntry, kind: "merge" } }) })).wrapped.createSnapshot({ target, expectedVersion: "v1", label: "x" }, signal()));
+  assert.deepEqual(await setup(revisionMethods(calls, { createSnapshot: async () => ({ status: "conflict" }) })).wrapped.createSnapshot({ target, expectedVersion: "v1", label: "x" }, signal()), { status: "conflict" });
+});
+test("release plans keep a validated public URL and affected list through the project wrapper", async () => {
+  const target = { siteId: "demo", pageId: "home", locale: "ja-JP" }, request = { target, expectedVersion: "v1", action: "publish" };
+  const extra = { url: "https://example.test/about", affected: [{ kind: "shared", name: "ヘッダー", detail: "ナビゲーション", hidden: true }, { kind: "site", name: "サイト設定" }] };
+  const { wrapped, calls } = setup({ prepareRelease: async (input) => ({ ...input, confirmationToken: "token", domain: "https://example.test", changes: [], ...extra }) });
+  const plan = await wrapped.prepareRelease(request, signal());
+  assert.equal(plan.url, "https://example.test/about");
+  assert.deepEqual(plan.affected, [{ kind: "shared", name: "ヘッダー", detail: "ナビゲーション" }, { kind: "site", name: "サイト設定" }]);
+  await wrapped.release(plan, signal()); assert.equal(calls.releases[0].url, "https://example.test/about");
+  for (const url of ["https://evil.example.test/about", "https://www.example.test/about", "https://example.test.evil/x"])
+    await assert.rejects(() => setup({ prepareRelease: async (input) => ({ ...input, confirmationToken: "token", domain: "https://example.test", changes: [], url }) }).wrapped.prepareRelease(request, signal()), /一致/);
+  await assert.rejects(() => setup({ prepareRelease: async (input) => ({ ...input, confirmationToken: "token", domain: "https://example.test", changes: [], affected: [{ kind: "layout", name: "x" }] }) }).wrapped.prepareRelease(request, signal()), /一致/);
+  await assert.rejects(() => wrapped.release({ ...plan, url: "https://evil.example.test/about" }, signal()), /一致/);
 });

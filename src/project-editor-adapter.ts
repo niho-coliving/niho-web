@@ -1,5 +1,6 @@
 import { normalizePageChange, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
 import type { EditorAdapter, EditorComponentAdapter, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
+import { parseRevisionEntry, parseRevisionPage } from "./history.js";
 import { parseSiteSettings } from "./pages.js";
 import { parseProject, type Project } from "./projects.js";
 import { identifier, line, record } from "./validation-utils.js";
@@ -80,7 +81,10 @@ function checkedPlan(plan: EditorReleasePlan, request: EditorReleaseRequest, sit
     ...releaseRequest(plan, targetForProject(plan.target, site)),
     confirmationToken: plan.confirmationToken,
     domain: plan.domain,
-    changes: plan.changes.map((change) => ({ path: change.path, before: change.before, after: change.after }))
+    changes: plan.changes.map((change) => ({ path: change.path, before: change.before, after: change.after })),
+    ...(plan.url === undefined ? {} : { url: plan.url }),
+    ...(plan.affected === undefined ? {} : { affected: Array.isArray(plan.affected) ? plan.affected.map((item) => item && typeof item === "object"
+      ? { kind: item.kind, name: item.name, ...(item.detail === undefined ? {} : { detail: item.detail }) } : item) : plan.affected })
   };
   validateReleasePlan(copy, request, site);
   return copy;
@@ -140,7 +144,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       const target = targetForProject(request.target, site);
       const document = structuredClone(request.document);
       assertDocumentTarget(document, target);
-      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion }, signal);
+      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion, ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}) }, signal);
     },
     async prepareRelease(request, signal) {
       const checked = releaseRequest(request, targetForProject(request.target, site));
@@ -186,6 +190,31 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
         if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトは変更できません。");
         return adapter.saveSiteSettings!({ siteId: site.id, settings: parseSiteSettings(request.settings), expectedVersion: request.expectedVersion }, signal);
       }
-    } satisfies Pick<EditorAdapter, "saveSiteSettings"> : {})
+    } satisfies Pick<EditorAdapter, "saveSiteSettings"> : {}),
+    ...(adapter.listRevisions ? {
+      async listRevisions(request, signal) {
+        const target = targetForProject(request.target, site);
+        if (request.cursor !== undefined && (typeof request.cursor !== "string" || request.cursor.length > 500)) throw new Error("版履歴の続きを確認できません。");
+        return parseRevisionPage(structuredClone(await adapter.listRevisions!({ target, ...(request.cursor === undefined ? {} : { cursor: request.cursor }) }, signal)));
+      }
+    } satisfies Pick<EditorAdapter, "listRevisions"> : {}),
+    ...(adapter.readRevision ? {
+      async readRevision(request, signal) {
+        const target = targetForProject(request.target, site);
+        if (typeof request.id !== "string" || !request.id || request.id.length > 200) throw new Error("版を確認できません。");
+        const result = structuredClone(await adapter.readRevision!({ target, id: request.id }, signal));
+        assertDocumentTarget(result?.document, target);
+        return { document: result.document };
+      }
+    } satisfies Pick<EditorAdapter, "readRevision"> : {}),
+    ...(adapter.createSnapshot ? {
+      async createSnapshot(request, signal) {
+        const target = targetForProject(request.target, site);
+        const result = await adapter.createSnapshot!({ target, expectedVersion: request.expectedVersion, label: request.label }, signal);
+        if (result.status === "conflict") return { status: "conflict" };
+        if (result.status !== "saved") throw new Error("スナップショットの結果が一致しません。");
+        return { status: "saved", entry: parseRevisionEntry(structuredClone(result.entry)) };
+      }
+    } satisfies Pick<EditorAdapter, "createSnapshot"> : {})
   };
 }
