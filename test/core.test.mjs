@@ -157,3 +157,33 @@ test("component registry allows only explicitly declared primitive public props"
   const unsafeContract = { PublicNotice: { props: { onClick: { type: "string" } } } }; reject(input, unsafeContract);
   const inParagraph = doc(); inParagraph.body[0].children[1].children = [input.body.at(-1)]; reject(inParagraph, blocks);
 });
+
+test("img elements can reference a library asset instead of a URL and still require alt", () => {
+  const image = (node) => { const input = doc(); input.body[0].children.push({ type: "element", id: "photo", tag: "img", children: [], ...node }); return input; };
+  const input = image({ asset: { provider: "uploads", id: "sea-1.webp" }, attrs: { alt: "" } }), result = parsePageDocument(input);
+  assert.deepEqual(result, input);
+  input.body[0].children[3].asset.id = "changed";
+  assert.equal(result.body[0].children[3].asset.id, "sea-1.webp");
+  reject(image({ asset: { provider: "uploads", id: "sea" } }));
+  reject(image({ asset: { provider: "uploads", id: "sea" }, attrs: {} }));
+  reject(image({ asset: { provider: "uploads", id: "sea" }, attrs: { alt: "", src: "/sea.webp" } }));
+  const div = doc(); div.body[0].asset = { provider: "uploads", id: "sea" }; reject(div);
+  for (const asset of [{ provider: "1uploads", id: "sea" }, { provider: "up:loads", id: "sea" }, { provider: "uploads", id: "" }, { provider: "uploads", id: "../sea" },
+    { provider: "uploads", id: "a/b" }, { provider: "uploads", id: "a b" }, { provider: "uploads", id: "a".repeat(129) }, { provider: "uploads", id: "sea", src: "/x.webp" },
+    { provider: "uploads" }, "uploads:sea", null]) reject(image({ asset, attrs: { alt: "" } }));
+});
+
+test("background images accept only library asset references and background enums are closed", () => {
+  const input = doc();
+  Object.assign(input.body[0].style.base, { backgroundImage: { asset: { provider: "uploads", id: "wave" } }, backgroundSize: "cover", backgroundPosition: "top left", backgroundRepeat: "no-repeat" });
+  assert.deepEqual(parsePageDocument(input), input);
+  const css = generatePageCss(input);
+  assert.ok(css.includes("background-position:top left;background-repeat:no-repeat;background-size:cover;color:var(--nw-ink);"));
+  assert.ok(!css.includes("background-image"));
+  for (const declarations of [{ backgroundImage: "url(/a.webp)" }, { backgroundImage: "/a.webp" }, { backgroundImage: { token: "ink" } }, { backgroundImage: 1 },
+    { backgroundImage: { asset: { provider: "uploads", id: "a" }, url: "/a.webp" } }, { backgroundImage: { asset: { provider: "uploads", id: "a", src: "/a.webp" } } },
+    { backgroundImage: { asset: "uploads:a" } }, { backgroundImage: {} }, { backgroundSize: "100px" }, { backgroundSize: 10 }, { backgroundSize: { token: "space" } },
+    { backgroundPosition: "center;color:red" }, { backgroundPosition: "50% 50%" }, { backgroundRepeat: "round" }]) {
+    const copy = doc(); copy.body[0].style.base = declarations; reject(copy);
+  }
+});

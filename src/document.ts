@@ -2,7 +2,7 @@ import type {
   BlockContracts, ElementAttributes, ElementTag, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
 } from "./types.js";
 import { parseStyle, parseTokens } from "./style-values.js";
-import { fail, identifier, isSafePublicUrl, keys, line, localeCode, record, string } from "./validation-utils.js";
+import { fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
@@ -13,7 +13,7 @@ const tagAttributes: Partial<Record<ElementTag, string[]>> = {
   a: ["href", "target", "rel", "hrefLang"], img: ["src", "alt", "width", "height", "loading", "decoding"],
   source: ["srcSet", "type", "media"], ol: ["start", "reversed"], li: ["value"], time: ["dateTime"]
 };
-function attributes(value: unknown, tag: ElementTag, path: string): ElementAttributes {
+function attributes(value: unknown, tag: ElementTag, path: string, asset = false): ElementAttributes {
   const source = record(value, path), result: ElementAttributes = {};
   keys(source, [...globalAttributes, ...(tagAttributes[tag] ?? [])], path);
   for (const [name, value] of Object.entries(source)) {
@@ -46,7 +46,8 @@ function attributes(value: unknown, tag: ElementTag, path: string): ElementAttri
     }
     result[name] = value as string | number | boolean;
   }
-  if (tag === "img" && (typeof result.src !== "string" || typeof result.alt !== "string")) fail(path, "img requires src and alt");
+  if (tag === "img" && asset && Object.hasOwn(result, "src")) fail(path, "img uses either src or asset");
+  if (tag === "img" && (!asset && typeof result.src !== "string" || typeof result.alt !== "string")) fail(path, asset ? "img requires alt" : "img requires src and alt");
   return result;
 }
 
@@ -133,7 +134,7 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}): 
         return { type: "text", text };
       }
       if (node.type !== "element" && node.type !== "component") fail(`${at}.type`, "unknown node type");
-      keys(node, node.type === "element" ? ["type", "id", "tag", "attrs", "style", "children"] : ["type", "id", "block", "props", "style"], at);
+      keys(node, node.type === "element" ? ["type", "id", "tag", "asset", "attrs", "style", "children"] : ["type", "id", "block", "props", "style"], at);
       const id = identifier(node.id, `${at}.id`);
       if (ids.has(id)) fail(`${at}.id`, "duplicate node ID");
       ids.add(id);
@@ -157,7 +158,9 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}): 
       if (typeof node.tag !== "string" || !tags.has(node.tag)) fail(`${at}.tag`, "unsupported element");
       const tag = node.tag as ElementTag;
       if (inline && !phrasing.has(tag) || constrainedParent && !constrainedParent.includes(tag) || insideLink && tag === "a") fail(at, "invalid HTML content nesting");
-      const attrs = node.attrs === undefined ? {} : { attrs: attributes(node.attrs, tag, `${at}.attrs`) };
+      if (node.asset !== undefined && tag !== "img") fail(`${at}.asset`, "only img can reference an asset");
+      const asset = node.asset === undefined ? {} : { asset: parseAssetReference(node.asset, `${at}.asset`) };
+      const attrs = node.attrs === undefined ? {} : { attrs: attributes(node.attrs, tag, `${at}.attrs`, !!asset.asset) };
       const htmlId = attrs.attrs?.id;
       if (typeof htmlId === "string") {
         if (htmlIds.has(htmlId)) fail(`${at}.attrs.id`, "duplicate HTML ID");
@@ -172,7 +175,7 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}): 
           fail(`${at}.children`, "picture requires source elements followed by one img");
         }
       }
-      return { type: "element", id, tag, ...attrs, ...style, children };
+      return { type: "element", id, tag, ...asset, ...attrs, ...style, children };
     });
   }
   return { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: nodes(source.body, "$.body", 0) };

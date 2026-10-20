@@ -1,3 +1,4 @@
+import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 import type { PageDocument, PublicPropValue } from "./types.js";
@@ -83,4 +84,6 @@ export type PageEditorProps = {
   blocks?: EditorBlockRegistry;
   /** 新規配置できる登録ブロック。省略時は全件、空配列なら既存ブロックの編集だけを許可。 */
   insertableBlocks?: readonly string[];
+  /** サイト別の素材ライブラリ。参照は安定させる。省略時は素材の UI を表示しない。 */
+  assets?: AssetLibraryAdapter;
 };

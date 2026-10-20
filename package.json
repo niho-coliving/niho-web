@@ -46,6 +46,10 @@
     "./project-manager": {
       "types": "./dist/project-manager.d.ts",
       "import": "./dist/project-manager.js"
+    },
+    "./assets": {
+      "types": "./dist/assets.d.ts",
+      "import": "./dist/assets.js"
     }
   },
   "types": "./dist/index.d.ts",

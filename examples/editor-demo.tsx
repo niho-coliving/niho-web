@@ -2,7 +2,11 @@ import { createRoot } from "react-dom/client";
 import { PageEditor, type EditorAdapter, type EditorBlockRegistry, type EditorPage, type EditorPageChange, type EditorPageImpact } from "@niho/web/editor";
 import { findInternalLinks, findPathConflict, pageUrl, parseSiteSettings, rewriteInternalLinks, validatePagePath, type SiteSettings } from "@niho/web/pages";
 import fixture from "./page.json";
-import type { PageDocument, PageNode } from "@niho/web/core";
+import type { ElementNode, PageDocument, PageNode } from "@niho/web/core";
+import { createMemoryAssetLibrary } from "./memory-asset-library.mjs";
+
+/** editor-demo.mjs がサーバーで生成した素材のメタデータ。 */
+declare const DEMO_ASSET_SEED: readonly Record<string, unknown>[];
 
 // 公開可能なインメモリ動作例。認証や本番 API には接続しない。
 const domain = "https://demo.example.test", domains = [domain];
@@ -14,6 +18,7 @@ function pageDocument(pageId: string, title: string, children: PageNode[]): Page
     body: [{ type: "element", id: "main", tag: "section", style: { base: { padding: { token: "space" }, fontFamily: { token: "bodyFont" } } }, children }] };
 }
 const home = structuredClone(fixture) as PageDocument;
+(home.body[0] as ElementNode).children.push({ type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "seed-sea" }, attrs: { alt: "朝の海辺の景色" }, style: { base: { maxWidth: "100%", height: "auto", borderRadius: 12 } }, children: [] });
 home.body.push({ type: "component", id: "notice", block: "PublicNotice", props: { heading: "今月のお知らせ", count: 3 } }); home.revision++;
 const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" }, home],
@@ -166,4 +171,18 @@ const adapter: EditorAdapter = {
     return { status: "saved", version: `site-${settingsVersion}` };
   }
 };
-createRoot(document.getElementById("root")!).render(<PageEditor adapter={adapter} blocks={blocks} />);
+// 素材の保存・配信だけをデモサーバーに任せ、一覧・使用状況・削除の可否はメモリ内で判定する。
+const assets = createMemoryAssetLibrary({
+  siteId: "demo", seed: DEMO_ASSET_SEED, folders: [{ id: "photos", name: "写真" }, { id: "documents", name: "資料" }], quota: { limitBytes: 1024 ** 3 },
+  upload: { accept: ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif", "application/pdf"], maxBytes: 5 * 1024 * 1024 },
+  documents: () => [...entries.values()].flatMap((item) => [
+    { pageId: item.page.pageId, locale: item.page.locale, title: item.page.title, state: "draft", document: item.draft },
+    ...(item.published ? [{ pageId: item.page.pageId, locale: item.page.locale, title: item.page.title, state: "published", document: item.published }] : [])
+  ]),
+  store: async (file: Blob, meta: { name: string; mimeType: string }) => {
+    const response = await fetch("/demo-assets", { method: "POST", headers: { "content-type": meta.mimeType, "x-file-name": encodeURIComponent(meta.name) }, body: file });
+    if (!response.ok) throw Object.assign(new Error("upload failed"), { status: response.status });
+    return await response.json();
+  }
+});
+createRoot(document.getElementById("root")!).render(<PageEditor adapter={adapter} blocks={blocks} assets={assets} />);

@@ -6,6 +6,7 @@ import { renderToString } from "react-dom/server";
 import { DocumentValidationError, pageScope, PageRenderer as RootPageRenderer } from "@niho/web";
 import { PageRenderer } from "@niho/web/react";
 import { renderPageToHtml } from "@niho/web/server";
+import { generatePageCss } from "@niho/web/core";
 
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
 
@@ -75,4 +76,50 @@ test("nested document nodes carry their own CSS owner rather than the ancestor s
   assert.notEqual(outerScope, innerScope);
   assert.ok(html.includes(`data-nw-node="heading" data-nw-owner="${innerScope}"`));
   assert.ok(html.includes(`[data-nw-scope="${outerScope}"] [data-nw-owner="${outerScope}"][data-nw-node="hero"]`));
+});
+
+const imageDocument = () => {
+  const doc = structuredClone(fixture);
+  doc.body[0].children.push(
+    { type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "sea" }, attrs: { alt: "海" }, children: [] },
+    { type: "element", id: "sized", tag: "img", asset: { provider: "uploads", id: "sea" }, attrs: { alt: "", width: 300 }, children: [] },
+    { type: "element", id: "lost", tag: "img", asset: { provider: "uploads", id: "lost" }, attrs: { alt: "" }, children: [] });
+  return doc;
+};
+const seaAssets = { "uploads:sea": { src: "/media/sea.webp", width: 1200, height: 800 } };
+
+test("asset images render resolved URLs with intrinsic size and omit or mark unresolved assets", () => {
+  const doc = imageDocument(), html = renderPageToHtml(doc, {}, { assets: seaAssets });
+  assert.equal(html, renderToString(createElement(PageRenderer, { document: doc, assets: seaAssets })));
+  const photo = html.match(/<img[^>]*data-nw-node="photo"[^>]*>/)?.[0], sized = html.match(/<img[^>]*data-nw-node="sized"[^>]*>/)?.[0];
+  assert.ok(photo.includes('src="/media/sea.webp"')); assert.ok(photo.includes('width="1200"')); assert.ok(photo.includes('height="800"')); assert.ok(photo.includes('alt="海"'));
+  assert.ok(sized.includes('width="300"')); assert.ok(!sized.includes("height="));
+  assert.ok(!html.includes('data-nw-node="lost"'));
+  const placeholder = renderToString(createElement(PageRenderer, { document: doc, assets: seaAssets, missingAssets: "placeholder" }));
+  assert.match(placeholder, /<span data-nw-node="lost" data-nw-owner="[^"]+" data-nw-missing-asset="" role="img" aria-label="画像を表示できません"><\/span>/);
+  assert.ok(!renderPageToHtml(doc).includes("<img"));
+});
+
+test("unsafe resolved asset maps throw before any block executes", () => {
+  const doc = imageDocument(); let called = 0;
+  doc.body.unshift({ type: "component", id: "notice", block: "Notice", props: {} });
+  const blocks = { Notice: { props: {}, component: () => { called++; return null; } } };
+  for (const src of ["javascript:alert(1)", "data:image/png;base64,AAAA", "http://example.com/a.png", "#x", '/a.png" onerror="x', "/a b.png", "/a<b.png"]) {
+    assert.throws(() => renderPageToHtml(doc, blocks, { assets: { "uploads:sea": { src } } }), DocumentValidationError, src);
+  }
+  assert.throws(() => renderPageToHtml(doc, blocks, { assets: { "uploads:sea": { src: "/a.png", url: "/b.png" } } }), DocumentValidationError);
+  assert.equal(called, 0);
+});
+
+test("background images compile from resolved assets and only the unresolved declaration is omitted", () => {
+  const doc = structuredClone(fixture);
+  doc.body[0].style.base.backgroundImage = { asset: { provider: "uploads", id: "a" } }; doc.body[0].style.base.backgroundSize = "cover";
+  doc.body[0].style.responsive[0].declarations.backgroundImage = { asset: { provider: "uploads", id: "wide" } };
+  const css = generatePageCss(doc, {}, { "uploads:a": { src: "/media/a.webp" } });
+  assert.ok(css.includes('background-image:url("/media/a.webp");background-size:cover;'));
+  assert.ok(css.includes("@media (min-width:768px)") && css.includes("max-width:64rem;"));
+  assert.equal(css.match(/background-image/g).length, 1);
+  assert.ok(!generatePageCss(doc).includes("background-image")); assert.ok(generatePageCss(doc).includes("background-size:cover;"));
+  assert.throws(() => generatePageCss(doc, {}, { "uploads:a": { src: "javascript:alert(1)" } }), DocumentValidationError);
+  assert.ok(renderPageToHtml(doc, {}, { assets: { "uploads:a": { src: "/media/a.webp" } } }).includes('background-image:url("/media/a.webp");'));
 });
