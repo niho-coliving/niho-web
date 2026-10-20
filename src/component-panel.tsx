@@ -2,6 +2,7 @@
 
 import { Component, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ownElements } from "./component-expand.js";
 import { fitsPropField } from "./components.js";
 import {
   componentKinds, componentPreview, fieldCaptions, kindLabel, masterValue, placementProblem, removalProblem, roleLabels, sortedComponents, usageText, type ComponentUsageSummary
@@ -18,6 +19,7 @@ export type ComponentDialogState = { type: "create"; path: NodePath } | { type: 
 const dialogTitles = { create: "共通部品にする", rename: "名前を変更", remove: "共通部品を削除", detach: "部品を解除" } as const;
 export const componentDialogTitle = (dialog: ComponentDialogState): string => dialogTitles[dialog.type];
 const Glyph = () => <span className="e-part-glyph" aria-hidden="true">◇ </span>;
+const longTextTags = new Set(["p", "blockquote", "li", "dd", "figcaption", "div", "section", "article", "aside"]);
 
 class PreviewGuard extends Component<{ document: PageDocument; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -26,11 +28,39 @@ class PreviewGuard extends Component<{ document: PageDocument; children: ReactNo
   render() { return this.state.failed ? <p>プレビューを表示できません</p> : this.props.children; }
 }
 const StableRenderer = memo(PageRenderer);
-const previewWidth = 960, previewHeight = 88;
-/** 960px 幅で描いた部品をカードの幅に縮小する。内容が同じ間は同じ文書を渡し、再描画しない。 */
+const previewWidth = 960, previewHeight = 88, previewFrameHeight = 720, previewPad = 16, previewMaxScale = .6;
+type Fit = { scale: number; x: number; y: number };
+type Box = { left: number; top: number; right: number; bottom: number };
+/**
+ * 縮小表示で見せる範囲。文字と画像の外形を優先し、全幅の背景で縮小表示が細い帯にならないようにする。
+ * 文字も画像もない部品だけ、背景・枠のある要素の外形を使う。
+ */
+function contentBox(body: HTMLElement): Box | undefined {
+  const document = body.ownerDocument, view = document.defaultView, root = body.querySelector("[data-nw-scope]");
+  if (!view || !root) return undefined;
+  const content: Box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity }, decor: Box = { ...content };
+  const add = (box: Box, rect: DOMRect) => {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    box.left = Math.min(box.left, rect.left); box.top = Math.min(box.top, rect.top); box.right = Math.max(box.right, rect.right); box.bottom = Math.min(Math.max(box.bottom, rect.bottom), previewFrameHeight);
+  };
+  const walker = document.createTreeWalker(root, view.NodeFilter.SHOW_TEXT | view.NodeFilter.SHOW_ELEMENT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeType === view.Node.TEXT_NODE) {
+      if (!node.textContent?.trim()) continue;
+      const range = document.createRange(); range.selectNodeContents(node);
+      for (const rect of Array.from(range.getClientRects())) add(content, rect);
+    } else if (node instanceof view.Element) {
+      if (["IMG", "HR", "PICTURE"].includes(node.tagName)) { add(content, node.getBoundingClientRect()); continue; }
+      const style = view.getComputedStyle(node);
+      if (style.backgroundImage !== "none" || !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(style.backgroundColor) || parseFloat(style.borderTopWidth) > 0) add(decor, node.getBoundingClientRect());
+    }
+  }
+  return [content, decor].find((box) => box.left < box.right && box.top < box.bottom);
+}
+/** 部品を 960px 幅で描き、見えている内容がカードに収まるよう拡大・縮小して中央に置く。内容が同じ間は同じ文書を渡し、再描画しない。 */
 export function ComponentPreview({ library, componentId, blocks }: { library: ComponentLibrary; componentId: string; blocks: EditorBlockRegistry }) {
   const box = useRef<HTMLDivElement>(null), frame = useRef<HTMLIFrameElement>(null), last = useRef<{ text: string; document: PageDocument } | null>(null);
-  const [body, setBody] = useState<HTMLElement | null>(null), [scale, setScale] = useState(.23);
+  const [body, setBody] = useState<HTMLElement | null>(null), [fit, setFit] = useState<Fit>({ scale: .23, x: 0, y: 0 });
   const document = useMemo(() => {
     try {
       const next = componentPreview(library, componentId, blocks), text = JSON.stringify(next);
@@ -40,14 +70,28 @@ export function ComponentPreview({ library, componentId, blocks }: { library: Co
   }, [library, componentId, blocks]);
   useEffect(() => {
     const element = box.current; if (!element) return;
-    const update = () => { if (element.clientWidth) setScale(element.clientWidth / previewWidth); };
-    update();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update); observer?.observe(element);
-    return () => observer?.disconnect();
-  }, []);
+    let frameRequest = 0;
+    const update = () => {
+      const width = element.clientWidth, height = element.clientHeight || previewHeight; if (!width) return;
+      const content = body ? contentBox(body) : undefined;
+      if (!content) { setFit({ scale: width / previewWidth, x: 0, y: 0 }); return; }
+      const contentWidth = content.right - content.left + previewPad * 2, contentHeight = content.bottom - content.top + previewPad * 2;
+      const scale = Math.min(width / contentWidth, height / contentHeight, previewMaxScale);
+      setFit({ scale, x: (width - contentWidth * scale) / 2 - (content.left - previewPad) * scale, y: (height - contentHeight * scale) / 2 - (content.top - previewPad) * scale });
+    };
+    // jsdom 等の requestAnimationFrame がない環境では次のタスクで測る。
+    const later = (callback: () => void) => typeof requestAnimationFrame === "function" ? requestAnimationFrame(callback) : window.setTimeout(callback, 0);
+    const cancel = (id: number) => typeof cancelAnimationFrame === "function" ? cancelAnimationFrame(id) : window.clearTimeout(id);
+    const schedule = () => { cancel(frameRequest); frameRequest = later(update); };
+    schedule();
+    // 画像の読込後に外形が変わるため測り直す。
+    body?.addEventListener("load", schedule, true);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule); observer?.observe(element);
+    return () => { cancel(frameRequest); body?.removeEventListener("load", schedule, true); observer?.disconnect(); };
+  }, [body, document]);
   return <div ref={box} className="e-part-thumb" aria-hidden="true">{document ? <><iframe ref={frame} aria-hidden="true" tabIndex={-1} sandbox="allow-same-origin" title=""
     srcDoc={'<!doctype html><html lang="ja"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
-    style={{ width: previewWidth, height: Math.ceil(previewHeight / scale), transform: `scale(${scale})` }} onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
+    style={{ width: previewWidth, height: previewFrameHeight, transform: `translate(${fit.x}px, ${fit.y}px) scale(${fit.scale})` }} onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
     {body && createPortal(<PreviewGuard document={document}><StableRenderer document={document} blocks={blocks} /></PreviewGuard>, body)}</> : <span>プレビューを表示できません</span>}</div>;
 }
 
@@ -108,15 +152,17 @@ export function InstanceInspector({ instance, definition, usage, staleProps, fie
   edit: () => void; detach: () => void; setValue: (name: string, value: string | undefined) => string | undefined; clean: () => void;
 }) {
   if (!definition) return <p className="e-help e-problem">部品が見つかりません。</p>;
-  const props = Object.entries(definition.props ?? {}), values = instance.props ?? {};
+  const props = Object.entries(definition.props ?? {}), values = instance.props ?? {}, elements = ownElements(definition.root);
+  // 段落など長い文字だけ複数行で入力する。リンク・見出し・ラベルは1行。
+  const multiline = (prop: { node: string; field: ComponentPropField }) => prop.field === "text" && longTextTags.has(elements.get(prop.node)?.tag ?? "");
   return <section className="e-sec" aria-label="共通部品の設定">
-    <p className="e-part-kind"><Glyph />{kindLabel(definition.kind)} · {usage}</p>
+    <p className="e-part-kind">共通部品 · {kindLabel(definition.kind)} · {usage}</p>
     <small className="e-help">中身の見た目と構成は「部品を編集」で変更し、使用中のすべての文書に反映されます。</small>
     <div className="e-actions"><button type="button" onClick={edit} disabled={disabled}>部品を編集</button><button type="button" className="e-danger" onClick={detach} disabled={disabled}>部品を解除</button></div>
     <h3>ページごとの値</h3>
     {props.length ? props.map(([name, prop]) => {
       const master = masterValue(definition, name), overridden = Object.hasOwn(values, name);
-      return <div key={name} className="e-part-value">{field(prop.label, overridden ? values[name]! : master, (value) => setValue(name, value === master ? undefined : value), `instance-${name}`, { multiline: prop.field === "text" })}
+      return <div key={name} className="e-part-value">{field(prop.label, overridden ? values[name]! : master, (value) => setValue(name, value === master ? undefined : value), `instance-${name}`, { multiline: multiline(prop) })}
         {overridden ? <><small className="e-help">このページだけの値</small><button type="button" className="e-small" disabled={disabled} onClick={() => setValue(name, undefined)}>部品の値に戻す</button></>
           : <small className="e-help">部品の値を使用中</small>}</div>;
     }) : <p className="e-help">この部品にはページごとに変えられる値がありません。「部品を編集」で設定できます。</p>}
