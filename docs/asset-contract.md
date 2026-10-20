@@ -64,7 +64,7 @@ import { PageEditor } from '@niho/web/editor';
 | `listAssetUsages(request, signal)` | 素材を参照している下書き・公開版のページ一覧 |
 | `deleteAsset(request, signal)` | 未使用の素材だけを削除。使用中なら `in-use` と使用先を返す |
 | `resolveAssets(request, signal)` | エディターのプレビュー用に、参照を表示用 URL へ解決 |
-| `createFolder(request, signal)`（任意） | フォルダを作成。実装しない場合は UI に作成ボタンを出さない |
+| `createFolder(request, signal)`（任意） | フォルダを作成。出所一覧を実装する場合、要求に選択中の `provider` を含め、ホストが `folders` 権限を再確認する。実装しない場合は UI に作成ボタンを出さない |
 
 エディターは各応答を `parseAssetListResult` 等で検証します。要求した `siteId` と異なる素材、危険なサムネイル URL、未知のフィールドを含む応答は採用しません。ただし UI の検証は補助です。ホストは各呼出しで認証、サイト・プロジェクトの権限、素材の所属を確認してください。`createProjectEditorAdapter` で編集対象を1サイトに限定した場合も、素材 adapter は同じサイトの素材だけを返す必要があります。
 

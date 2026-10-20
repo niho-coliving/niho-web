@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PageRenderer } from "./react.js";
 import { parsePageDocument } from "./document.js";
@@ -8,12 +8,17 @@ import { pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
 import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
 import { editorCss, pagesCss } from "./editor-style.js";
+import { styleEditorCss } from "./editor-style-css.js";
+import { Field } from "./editor-fields.js";
+import { StyleInspector, type StyleRange } from "./editor-style-inspector.js";
+import { StyleLibrary } from "./editor-style-library.js";
+import { editorTiers, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
 import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
-import type { ElementTag, PageDocument, PageNode, StyleProperty, StyleValue } from "./types.js";
+import type { ElementTag, PageDocument, PageNode } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
@@ -31,30 +36,6 @@ function sessionFrom(snapshot: EditorSnapshot, target: EditorTarget, blocks: Edi
   const document = parsePageDocument(snapshot.document, blocks);
   if (!sameTarget(document, target) || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("読込対象が一致しません。");
   return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] };
-}
-
-function Field({ name, value, apply, pending, fieldKey, disabled = false, reason, multiline = false, placeholder, hint }: {
-  name: string; value: string; apply: (value: string) => string | undefined; pending: (key: string, value: boolean) => void; fieldKey: string;
-  disabled?: boolean; reason?: string | undefined; multiline?: boolean; placeholder?: string | undefined; hint?: ((value: string) => ReactNode) | undefined;
-}) {
-  const [buffer, setBuffer] = useState(value), [error, setError] = useState("");
-  const inputId = useId();
-  useEffect(() => { setBuffer(value); setError(""); pending(fieldKey, false); }, [value, fieldKey, pending]);
-  useEffect(() => () => pending(fieldKey, false), [fieldKey, pending]);
-  function commit() {
-    if (buffer === value || disabled || reason) return;
-    const problem = apply(buffer); setError(problem ?? ""); pending(fieldKey, !!problem);
-  }
-  const props = { id: inputId, value: buffer, disabled: disabled || !!reason, placeholder, "aria-invalid": !!error,
-    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => { setBuffer(event.target.value); setError(""); pending(fieldKey, event.target.value !== value); },
-    onBlur: commit };
-  return <label className="e-field" htmlFor={inputId}><span>{name}</span>
-    {multiline ? <textarea {...props} /> : <input {...props} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } }} />}
-    {hint && <small className="e-help">{hint(buffer)}</small>}
-    {reason && <small className="e-help">ロック: {reason}</small>}
-    {error && <small className="e-help e-problem" role="alert">{error}</small>}
-    {buffer !== value && <button className="e-small" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setBuffer(value); setError(""); pending(fieldKey, false); }}>入力を取り消す</button>}
-  </label>;
 }
 
 class PreviewBoundary extends Component<{ document: PageDocument; children: ReactNode }, { failed: boolean }> {
@@ -233,23 +214,17 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
   </>;
 }
 
-const styleGroups: [string, [property: StyleProperty, caption: string, choices?: readonly string[]][]][] = [
-  ["色・文字", [["color", "文字色"], ["backgroundColor", "背景色"], ["fontFamily", "フォント"], ["fontSize", "文字サイズ"], ["fontWeight", "文字の太さ"], ["lineHeight", "行間"], ["textAlign", "文字揃え", ["left", "center", "right", "start", "end"]]]],
-  ["サイズ・余白", [["width", "幅"], ["height", "高さ"], ["minWidth", "最小幅"], ["maxWidth", "最大幅"], ["minHeight", "最小高さ"], ["maxHeight", "最大高さ"], ["margin", "外側の余白"], ["padding", "内側の余白"], ["marginTop", "上の外余白"], ["marginBottom", "下の外余白"], ["paddingTop", "上の内余白"], ["paddingBottom", "下の内余白"], ["gap", "要素間の余白"]]],
-  ["Flex・Grid", [["display", "配置方式", ["block", "flex", "grid", "inline", "inline-block", "inline-flex", "inline-grid", "none"]], ["flexDirection", "並ぶ向き", ["row", "column", "row-reverse", "column-reverse"]], ["flexWrap", "折り返し", ["nowrap", "wrap", "wrap-reverse"]], ["justifyContent", "主軸の配置", ["start", "end", "center", "flex-start", "flex-end", "space-between", "space-around", "space-evenly"]], ["alignItems", "交差軸の配置", ["start", "end", "center", "stretch", "baseline", "flex-start", "flex-end"]], ["flexGrow", "伸びる比率"], ["flexShrink", "縮む比率"], ["flexBasis", "基準サイズ"], ["gridTemplateColumns", "Grid の列"], ["gridTemplateRows", "Grid の行"], ["gridColumn", "Grid の列位置"], ["gridRow", "Grid の行位置"]]],
-  ["位置・枠", [["position", "配置の基準", ["static", "relative", "absolute", "fixed", "sticky"]], ["top", "上から"], ["right", "右から"], ["bottom", "下から"], ["left", "左から"], ["zIndex", "重なり順"], ["borderColor", "枠の色"], ["borderWidth", "枠の太さ"], ["borderStyle", "枠線", ["none", "solid", "dashed", "dotted", "double"]], ["borderRadius", "角丸"], ["objectFit", "画像の収まり", ["fill", "contain", "cover", "none", "scale-down"]]]]
-];
-const styleText = (value: StyleValue | undefined) => value === undefined ? "" : typeof value === "object" ? `@${value.token}` : String(value);
-const parseStyleText = (value: string): StyleValue | undefined => value === "" ? undefined : value.startsWith("@") ? { token: value.slice(1) } : /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : value;
-
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets, breakpoints: hostBreakpoints }: PageEditorProps) {
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
   const [selection, setSelection] = useState<NodePath | null>(null), [width, setWidth] = useState(1280);
   const [fieldEpoch, setFieldEpoch] = useState(0);
   const [breakpoint, setBreakpoint] = useState<number | "base">("base"), [notice, setNotice] = useState("");
+  // 入力中のライブプレビュー。基準の文書が変わった（確定・undo/redo・保存・移動）時点で無効になる。
+  const [draft, setDraft] = useState<{ base: PageDocument; document: PageDocument } | null>(null), [range, setRange] = useState<StyleRange>("wide");
+  const breakpoints = normalizeBreakpoints(hostBreakpoints);
   const [busy, setBusy] = useState(""), [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [navigation, setNavigation] = useState<Navigation | null>(null), [plan, setPlan] = useState<EditorReleasePlan | null>(null), [confirmed, setConfirmed] = useState(false);
   const [addType, setAddType] = useState("p"), [parentId, setParentId] = useState(""), [rollbackRevision, setRollbackRevision] = useState("");
@@ -327,13 +302,18 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     else if (sessionRef.current) void load(sessionRef.current.target);
   }
   function requestNavigation(next: Navigation) { if (blocked || next.type === "site" && siteSettings.busy) return; if (dirty || hasInput || next.type === "site" && siteSettings.dirty) setNavigation(next); else navigate(next); }
-  function select(path: NodePath | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setInspector(path ? "element" : "page"); setBreakpoint("base"); } }
+  function select(path: NodePath | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setInspector(path ? "element" : "page"); setDraft(null); } }
   function apply(operation: EditorOperation): string | undefined {
     const current = sessionRef.current; if (!current || editBlocked) return "処理が完了してから編集してください。";
     try {
       const document = editDocument(current.history.present, operation, blocks, current.locks);
-      replace({ ...current, history: commitHistory(current.history, document) }); setNotice(""); return undefined;
-    } catch (error) { return message(error); }
+      replace({ ...current, history: commitHistory(current.history, document) }); setDraft(null); setNotice(""); return undefined;
+    } catch (error) { setDraft(null); return message(error); }
+  }
+  function previewOperation(operation: EditorOperation | null) {
+    const current = sessionRef.current;
+    if (!operation || !current || editBlocked) { setDraft(null); return; }
+    try { setDraft({ base: current.history.present, document: editDocument(current.history.present, operation, blocks, current.locks) }); } catch { /* 成功した入力だけを表示する */ }
   }
   function structural(operation: EditorOperation) { const error = apply(operation); if (error) setNotice(error); else setSelection(null); }
   function travel(direction: "undo" | "redo") {
@@ -390,6 +370,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const locks = document ? effectiveLocks(document, session?.locks ?? [], blocks) : [];
   const reason = (field: string) => document && selection ? lockReason(document, selection, field, locks) : undefined;
   const pathKey = `${fieldEpoch}-${selection?.join(".") ?? "page"}`;
+  const tiers = document ? editorTiers(document, breakpoints) : [], tier = tiers.some((entry) => entry.key === breakpoint) ? breakpoint : "base";
+  const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft?.base === document ? draft.document : document;
+  const nextTier = tiers[tiers.findIndex((entry) => entry.key === tier) + 1], until = range === "only" ? nextTier?.start : undefined;
   const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, document, fieldEpoch), localUsage = useLocalAssetUsage(document);
   function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: FieldOptions = {}) {
     return <Field key={`${pathKey}-${key}`} name={name} value={value} fieldKey={`${pathKey}-${key}`} pending={pending} disabled={editBlocked}
@@ -468,13 +451,13 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     const current = sessionRef.current;
     if (!current || editBlocked) return "処理が完了してから配置してください。";
     if (hasInput) return "入力を確定するか取り消してから配置してください。";
-    const target = action === "pick" ? picker : action === "insert" ? { purpose: "insert" as const, selection } : selection && (action === "replace" ? { purpose: "image" as const, path: selection } : { purpose: "background" as const, path: selection, breakpoint });
+    const target = action === "pick" ? picker : action === "insert" ? { purpose: "insert" as const, selection } : selection && (action === "replace" ? { purpose: "image" as const, path: selection } : { purpose: "background" as const, path: selection, breakpoint: tier });
     if (!target) return "配置先の要素を選択してください。";
     try {
       const placement = assetPlacement(current.history.present, asset, target), error = apply(placement.operation);
       if (error) return error;
       setPicker(null); if (placement.notice) setNotice(placement.notice);
-      if (placement.select) { setSelection(placement.select); setInspector("element"); setBreakpoint("base"); }
+      if (placement.select) { setSelection(placement.select); setInspector("element"); setDraft(null); }
       return undefined;
     } catch (error) { return message(error); }
   }
@@ -495,7 +478,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
   const pageOperationsDisabled = unsaved || blocked || !!navigation || !site;
   const startPageChange = (start: PageChangeStart) => { if (pageOperations && !pageOperationsDisabled) setPageChange(start); };
-  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss }} />
+  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss + styleEditorCss }} />
     {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
     <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation || !!pageChange; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       <span className={`e-status${dirty ? " is-dirty" : ""}`} role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
@@ -536,7 +519,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
             <button disabled={!selection || editBlocked || hasInput} onClick={moveToEnd}>指定先の末尾へ</button>
           </div>
         </section>
-        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>要素を選び、右側で見た目を編集</p></div><h3>このページのトークン</h3><div className="e-token-list">{Object.entries(document?.tokens ?? {}).map(([name, token]) => <div key={name}><span>{token.type === "color" && <i style={{ background: String(token.value) }} />}{name}</span><small>{String(token.value)}</small></div>)}</div></section>
+        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{document ? <StyleLibrary document={document} selection={selection} apply={apply} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
         <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker ? "pick" : "library"} pickTitle={picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : "画像を選ぶ"} localUsage={localUsage}
           actions={{ replace: node?.type === "element" && node.tag === "img", background: node?.type === "component" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag), insert: !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={applyAsset} onClose={() => setPicker(null)} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
@@ -545,7 +528,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small></details>
       </div>
     </aside>
-    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
+    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}</div><div className="e-stage">{document && canvasDocument ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={canvasDocument} blocks={blocks} width={width} breakpoint={tier} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ"><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
       {inspector === "site" && <section className="e-inspector-content"><SiteSettingsPanel site={site} state={siteSettings} /></section>}
       {inspector === "page" && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked}
@@ -562,19 +545,11 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         if (rule.type === "enum") return <label className="e-field" key={`${pathKey}-prop-${name}`}><span>{name}</span><select aria-label={name} value={String(value ?? "")} disabled={editBlocked || !!locked} onChange={(event) => { const error = apply({ type: "prop", path: selection, name, value: event.target.value || undefined }); if (error) setNotice(error); }}><option value="">{rule.required ? "選択してください" : "未指定"}</option>{rule.values.map((option) => <option key={option}>{option}</option>)}</select>{locked && <small className="e-help">ロック: {locked}</small>}</label>;
         return field(name, String(value ?? ""), (input) => ({ type: "prop", path: selection, name, value: input === "" && !rule.required ? undefined : rule.type === "number" ? Number(input) : input }), `prop.${name}`, { reason: locked });
       })}</>}
-      {node && node.type !== "text" && selection && <><label className="e-field"><span>編集する幅</span><select aria-label="編集する幅" value={breakpoint} disabled={editBlocked || hasInput} onChange={(event) => setBreakpoint(event.target.value === "base" ? "base" : Number(event.target.value))}><option value="base">共通</option>{[...new Set([375, 768, 1280, ...(node.style?.responsive?.map((entry) => entry.minWidth) ?? [])])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{value}px 以上</option>)}</select></label><small className="e-help">空欄にするとこの幅の指定を解除します。数値のサイズは px、トークンは @名前 で指定できます。</small>
-        {assets && (node.type !== "element" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${breakpoint}-background`} declarations={breakpoint === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations} assets={resolvedAssets.map}
-          lock={(property) => reason(breakpoint === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint })}
-          onClear={() => { const error = apply({ type: "background", path: selection, breakpoint, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint, property, value }); if (error) setNotice(error); }} />}
-        {styleGroups.map(([group, properties]) => <details key={group} open={group === "色・文字"}><summary>{group}</summary>{properties.map(([property, caption, choices]) => {
-          const values = breakpoint === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations;
-          const value = styleText(values?.[property]), lock = reason(breakpoint === "base" ? `style.base.${property}` : "style.responsive");
-          const operation = (input: string): EditorOperation => ({ type: "style", path: selection, breakpoint, property, value: parseStyleText(input) });
-          if (choices) return <label key={`${pathKey}-${breakpoint}-${property}`} className="e-field"><span>{caption}</span><select aria-label={caption} value={value} disabled={editBlocked || !!lock} onChange={(event) => { const error = apply(operation(event.target.value)); if (error) setNotice(error); }}><option value="">指定なし</option>{choices.map((choice) => <option key={choice}>{choice}</option>)}</select>{lock && <small className="e-help">ロック: {lock}</small>}</label>;
-          const placeholder = property.toLowerCase().includes("color") ? "例: #195640 / @ink" : property === "fontFamily" ? "例: sans-serif / @bodyFont" : property.startsWith("gridTemplate") ? "例: repeat(2, minmax(0, 1fr))" : "例: 16 / 1rem / @space";
-          return field(caption, value, operation, `style-${breakpoint}-${property}`, { reason: lock, placeholder });
-        })}</details>)}
-      </>}
+      {node && node.type !== "text" && selection && document && <StyleInspector key={pathKey} document={document} saved={session?.saved} node={node} path={selection} blocks={blocks} tiers={tiers} tier={tier} setTier={setBreakpoint} range={range} setRange={setRange}
+        width={width} setWidth={setWidth} apply={apply} preview={previewOperation} pending={pending} fieldKey={pathKey} disabled={editBlocked} tierLocked={hasInput} reason={reason} notify={setNotice}
+        appearanceExtra={assets && (node.type !== "element" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${tier}-background`} declarations={tier === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === tier)?.declarations} assets={resolvedAssets.map}
+          lock={(property) => reason(tier === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint: tier })}
+          onClear={() => { const error = apply({ type: "background", path: selection, breakpoint: tier, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint: tier, property, value }); if (error) setNotice(error); }} />} />}
       </section>}
     </aside></div>
     {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => navigate(navigation)}>変更を破棄して移動</button></div></Dialog>}

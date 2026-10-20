@@ -189,9 +189,11 @@ test("the in-memory library keeps CMS, stock and site uploads apart at the host 
   assert.deepEqual(await library.resolveAssets({ siteId: "demo", references: [references[1]] }, signal), {});
   assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: references[1], expectedVersion: "1" }, signal), { status: "rejected", reason: "unavailable" });
   library.setPublished({ provider: "experience", id: "yoga" }, true);
-  const { src: _src, ...cms } = yoga;
   assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: references[1], expectedVersion: "1" }, signal),
-    { status: "ready", asset: { provider: "experience", siteId: "demo", kind: "image", status: "ready", version: "1", updatedAt: "2026-10-01T09:00:00.000Z", ...cms, usageCount: 0 } });
+    { status: "rejected", reason: "permission" });
+  for (const provider of [undefined, "experience", "stock", "offline", "missing"]) await assert.rejects(
+    () => library.createFolder({ siteId: "demo", name: "新しい写真", ...(provider ? { provider } : {}) }, signal), (error) => error.status === 403);
+  assert.equal((await library.createFolder({ siteId: "demo", name: "新しい写真", provider: "uploads" }, signal)).name, "新しい写真");
   const upload = (provider) => library.uploadAsset({ siteId: "demo", folderId: null, file: png("a.png", 10), name: "a.png", mimeType: "image/png", bytes: 10, ...(provider ? { provider } : {}) }, signal);
   for (const provider of ["experience", "stock", "offline", "missing", undefined]) assert.deepEqual(await upload(provider), { status: "rejected", reason: "permission" }, String(provider));
   assert.equal((await upload("uploads")).asset.provider, "uploads");

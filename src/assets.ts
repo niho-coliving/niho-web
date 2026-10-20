@@ -78,7 +78,8 @@ export interface AssetLibraryAdapter {
   listAssetUsages(request: { siteId: string; reference: AssetReference }, signal: AbortSignal): Promise<readonly AssetUsage[]>;
   deleteAsset(request: { siteId: string; reference: AssetReference; expectedVersion: string }, signal: AbortSignal): Promise<AssetDeleteResult>;
   resolveAssets(request: { siteId: string; references: readonly AssetReference[] }, signal: AbortSignal): Promise<ResolvedAssetMap>;
-  createFolder?(request: { siteId: string; name: string }, signal: AbortSignal): Promise<AssetFolder>;
+  /** listProviders がある場合は選択中の出所を必ず送る。 */
+  createFolder?(request: { siteId: string; name: string; provider?: string }, signal: AbortSignal): Promise<AssetFolder>;
   /** 実装すると、素材パネルを出所ごとに分け、応答の素材を宣言済みの出所だけに限る。 */
   listProviders?(request: { siteId: string }, signal: AbortSignal): Promise<readonly AssetProvider[]>;
   acquireAsset?(request: { siteId: string; reference: AssetReference; expectedVersion: string }, signal: AbortSignal): Promise<AssetAcquireResult>;

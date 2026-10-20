@@ -220,6 +220,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   /** acquire の出所は、ホストで利用可能にした素材を一覧と詳細に反映してから配置する。 */
   async function apply(asset: LibraryAsset, action: AssetAction): Promise<ApplyResult> {
     const provider = providerOf(asset);
+    if (!legacy && !provider) return { error: unknownSource, acquired: false };
     if (provider?.status === "unavailable") return { error: provider.unavailableReason ?? unavailableText, acquired: false };
     if (!isInsertableImage(asset)) return { error: asset.kind === "image" && asset.status === "processing" ? waitText : notPlaceable, acquired: false };
     if (!provider?.capabilities.acquire) return { error: latest.current.onApply(asset, action), acquired: false };
@@ -231,7 +232,9 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       const result = parseAssetAcquireResult(await adapter.acquireAsset({ siteId, reference: { provider: asset.provider, id: asset.id }, expectedVersion: asset.version }, controller.signal), siteId);
       if (controller.signal.aborted) return null;
       if (result.status === "rejected") return { error: acquireMessages[result.reason], acquired: false };
-      if (!providerOf(result.asset)) return { error: unknownSource, acquired: false };
+      const acquiredProvider = providerOf(result.asset);
+      if (!acquiredProvider) return { error: unknownSource, acquired: false };
+      if (acquiredProvider.status !== "available") return { error: acquiredProvider.unavailableReason ?? unavailableText, acquired: false };
       ready = result.asset;
     } catch (error) {
       if (controller.signal.aborted) return null;
@@ -286,7 +289,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
     if (!name || name.length > ASSET_LIMITS.folderNameLength || control.test(name)) { setFolderError("フォルダ名を 120 文字以内で入力してください。"); return; }
     const controller = work.start();
     try {
-      const folder = parseAssetFolder(await adapter.createFolder({ siteId, name }, controller.signal));
+      const folder = parseAssetFolder(await adapter.createFolder({ siteId, name, ...(current ? { provider: current.id } : {}) }, controller.signal));
       if (controller.signal.aborted) return;
       setList((previous) => ({ ...previous, folders: [...previous.folders.filter((item) => item.id !== folder.id), folder] }));
       setFolderDraft(null); setFolderError(""); setFolderId(folder.id);
@@ -325,7 +328,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       {row.state !== "sending" && <button type="button" className="e-small" aria-label={`${row.name} の通知を閉じる`} onClick={() => setUploads((rows) => rows.filter((item) => item.id !== row.id))}>×</button>}</li>)}</ul>}
     {pickError && <p className="e-help e-problem" role="alert">{pickError}</p>}
     {acquiring && !showDetail && <p className="e-help" role="status">利用の準備中…</p>}
-    {showDetail ? <AssetDetail key={assetKey(detail.asset)} adapter={adapter} siteId={siteId} asset={detail.asset} provider={providerOf(detail.asset)} focus={detail.focus} notice={detail.notice} folders={list.folders}
+    {showDetail ? <AssetDetail key={assetKey(detail.asset)} adapter={adapter} siteId={siteId} asset={detail.asset} provider={providerOf(detail.asset)} managed={!legacy} focus={detail.focus} notice={detail.notice} folders={list.folders}
       localCount={localUsage.get(assetKey(detail.asset)) ?? 0} actions={actions} disabledReason={disabledReason} acquiring={acquiring} apply={apply} onBack={() => setDetail(null)} onReplaceUsages={onReplaceUsages}
       onSaved={(asset) => { setDetail((previous) => previous && { ...previous, asset }); setList((previous) => ({ ...previous, assets: previous.assets.map((item) => assetKey(item) === assetKey(asset) ? asset : item) })); }}
       onDeleted={(asset) => { setDetail(null); setList((previous) => ({ ...previous, assets: previous.assets.filter((item) => assetKey(item) !== assetKey(asset)), quota: previous.quota && { ...previous.quota, usedBytes: Math.max(0, previous.quota.usedBytes - asset.bytes) } })); }} />
@@ -351,8 +354,8 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   </section>;
 }
 
-function AssetDetail({ adapter, siteId, asset, provider, focus, notice, folders, localCount, actions, disabledReason, acquiring, apply, onBack, onSaved, onDeleted, onReplaceUsages }: {
-  adapter: AssetLibraryAdapter; siteId: string; asset: LibraryAsset; provider: AssetProvider | undefined; focus: "back" | "alt" | "place"; notice: Message | undefined;
+function AssetDetail({ adapter, siteId, asset, provider, managed, focus, notice, folders, localCount, actions, disabledReason, acquiring, apply, onBack, onSaved, onDeleted, onReplaceUsages }: {
+  adapter: AssetLibraryAdapter; siteId: string; asset: LibraryAsset; provider: AssetProvider | undefined; managed: boolean; focus: "back" | "alt" | "place"; notice: Message | undefined;
   folders: readonly AssetFolder[]; localCount: number; actions: AssetLibraryPanelProps["actions"]; disabledReason: string | undefined; acquiring: boolean;
   apply: (asset: LibraryAsset, action: AssetAction) => Promise<ApplyResult>;
   onBack: () => void; onSaved: (asset: LibraryAsset) => void; onDeleted: (asset: LibraryAsset) => void; onReplaceUsages: (asset: LibraryAsset) => void;
@@ -365,8 +368,9 @@ function AssetDetail({ adapter, siteId, asset, provider, focus, notice, folders,
   const back = useRef<HTMLButtonElement>(null), altInput = useRef<HTMLTextAreaElement>(null), placeActions = useRef<HTMLDivElement>(null), work = useControllers();
   const reference: AssetReference = { provider: asset.provider, id: asset.id };
   // 出所が管理する素材（CMS の写真等）は、ここで名前・説明の変更や削除をしない。
-  const editable = !provider || provider.capabilities.editMetadata, deletable = !provider || provider.capabilities.delete;
-  const unavailable = provider?.status === "unavailable" ? provider.unavailableReason ?? unavailableText : "";
+  const editable = !managed ? true : provider?.status === "available" && provider.capabilities.editMetadata;
+  const deletable = !managed ? true : provider?.status === "available" && provider.capabilities.delete;
+  const unavailable = managed && !provider ? unknownSource : provider?.status === "unavailable" ? provider.unavailableReason ?? unavailableText : "";
   useEffect(() => { (focus === "alt" ? altInput.current : focus === "place" ? placeActions.current?.querySelector<HTMLButtonElement>("button:enabled") ?? back.current : back.current)?.focus(); }, []);
   useEffect(() => {
     const controller = new AbortController(); setUsages({ status: "loading", items: [] });
@@ -433,7 +437,7 @@ function AssetDetail({ adapter, siteId, asset, provider, focus, notice, folders,
     <label className="e-field"><span>名前</span><input value={name} maxLength={200} readOnly={!editable} onChange={(event) => { setName(event.target.value); setSaveMessage(null); }} /></label>
     <label className="e-field"><span>代替テキスト</span><textarea ref={altInput} value={alt} maxLength={1000} readOnly={!editable} onChange={(event) => { setAlt(event.target.value); setSaveMessage(null); }} />
       <small className="e-help">ページに配置したときの画像の説明の初期値です。配置後は要素ごとに変更できます。</small></label>
-    {(!provider || provider.capabilities.folders) && <label className="e-field"><span>保存先フォルダ</span><select value={folder} disabled={!editable} onChange={(event) => { setFolder(event.target.value); setSaveMessage(null); }}><option value="">フォルダなし</option>
+    {(!managed || provider?.status === "available" && provider.capabilities.folders) && <label className="e-field"><span>保存先フォルダ</span><select value={folder} disabled={!editable} onChange={(event) => { setFolder(event.target.value); setSaveMessage(null); }}><option value="">フォルダなし</option>
       {folder && !folders.some((item) => item.id === folder) && <option value={folder}>{folder}</option>}{folders.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
     <dl><dt>種類</dt><dd>{kindLabels[asset.kind]}・{asset.mimeType}</dd><dt>寸法</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height} px` : "—"}</dd><dt>容量</dt><dd>{formatBytes(asset.bytes)}</dd><dt>更新日</dt><dd>{formatDate(asset.updatedAt)}</dd></dl>
     {editable ? <><button type="button" className="e-primary" disabled={!changed || saving} onClick={() => void save()}>変更を保存</button>

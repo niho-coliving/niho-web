@@ -780,6 +780,44 @@ test("connected stock shows its license and is acquired into site uploads before
   } finally { await app.cleanup(); }
 });
 
+test("a removed provider leaves its open asset detail read-only and blocks placement", async () => {
+  const library = sourceLibrary(); let removed = false;
+  const adapter = { ...library, listProviders: async (request, signal) => {
+    const providers = await library.listProviders(request, signal);
+    return removed ? providers.filter((provider) => provider.id !== "experience") : providers;
+  } };
+  const app = await setup({ assets: adapter });
+  try {
+    await tool("素材"); await chooseAsset("朝ヨガ.png");
+    removed = true;
+    await tool("ページ"); await click("最新の文書を再読込"); await settle(); await tool("素材");
+    assert.equal(input("名前").readOnly, true);
+    assert.equal(input("代替テキスト").readOnly, true);
+    assert.equal(button("変更を保存"), undefined);
+    assert.equal(button("削除…"), undefined);
+    assert.equal(button("ページに追加").disabled, true);
+    assert.ok(assetPanel().textContent.includes("出所が確認できない素材は利用できません。"));
+  } finally { await app.cleanup(); }
+});
+
+test("acquisition cannot place an asset returned from an unavailable provider", async () => {
+  const library = sourceLibrary({ stock: true });
+  const adapter = { ...library, listProviders: async (request, signal) => [
+    ...await library.listProviders(request, signal),
+    { id: "offline", kind: "stock", label: "未接続", origin: "未接続の出所", status: "unavailable", capabilities: caps() }
+  ], acquireAsset: async (request, signal) => {
+    const result = await library.acquireAsset(request, signal);
+    return result.status === "ready" ? { ...result, asset: { ...result.asset, provider: "offline" } } : result;
+  } };
+  const app = await setup({ assets: adapter });
+  try {
+    await tool("素材"); await click("ストック"); await chooseAsset("波.png");
+    await click("ページに追加");
+    assert.equal(canvasNode("node_1"), null);
+    assert.ok(assetPanel().textContent.includes("この出所は現在利用できません。"));
+  } finally { await app.cleanup(); }
+});
+
 test("photos unpublished in the CMS become placeholders after the editor reloads and are left out of public HTML", async () => {
   const library = sourceLibrary(), reference = { provider: "experience", id: "yoga" }, doc = withImage({ asset: reference, attrs: { alt: "海辺で朝ヨガ" } });
   const publicHtml = async () => renderPageToHtml(doc, {}, { assets: parseResolvedAssets(await library.resolveAssets({ siteId: "demo", references: uniqueAssetReferences(parsePageDocument(doc)) }, new AbortController().signal)) });

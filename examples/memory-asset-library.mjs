@@ -121,6 +121,7 @@ export function createMemoryAssetLibrary({ siteId, provider = "uploads", seed = 
     },
     async createFolder(request, signal) {
       check(request, signal);
+      if (providers && (!request.provider || sourceOf(request.provider)?.status !== "available" || !sourceOf(request.provider)?.capabilities.folders)) throw failure(403, "forbidden");
       if (!validText(request.name, 120)) throw failure(400, "invalid folder name");
       let id;
       do id = `folder-${++folderCounter}`; while (folderList.some((folder) => folder.id === id));
@@ -139,7 +140,8 @@ export function createMemoryAssetLibrary({ siteId, provider = "uploads", seed = 
     async acquireAsset(request, signal) {
       check(request, signal);
       const entry = find(request.reference), from = entry && sourceOf(entry.asset.provider);
-      if (!entry || !from) return { status: "rejected", reason: "unavailable" };
+      if (!entry || !from || from.status !== "available") return { status: "rejected", reason: "unavailable" };
+      if (!from.capabilities.acquire) return { status: "rejected", reason: "permission" };
       if (entry.asset.version !== request.expectedVersion) throw failure(409, "conflict");
       if (from.kind !== "stock") return { status: "ready", asset: copy(entry) };
       // ストックはライセンスを記録したサイトの素材へ複製し、文書にはストック側の参照を残さない。

@@ -19,7 +19,16 @@ function pageDocument(pageId: string, title: string, children: PageNode[]): Page
 }
 const home = structuredClone(fixture) as PageDocument;
 (home.body[0] as ElementNode).children.push({ type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "seed-sea" }, attrs: { alt: "朝の海辺の景色" }, style: { base: { maxWidth: "100%", height: "auto", borderRadius: 12 } }, children: [] });
-home.body.push({ type: "component", id: "notice", block: "PublicNotice", props: { heading: "今月のお知らせ", count: 3 } }); home.revision++;
+home.body.push({ type: "component", id: "notice", block: "PublicNotice", props: { heading: "今月のお知らせ", count: 3 }, style: { base: { marginTop: 24 } } }); home.revision++;
+// 共通カラーとテキストスタイル（タブレット以上で文字サイズを上書き）の例。
+home.tokens = { ...home.tokens, ink: { type: "color", value: "#172d25", label: "文字の色" }, brand: { type: "color", value: "#195640", label: "メイン" }, accent: { type: "color", value: "#f2b70533", label: "アクセント" } };
+home.textStyles = {
+  heading: { label: "見出し", base: { fontSize: 28, fontWeight: 700, lineHeight: 1.3 }, responsive: [{ minWidth: 768, declarations: { fontSize: 40 } }] },
+  body: { label: "本文", base: { fontSize: 16, lineHeight: 1.8 }, responsive: [{ minWidth: 768, declarations: { fontSize: 17 } }] }
+};
+const [heading, lead] = (home.body[0] as ElementNode).children as ElementNode[];
+heading!.style = { textStyle: "heading", base: { color: { token: "brand" } } };
+lead!.style = { textStyle: "body" };
 const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" }, home],
   [{ siteId: "demo", pageId: "about", locale: "ja-JP", title: "私たちについて", path: "/about" }, pageDocument("about", "私たちについて", [
@@ -91,6 +100,8 @@ const blocks: EditorBlockRegistry = {
     label: "お知らせ",
     props: { heading: { type: "string", required: true }, count: { type: "number", required: true } },
     defaultProps: { heading: "新しいお知らせ", count: 3 }, lockedProps: { count: "公開データの件数です。ホスト側で管理します。" },
+    // このブロックで変えられる見た目（余白・背景色・テキストスタイル）だけをインスペクタに出す。
+    styleProperties: ["marginTop", "marginBottom", "backgroundColor", "textStyle"],
     component: ({ heading, count }) => <aside style={{ margin: 24, padding: 20, border: "1px solid #b8c9bd", borderRadius: 12 }}><strong>{heading}</strong><p>公開データ: {count} 件</p></aside>
   }
 };
