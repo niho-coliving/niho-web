@@ -50,6 +50,10 @@
     "./assets": {
       "types": "./dist/assets.d.ts",
       "import": "./dist/assets.js"
+    },
+    "./site-analytics": {
+      "types": "./dist/site-analytics.d.ts",
+      "import": "./dist/site-analytics.js"
     }
   },
   "types": "./dist/index.d.ts",
