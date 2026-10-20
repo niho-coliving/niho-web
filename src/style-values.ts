@@ -1,8 +1,13 @@
-import type { BackgroundImageValue, DesignToken, NodeStyle, StyleDeclarations, StyleProperty, StyleValue, TokenKind } from "./types.js";
+import type { Appear, AppearEffect, BackgroundImageValue, DesignToken, HiddenRange, MotionEasing, NodeStyle, StateDeclarations, StateName, StateProperty, StyleDeclarations, StyleProperty, StyleValue, TextStyle, TextStyleDeclarations, TextStyleProperty, TokenKind } from "./types.js";
 import { fail, identifier, keys, parseAssetReference, record } from "./validation-utils.js";
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 100000;
-const length = (v: string) => /^(?:0|-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em|%|vh|vw|vmin|vmax|ch))$/.test(v) && Math.abs(parseFloat(v)) <= 100000;
+// 表示を壊す過大値を拒否する。上限は単位ごと（負値は絶対値）。
+const lengthLimits: Record<string, number> = { px: 10000, rem: 1000, em: 1000, ch: 1000, "%": 1000, vh: 1000, vw: 1000, vmin: 1000, vmax: 1000 };
+const length = (v: string) => {
+  const match = /^(?:0|-?(\d+(?:\.\d+)?|\.\d+)(px|rem|em|%|vh|vw|vmin|vmax|ch))$/.exec(v);
+  return !!match && (v === "0" || Number(match[1]) <= lengthLimits[match[2]!]!);
+};
 const positiveLength = (v: string) => length(v) && !v.startsWith("-");
 const color = (v: string) => /^(?:#[\da-f]{3}|#[\da-f]{4}|#[\da-f]{6}|#[\da-f]{8}|transparent|currentColor|black|white|red|green|blue|gray|grey|navy|teal|orange|purple|yellow|rebeccapurple)$/i.test(v);
 const fontFamily = (v: string) => /^[A-Za-z][A-Za-z0-9 -]*(?:,\s*[A-Za-z][A-Za-z0-9 -]*)*$/.test(v);
@@ -49,7 +54,20 @@ function grid(value: string): boolean {
   });
 }
 
-type PropertySpec = { kind?: TokenKind; px?: boolean; valid: (value: string) => boolean };
+// 変形・遷移。関数や任意の文字列は通さない。
+const translateLimits: Record<string, number> = { px: 1000, rem: 64, em: 64, ch: 64, "%": 100, vh: 100, vw: 100, vmin: 100, vmax: 100 };
+const translatePart = (v: string) => {
+  const match = /^(?:0|-?(\d+(?:\.\d+)?|\.\d+)(px|rem|em|%|vh|vw|vmin|vmax|ch))$/.exec(v);
+  return !!match && (v === "0" || Number(match[1]) <= translateLimits[match[2]!]!);
+};
+const pair = (v: string, part: (value: string) => boolean) => { const parts = v.split(" "); return parts.length <= 2 && parts.every(part); };
+const scalePart = (v: string) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(v) && Number(v) <= 5;
+const time = (v: string) => { const match = /^(\d+(?:\.\d+)?|\.\d+)(s|ms)$/.exec(v); return !!match && Number(match[1]) * (match[2] === "s" ? 1000 : 1) <= 5000; };
+export const easings: readonly MotionEasing[] = ["ease", "ease-in", "ease-out", "ease-in-out", "linear"];
+export const origins = ["left top", "center top", "right top", "left center", "center", "right center", "left bottom", "center bottom", "right bottom"] as const;
+
+/** unit: 数値だけの指定に付ける単位（px は px フラグ）。 */
+type PropertySpec = { kind?: TokenKind; px?: boolean; unit?: "deg" | "ms"; valid: (value: string) => boolean };
 const dimension: PropertySpec = { kind: "length", px: true, valid: (v) => positiveLength(v) || ["auto", "min-content", "max-content", "fit-content", "none"].includes(v) };
 const offset: PropertySpec = { kind: "length", px: true, valid: (v) => length(v) || v === "auto" };
 const nonnegative: PropertySpec = { kind: "length", px: true, valid: positiveLength };
@@ -78,15 +96,43 @@ const specs: Record<StyleProperty, PropertySpec> = {
   gridRow: { valid: (v) => /^(?:auto|[1-9]\d?(?:\s*\/\s*[1-9]\d?)?|span [1-9]\d?)$/.test(v) },
   position: { valid: oneOf("static", "relative", "absolute", "fixed", "sticky") },
   top: offset, right: offset, bottom: offset, left: offset,
-  zIndex: { kind: "number", valid: (v) => v === "auto" || /^-?\d+$/.test(v) && Math.abs(+v) <= 100000 },
+  zIndex: { kind: "number", valid: (v) => v === "auto" || /^-?\d+$/.test(v) && Math.abs(+v) <= 9999 },
   borderWidth: nonnegative, borderStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") },
   borderRadius: padding, overflow: { valid: oneOf("visible", "hidden", "clip", "auto", "scroll") },
   objectFit: { valid: oneOf("fill", "contain", "cover", "none", "scale-down") },
   opacity: { kind: "number", valid: (v) => /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(v) },
   backgroundSize: { valid: oneOf("auto", "cover", "contain") },
   backgroundPosition: { valid: oneOf("center", "top", "bottom", "left", "right", "top left", "top right", "bottom left", "bottom right") },
-  backgroundRepeat: { valid: oneOf("no-repeat", "repeat", "repeat-x", "repeat-y") }
+  backgroundRepeat: { valid: oneOf("no-repeat", "repeat", "repeat-x", "repeat-y") },
+  fontStyle: { valid: oneOf("normal", "italic") }, textDecorationLine: { valid: oneOf("none", "underline", "line-through") },
+  translate: { kind: "length", px: true, valid: (v) => pair(v, translatePart) },
+  rotate: { unit: "deg", valid: (v) => { const match = /^(-?(?:\d+(?:\.\d+)?|\.\d+))deg$/.exec(v); return !!match && Math.abs(Number(match[1])) <= 360; } },
+  scale: { kind: "number", valid: (v) => pair(v, scalePart) },
+  transformOrigin: { valid: oneOf(...origins) },
+  transitionDuration: { unit: "ms", valid: time }, transitionDelay: { unit: "ms", valid: time }, transitionTimingFunction: { valid: oneOf(...easings) },
+  overflowX: { valid: oneOf("visible", "hidden", "auto", "scroll") },
+  scrollSnapType: { valid: oneOf("none", "x mandatory", "x proximity") }, scrollSnapAlign: { valid: oneOf("none", "start", "center", "end") }
 };
+/** 状態スタイルで使えるプロパティ。 */
+export const stateProperties: readonly StateProperty[] = ["color", "backgroundColor", "borderColor", "opacity", "textDecorationLine", "translate", "rotate", "scale"];
+export const stateNames: readonly StateName[] = ["hover", "focus", "active"];
+export const appearEffects: readonly AppearEffect[] = ["fade", "fade-up", "fade-down", "fade-left", "fade-right", "zoom"];
+/** 遷移の指定。通常の規則には出さず、状態スタイルを持つノードの動きの規則だけに出す。 */
+export const motionProperties: readonly StyleProperty[] = ["transitionDuration", "transitionDelay", "transitionTimingFunction"];
+export const isStyleProperty = (value: unknown): value is StyleProperty => typeof value === "string" && Object.hasOwn(specs, value);
+export const textStyleProperties: readonly TextStyleProperty[] = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "fontStyle", "textDecorationLine"];
+/** token を参照できるプロパティの型。参照できなければ undefined。 */
+export const styleTokenKind = (property: StyleProperty): TokenKind | undefined => specs[property].kind;
+/** 数値だけの指定を px として扱うプロパティ。 */
+export const stylePxNumber = (property: StyleProperty): boolean => !!specs[property].px;
+function label(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.length > 60 || !value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) fail(path, "invalid label");
+  return value;
+}
+function tokenName(name: string, path: string): void {
+  identifier(name, path);
+  if (!/^[a-z][A-Za-z0-9-]*$/.test(name)) fail(path, "invalid name");
+}
 export function tokenCssValue(token: DesignToken): string {
   return typeof token.value === "number" && token.type === "length" ? `${token.value}px` : String(token.value);
 }
@@ -94,10 +140,9 @@ export function parseTokens(value: unknown, path: string): Record<string, Design
   const source = record(value, path), result: Record<string, DesignToken> = {};
   if (Object.keys(source).length > 128) fail(path, "too many tokens");
   for (const [name, raw] of Object.entries(source)) {
-    identifier(name, path);
-    if (!/^[a-z][A-Za-z0-9-]*$/.test(name)) fail(path, "invalid token name");
+    tokenName(name, path);
     const token = record(raw, `${path}.${name}`);
-    keys(token, ["type", "value"], `${path}.${name}`);
+    keys(token, ["type", "value", "label"], `${path}.${name}`);
     const type = token.type;
     if (typeof type !== "string" || !["color", "length", "fontFamily", "number"].includes(type)) fail(path, "unknown token type");
     if (!(typeof token.value === "string" && token.value.length <= 256 || finite(token.value))) fail(path, "invalid token value");
@@ -105,6 +150,7 @@ export function parseTokens(value: unknown, path: string): Record<string, Design
     const text = tokenCssValue(parsed);
     const valid = type === "color" ? color(text) : type === "length" ? length(text) : type === "fontFamily" ? fontFamily(text) : finite(token.value);
     if (!valid) fail(`${path}.${name}`, "invalid token value");
+    if (token.label !== undefined) parsed.label = label(token.label, `${path}.${name}.label`);
     result[name] = parsed;
   }
   return result;
@@ -112,7 +158,7 @@ export function parseTokens(value: unknown, path: string): Record<string, Design
 function literal(property: StyleProperty, value: unknown, path: string): string {
   const spec = specs[property];
   if (!(typeof value === "string" && value.length > 0 && value.length <= 256 || finite(value))) fail(path, "invalid style value");
-  const text = typeof value === "number" && spec.px ? `${value}px` : String(value);
+  const text = typeof value === "number" && spec.px ? `${value}px` : typeof value === "number" && spec.unit ? `${value}${spec.unit}` : String(value);
   if (!spec.valid(text)) fail(path, "unsupported style value");
   return text;
 }
@@ -122,11 +168,12 @@ function backgroundImage(value: unknown, path: string): BackgroundImageValue {
   keys(source, ["asset"], path);
   return { asset: parseAssetReference(source.asset, `${path}.asset`) };
 }
-function declarations(value: unknown, tokens: Record<string, DesignToken>, path: string): StyleDeclarations {
+function declarations(value: unknown, tokens: Record<string, DesignToken>, path: string, allowed?: readonly string[]): StyleDeclarations {
   const source = record(value, path), result: StyleDeclarations = {};
   for (const [name, raw] of Object.entries(source)) {
-    if (name === "backgroundImage") { result.backgroundImage = backgroundImage(raw, `${path}.${name}`); continue; }
-    if (!Object.hasOwn(specs, name)) fail(path, "unknown style property");
+    // 背景画像は素材参照だけ。文字スタイル（allowed あり）では受け付けない。
+    if (name === "backgroundImage" && !allowed) { result.backgroundImage = backgroundImage(raw, `${path}.${name}`); continue; }
+    if (!Object.hasOwn(specs, name) || allowed && !allowed.includes(name)) fail(path, "unknown style property");
     const property = name as StyleProperty;
     if (raw !== null && typeof raw === "object") {
       const reference = record(raw, `${path}.${name}`);
@@ -143,20 +190,79 @@ function declarations(value: unknown, tokens: Record<string, DesignToken>, path:
   }
   return result;
 }
-export function parseStyle(value: unknown, tokens: Record<string, DesignToken>, path: string): NodeStyle {
+function responsive(value: unknown, tokens: Record<string, DesignToken>, path: string, allowed?: readonly string[]): { minWidth: number; declarations: StyleDeclarations }[] {
+  if (!Array.isArray(value) || value.length > 12) fail(path, "invalid responsive styles");
+  let previous = 0;
+  return value.map((raw, index) => {
+    const at = `${path}.responsive[${index}]`, entry = record(raw, at);
+    keys(entry, ["minWidth", "declarations"], at);
+    if (typeof entry.minWidth !== "number" || !Number.isInteger(entry.minWidth) || entry.minWidth < 320 || entry.minWidth > 3840 || entry.minWidth <= previous) fail(at, "minWidth must increase within 320–3840");
+    previous = entry.minWidth;
+    return { minWidth: entry.minWidth, declarations: declarations(entry.declarations, tokens, `${at}.declarations`, allowed) };
+  });
+}
+function parseStates(value: unknown, tokens: Record<string, DesignToken>, path: string): NonNullable<NodeStyle["states"]> {
+  const source = record(value, path), result: NonNullable<NodeStyle["states"]> = {};
+  keys(source, stateNames, path);
+  for (const name of stateNames) if (source[name] !== undefined) result[name] = declarations(source[name], tokens, `${path}.${name}`, stateProperties) as StateDeclarations;
+  return result;
+}
+function milliseconds(value: unknown, min: number, max: number, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) fail(path, `expected an integer from ${min} to ${max}`);
+  return value;
+}
+function parseAppear(value: unknown, path: string): Appear {
+  const source = record(value, path);
+  keys(source, ["effect", "trigger", "duration", "delay", "easing"], path);
+  if (typeof source.effect !== "string" || !(appearEffects as readonly string[]).includes(source.effect)) fail(`${path}.effect`, "unsupported effect");
+  if (source.trigger !== "load" && source.trigger !== "view") fail(`${path}.trigger`, "unsupported trigger");
+  const result: Appear = { effect: source.effect as AppearEffect, trigger: source.trigger, duration: milliseconds(source.duration, 100, 3000, `${path}.duration`), delay: milliseconds(source.delay, 0, 3000, `${path}.delay`) };
+  if (source.easing !== undefined) {
+    if (typeof source.easing !== "string" || !(easings as readonly string[]).includes(source.easing)) fail(`${path}.easing`, "unsupported easing");
+    result.easing = source.easing as MotionEasing;
+  }
+  return result;
+}
+/** 昇順・重なりなし。maxWidth の無い範囲は最後だけ。 */
+function parseHidden(value: unknown, path: string): HiddenRange[] {
+  if (!Array.isArray(value) || value.length > 12) fail(path, "invalid hidden ranges");
+  let previous = -1, open = false;
+  return value.map((raw, index) => {
+    const at = `${path}[${index}]`, entry = record(raw, at), min = entry.minWidth;
+    keys(entry, ["minWidth", "maxWidth"], at);
+    if (open || typeof min !== "number" || !Number.isInteger(min) || !(min === 0 || min >= 320 && min <= 3840) || min <= previous) fail(at, "hidden ranges must increase without overlap");
+    if (entry.maxWidth === undefined) { open = true; return { minWidth: min }; }
+    const max = entry.maxWidth;
+    if (typeof max !== "number" || !Number.isInteger(max) || max <= min || max > 3840) fail(`${at}.maxWidth`, "maxWidth must be greater than minWidth");
+    previous = max;
+    return { minWidth: min, maxWidth: max };
+  });
+}
+/** extras: 状態・登場・幅別の非表示・文字スタイル。業務ブロックの表示領域では受け付けない。 */
+export function parseStyle(value: unknown, tokens: Record<string, DesignToken>, path: string, textStyles: Readonly<Record<string, TextStyle>> = {}, extras = true): NodeStyle {
   const source = record(value, path), result: NodeStyle = {};
-  keys(source, ["base", "responsive"], path);
+  keys(source, extras ? ["textStyle", "base", "responsive", "states", "appear", "hidden"] : ["base", "responsive"], path);
+  if (source.textStyle !== undefined) {
+    if (typeof source.textStyle !== "string" || !Object.hasOwn(textStyles, source.textStyle)) fail(`${path}.textStyle`, "unknown text style");
+    result.textStyle = source.textStyle;
+  }
   if (source.base !== undefined) result.base = declarations(source.base, tokens, `${path}.base`);
-  if (source.responsive !== undefined) {
-    if (!Array.isArray(source.responsive) || source.responsive.length > 12) fail(path, "invalid responsive styles");
-    let previous = 0;
-    result.responsive = source.responsive.map((raw, index) => {
-      const at = `${path}.responsive[${index}]`, entry = record(raw, at);
-      keys(entry, ["minWidth", "declarations"], at);
-      if (typeof entry.minWidth !== "number" || !Number.isInteger(entry.minWidth) || entry.minWidth < 320 || entry.minWidth > 3840 || entry.minWidth <= previous) fail(at, "minWidth must increase within 320–3840");
-      previous = entry.minWidth;
-      return { minWidth: entry.minWidth, declarations: declarations(entry.declarations, tokens, `${at}.declarations`) };
-    });
+  if (source.responsive !== undefined) result.responsive = responsive(source.responsive, tokens, path);
+  if (source.states !== undefined) result.states = parseStates(source.states, tokens, `${path}.states`);
+  if (source.appear !== undefined) result.appear = parseAppear(source.appear, `${path}.appear`);
+  if (source.hidden !== undefined) result.hidden = parseHidden(source.hidden, `${path}.hidden`);
+  return result;
+}
+export function parseTextStyles(value: unknown, tokens: Record<string, DesignToken>, path: string): Record<string, TextStyle> {
+  const source = record(value, path), result: Record<string, TextStyle> = {};
+  if (Object.keys(source).length > 64) fail(path, "too many text styles");
+  for (const [name, raw] of Object.entries(source)) {
+    tokenName(name, path);
+    const at = `${path}.${name}`, entry = record(raw, at);
+    keys(entry, ["label", "base", "responsive"], at);
+    const style: TextStyle = { ...(entry.label === undefined ? {} : { label: label(entry.label, `${at}.label`) }), base: declarations(entry.base, tokens, `${at}.base`, textStyleProperties) as TextStyleDeclarations };
+    if (entry.responsive !== undefined) style.responsive = responsive(entry.responsive, tokens, at, textStyleProperties) as NonNullable<TextStyle["responsive"]>;
+    result[name] = style;
   }
   return result;
 }

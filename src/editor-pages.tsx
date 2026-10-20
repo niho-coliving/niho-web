@@ -17,9 +17,10 @@ const iconPaths = {
   search: "M7.2 11.8a4.6 4.6 0 1 0 0-9.2 4.6 4.6 0 0 0 0 9.2z M10.6 10.6l3 3",
   plus: "M8 3.2v9.6 M3.2 8h9.6",
   more: "M3.6 8h.01 M8 8h.01 M12.4 8h.01",
-  chevron: "M6.2 4.2 10 8l-3.8 3.8"
+  chevron: "M6.2 4.2 10 8l-3.8 3.8",
+  close: "M4.2 4.2l7.6 7.6 M11.8 4.2l-7.6 7.6"
 } as const;
-function Icon({ name, className }: { name: keyof typeof iconPaths; className?: string }) {
+export function Icon({ name, className }: { name: keyof typeof iconPaths; className?: string }) {
   return <svg className={className ? `e-icon ${className}` : "e-icon"} viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d={iconPaths[name]} /></svg>;
 }
 
@@ -415,12 +416,12 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
   </div>;
 }
 
-/** 公開確認に添える公開URLと、検索結果に出る情報。rollback は戻す版の内容が手元に無いため URL だけを出す。 */
-export function ReleaseSearchSummary({ document, page, domain, settings, rollback }: { document: PageDocument | undefined; page: EditorPage | undefined; domain: string; settings: SiteSettings | undefined; rollback: boolean }) {
+/** 公開確認に添える公開URLと、検索結果に出る情報。rollback は戻す版の内容が手元に無いため URL だけを出す。url は検証済み plan の値を優先する。 */
+export function ReleaseSearchSummary({ document, page, domain, settings, rollback, url }: { document: PageDocument | undefined; page: EditorPage | undefined; domain: string; settings: SiteSettings | undefined; rollback: boolean; url?: string | undefined }) {
   if (!document) return null;
-  const path = publicPath(page), metadata = rollback ? undefined : metadataFor(document, page, domain, settings);
+  const path = publicPath(page), metadata = rollback ? undefined : metadataFor(document, page, domain, settings), shown = url ?? (path ? pageUrl(domain, path) : undefined);
   return <>
-    {path && <><p>公開URL</p><p className="e-release-url">{pageUrl(domain, path)}</p></>}
+    {shown && <><p>公開URL</p><p className="e-release-url">{shown}</p></>}
     {metadata && <div className="e-release-seo"><p>検索結果に出る情報</p><dl className="e-rows">
       <div><dt>タイトル</dt><dd>{metadata.title}</dd></div>
       <div><dt>説明文</dt><dd>{metadata.description ?? "（なし）"}</dd></div>

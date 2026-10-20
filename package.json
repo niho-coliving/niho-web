@@ -35,6 +35,10 @@
       "types": "./dist/pages.d.ts",
       "import": "./dist/pages.js"
     },
+    "./history": {
+      "types": "./dist/history.d.ts",
+      "import": "./dist/history.js"
+    },
     "./projects": {
       "types": "./dist/projects.d.ts",
       "import": "./dist/projects.js"
@@ -47,6 +51,18 @@
       "types": "./dist/project-manager.d.ts",
       "import": "./dist/project-manager.js"
     },
+    "./project-directory": {
+      "types": "./dist/project-directory.d.ts",
+      "import": "./dist/project-directory.js"
+    },
+    "./project-dashboard": {
+      "types": "./dist/project-dashboard.d.ts",
+      "import": "./dist/project-dashboard.js"
+    },
+    "./project-read-model": {
+      "types": "./dist/project-read-model.d.ts",
+      "import": "./dist/project-read-model.js"
+    },
     "./assets": {
       "types": "./dist/assets.d.ts",
       "import": "./dist/assets.js"
@@ -54,6 +70,10 @@
     "./site-analytics": {
       "types": "./dist/site-analytics.d.ts",
       "import": "./dist/site-analytics.js"
+    },
+    "./analytics": {
+      "types": "./dist/analytics.d.ts",
+      "import": "./dist/analytics.js"
     }
   },
   "types": "./dist/index.d.ts",
@@ -67,6 +87,7 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "demo": "node examples/editor-demo.mjs",
     "demo:projects": "node examples/projects-demo.mjs",
+    "demo:analytics": "node examples/analytics-demo.mjs",
     "prepare": "npm run build"
   },
   "peerDependencies": {

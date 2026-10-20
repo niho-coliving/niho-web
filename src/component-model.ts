@@ -8,7 +8,10 @@ import type {
 } from "./types.js";
 
 // 部品の編集操作。すべて検証済みの新しいライブラリ・文書を返す。ページでの使用状況の確認は呼び出し側が行う。
-const declarationSets = (style: NodeStyle | undefined): StyleDeclarations[] => style ? [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations)] : [];
+const declarationSets = (style: NodeStyle | undefined): StyleDeclarations[] => style ? [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations), ...Object.values(style.states ?? {})] : [];
+/** ノードの style と、業務ブロックなら表示領域（slots）の style のすべての宣言。 */
+const nodeDeclarations = (node: Exclude<PageNode, { type: "text" }>): StyleDeclarations[] =>
+  [...declarationSets(node.style), ...(node.type === "component" ? Object.values(node.slots ?? {}).flatMap(declarationSets) : [])];
 function componentIndex(library: ComponentLibrary, componentId: string): number {
   const index = library.components.findIndex((component) => component.id === componentId);
   if (index < 0) throw new Error("部品が見つかりません。");
@@ -41,7 +44,7 @@ export function createComponentFromNode(document: PageDocument, path: NodePath, 
   const name = checkedName(library, input.name), componentId = nextComponentId(library), tokens = structuredClone(library.tokens);
   for (const { node: current } of subtree) {
     if (current.type === "text") continue;
-    for (const declarations of declarationSets(current.style)) for (const value of Object.values(declarations)) {
+    for (const declarations of nodeDeclarations(current)) for (const value of Object.values(declarations)) {
       if (typeof value === "object" && "token" in value && !Object.hasOwn(tokens, value.token) && Object.hasOwn(draft.tokens, value.token)) tokens[value.token] = structuredClone(draft.tokens[value.token]!);
     }
   }
@@ -131,7 +134,7 @@ export function detachInstance(document: PageDocument, path: NodePath, library: 
   if (!definition) throw new Error("部品が見つかりません。");
   const root = instantiate(node, definition), used = new Set(walkNodes(draft).flatMap(({ node }) => node.type === "text" ? [] : [node.id]));
   const inline = (current: ElementNode | ComponentNode): void => {
-    for (const declarations of declarationSets(current.style)) for (const [property, value] of Object.entries(declarations)) {
+    for (const declarations of nodeDeclarations(current)) for (const [property, value] of Object.entries(declarations)) {
       if (typeof value === "object" && "token" in value && !Object.hasOwn(draft.tokens, value.token) && Object.hasOwn(library.tokens, value.token)) declarations[property as StyleProperty] = library.tokens[value.token]!.value;
     }
   };
