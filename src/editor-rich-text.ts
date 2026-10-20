@@ -28,18 +28,22 @@ export function readEditableChildren(root: HTMLElement, original: ElementNode): 
   const sourceFor = (element: Element, tag: ElementTag): ElementNode | undefined => {
     const nodeId = element.getAttribute("data-nw-node"), previous = nodeId ? old.get(nodeId) : undefined;
     const compatibleHeading = previous && /^(?:p|h[1-6])$/.test(previous.tag) && /^(?:p|h[1-6])$/.test(tag);
-    if (!previous || previous.tag !== tag && !compatibleHeading || claimed.has(previous.id)) return undefined;
+    const compatibleEmphasis = previous && (((previous.tag === "b" || previous.tag === "strong") && (tag === "b" || tag === "strong")) ||
+      ((previous.tag === "i" || previous.tag === "em") && (tag === "i" || tag === "em")));
+    if (!previous || previous.tag !== tag && !compatibleHeading && !compatibleEmphasis || claimed.has(previous.id)) return undefined;
     claimed.add(previous.id);
     return previous;
   };
   const elementNode = (element: Element, tag: ElementTag, children: PageNode[]): ElementNode => {
     const previous = sourceFor(element, tag), attrs = previous?.attrs ? { ...previous.attrs } : {};
+    const preservedTag = previous && (((previous.tag === "b" || previous.tag === "strong") && (tag === "b" || tag === "strong")) ||
+      ((previous.tag === "i" || previous.tag === "em") && (tag === "i" || tag === "em"))) ? previous.tag : tag;
     if (tag === "a") {
       const href = element.getAttribute("href") ?? "/";
       if (!isSafePublicUrl(href)) throw new Error("リンク先には安全なHTTPSまたはサイト内URLを指定してください。");
       attrs.href = href;
     }
-    return { type: "element", id: previous?.id ?? id(), tag, ...(Object.keys(attrs).length ? { attrs } : {}),
+    return { type: "element", id: previous?.id ?? id(), tag: preservedTag, ...(Object.keys(attrs).length ? { attrs } : {}),
       ...(previous?.style ? { style: previous.style } : {}), children };
   };
   const inline = (container: Node): PageNode[] => {

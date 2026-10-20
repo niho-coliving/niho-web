@@ -78,6 +78,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
   document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; select: (path: NodePath | null) => void;
   breakpoint: number | "base";
   dragItem: { current: DragItem | null }; drop: (item: DragItem, place: DropPlace) => void;
+  pending: (key: string, value: boolean) => void;
   editText: (path: NodePath, children: PageNode[]) => string | undefined; resize: (path: NodePath, width: number, height: number) => string | undefined;
   reportError: (message: string) => void; editable: boolean; locks: readonly EditorLock[]; preview: boolean;
 }) {
@@ -131,6 +132,10 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
     const selectedRange = body.ownerDocument.getSelection(); selectedRange?.removeAllRanges(); selectedRange?.addRange(range);
     return () => { element.removeAttribute("contenteditable"); element.removeAttribute("spellcheck"); };
   }, [body, editingId]);
+  useEffect(() => {
+    if (!editingId) return;
+    return () => pending(`direct-${editingId}`, false);
+  }, [editingId, pending]);
   function editableElement(target: EventTarget | null): HTMLElement | null {
     const targetElement = asElement(target); if (!targetElement) return null;
     const candidate = targetElement.closest<HTMLElement>("div[role=group][aria-label='リッチテキスト'][data-nw-node]") ??
@@ -143,16 +148,16 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
     return candidate;
   }
   function stopEditing(commit: boolean) {
-    if (!body || !editing || editing.node.type !== "element") return;
+    if (!body || !editing || editing.node.type !== "element") { if (editingId) pending(`direct-${editingId}`, false); setEditingId(null); return; }
     const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === editingId);
-    if (!element) { setEditingId(null); return; }
+    if (!element) { pending(`direct-${editingId}`, false); setEditingId(null); return; }
     if (commit) {
       try {
         const problem = editText(editing.path, readEditableChildren(element, editing.node));
         if (problem) element.innerHTML = originalHtml.current;
       } catch (error) { element.innerHTML = originalHtml.current; reportError(error instanceof Error ? error.message : "文字の変更を適用できませんでした。"); }
     } else element.innerHTML = originalHtml.current;
-    element.removeAttribute("contenteditable"); setEditingId(null); setLinkOpen(false); setLinkError("");
+    element.removeAttribute("contenteditable"); pending(`direct-${editingId}`, false); setEditingId(null); setLinkOpen(false); setLinkError("");
   }
   function placeAt(event: React.DragEvent<HTMLElement>): DropPlace {
     const target = asElement(event.target)?.closest<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node]`) ?? null;
@@ -203,7 +208,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
     }} onDoubleClickCapture={(event) => {
       if (!editable || preview || editingId) return;
       const element = editableElement(event.target);
-      if (element) { const path = entries.find(({ node }) => node.type !== "text" && node.id === element.dataset.nwNode)?.path; if (path) { select(path); setEditingId(element.dataset.nwNode ?? null); } }
+      if (element) { const path = entries.find(({ node }) => node.type !== "text" && node.id === element.dataset.nwNode)?.path; if (path) { select(path); const id = element.dataset.nwNode ?? null; setEditingId(id); if (id) pending(`direct-${id}`, true); } }
     }} onBlurCapture={(event) => { const target = asElement(event.target), next = asElement(event.relatedTarget); if (target?.dataset.nwNode === editingId && !linkOpen || linkOpen && target?.closest(".nw-text-toolbar") && !next?.closest(".nw-text-toolbar,[contenteditable=true]")) stopEditing(true); }}
       onKeyDownCapture={(event) => { if (!editingId || event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === "Escape") { event.preventDefault(); stopEditing(false); } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); stopEditing(true); } else if (event.key === "Enter" && editing?.node.type === "element" && editing.node.tag !== "div") { event.preventDefault(); insertLineBreak(); } }}
       onPasteCapture={(event) => { if (!editingId || !asElement(event.target)?.closest("[contenteditable=true]")) return; event.preventDefault(); pastePlainText(event.clipboardData.getData("text/plain")); }}
@@ -503,7 +508,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
         <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small></details>
       </div>
     </aside>
-    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div><label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
+    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div><label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ"><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
       {inspector === "site" && <section className="e-inspector-content"><h2>サイト情報</h2><p className="e-help">{sites.find((site) => site.id === siteId)?.name ?? "サイトを選択してください"}</p>{sites.find((site) => site.id === siteId)?.domains.map((domain) => <p className="e-domain-small" key={domain}>{domain}</p>)}</section>}
       {inspector === "page" && <section className="e-inspector-content"><h2>ページ設定</h2>{document && field("ページタイトル", document.title, (value) => ({ type: "title", value }), "title")}</section>}
