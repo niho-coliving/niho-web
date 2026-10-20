@@ -58,12 +58,11 @@ async function setup(options = {}) {
     }
   };
   const onOpenProject = (opened) => calls.opens.push(opened);
-  const render = async (nextAdapter) => {
-    await act(async () => root.render(createElement(ProjectManager, { adapter: nextAdapter, onOpenProject })));
+  const render = async (nextAdapter, initialSnapshot) => {
+    await act(async () => root.render(createElement(ProjectManager, { adapter: nextAdapter, onOpenProject, ...(initialSnapshot ? { initialSnapshot } : {}) })));
     await flush();
   };
-  await act(async () => root.render(createElement(ProjectManager, { adapter, onOpenProject })));
-  await flush();
+  await render(adapter, options.initialSnapshot);
   return { adapter, calls, root, container, snapshot, rerender: render, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
@@ -180,6 +179,53 @@ test("adapter replacement aborts the old action and ignores its late response", 
     await click("メンバー追加");
     assert.equal(nextAdds, 1);
     assert.ok(document.body.textContent.includes("新しい担当者"));
+  } finally { await app.cleanup(); }
+});
+
+test("adapter replacement never exposes the old catalog when the new account fails to load", async () => {
+  const app = await setup();
+  try {
+    await change(field("プロジェクト名"), "前のアカウントの下書き");
+    const nextAdapter = { ...app.adapter, loadCatalog: async () => { throw new Error("new account offline"); } };
+    await app.rerender(nextAdapter);
+    assert.ok(document.body.textContent.includes("読み込めませんでした"));
+    assert.equal(projectButton("project_kamakura 計画"), undefined);
+    assert.equal(document.body.textContent.includes("森さん"), false);
+    assert.equal(button("作成"), undefined);
+    assert.equal(button("プロジェクトを開く"), undefined);
+    assert.equal(app.calls.creates.length, 0);
+  } finally { await app.cleanup(); }
+});
+
+test("adapter replacement adopts the new initial snapshot and clears the old account's form state", async () => {
+  const initialSnapshot = { catalog: baseCatalog(), version: "v1" };
+  const app = await setup({ initialSnapshot });
+  try {
+    assert.equal(app.calls.loads, 0);
+    await change(field("プロジェクト名"), "前のアカウントの下書き");
+    await change(field("登録済みアカウント"), "old-account");
+    const nextSnapshot = { catalog: parseProjectCatalog({ projects: [project("project_next", "site_next", [])] }), version: "v1" };
+    let loads = 0;
+    const nextAdapter = { ...app.adapter, loadCatalog: async () => { loads++; throw new Error("must use initial snapshot"); } };
+    await app.rerender(nextAdapter, nextSnapshot);
+    assert.equal(loads, 0);
+    assert.equal(projectButton("project_kamakura 計画"), undefined);
+    assert.ok(projectButton("project_next 計画"));
+    assert.equal(field("プロジェクト名").value, "");
+    assert.equal(field("登録済みアカウント").value, "");
+    await click("プロジェクトを開く");
+    assert.equal(app.calls.opens.at(-1).id, "project_next");
+  } finally { await app.cleanup(); }
+});
+
+test("replacing the initial snapshot resets the catalog even when the adapter is unchanged", async () => {
+  const app = await setup({ initialSnapshot: { catalog: baseCatalog(), version: "initial-a" } });
+  try {
+    const nextSnapshot = { catalog: parseProjectCatalog({ projects: [project("project_replaced", "site_replaced", [])] }), version: "initial-b" };
+    await app.rerender(app.adapter, nextSnapshot);
+    assert.equal(app.calls.loads, 0);
+    assert.equal(projectButton("project_kamakura 計画"), undefined);
+    assert.ok(projectButton("project_replaced 計画"));
   } finally { await app.cleanup(); }
 });
 

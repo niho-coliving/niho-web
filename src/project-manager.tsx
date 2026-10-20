@@ -82,6 +82,15 @@ function savedSnapshot(result: ProjectAdapterWriteResult, previous: ProjectCatal
 
 /** 認証済みホスト用のプロジェクト管理画面。認証・アカウント照合・永続化は adapter が所有する。 */
 export function ProjectManager({ adapter, onOpenProject, initialSnapshot }: ProjectManagerProps) {
+  const [source, setSource] = useState({ adapter, initialSnapshot, generation: 0 });
+  if (source.adapter !== adapter || source.initialSnapshot !== initialSnapshot) {
+    setSource({ adapter, initialSnapshot, generation: source.generation + 1 });
+    return null;
+  }
+  return <ProjectManagerSession key={source.generation} adapter={adapter} onOpenProject={onOpenProject} {...(initialSnapshot ? { initialSnapshot } : {})} />;
+}
+
+function ProjectManagerSession({ adapter, onOpenProject, initialSnapshot }: ProjectManagerProps) {
   const [snapshot, setSnapshot] = useState<ProjectCatalogSnapshot | null>(() => initialSnapshot ? parseProjectCatalogSnapshot(initialSnapshot) : null);
   const [selectedId, setSelectedId] = useState(() => initialSnapshot ? parseProjectCatalogSnapshot(initialSnapshot).catalog.projects[0]?.id ?? "" : "");
   const [loading, setLoading] = useState(!initialSnapshot), [loadFailed, setLoadFailed] = useState(false), [busy, setBusy] = useState(false);

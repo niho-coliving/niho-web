@@ -47,6 +47,8 @@ if (change.status === "changed") {
 
 create / add / remove はすべて `expectedVersion` を受け取り、`saved` / `conflict` / `unchanged` を返します。成功応答でも既存Projectの消失やSite差替えは採用しません。競合・通信失敗時、画面はCatalogの旧versionとフォーム入力を保持します。非同期操作中は再読込、二重送信、Project切替を止め、adapter差替えとunmount時は進行中の `AbortSignal` をabortします。
 
+`adapter` または `initialSnapshot` のオブジェクト参照が変わると、一覧・選択・フォーム・確認ダイアログをすべてリセットします。新しい `initialSnapshot` があれば採用し、なければ新しいadapterから取得します。取得に失敗しても前の接続先の一覧は表示しません。ホストは通常の再描画でこれらの参照を維持し、アカウントや接続先を切り替えるときに差し替えてください。
+
 `onOpenProject` は管理画面から編集画面等を開くためのcallbackです。`ProjectManager` 自身は既存 `PageEditor` をunmountしません。ホストが画面を切り替える場合、編集中の未保存内容を確認してから切り替えてください。
 
 ## 1サイト限定エディター

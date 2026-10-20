@@ -25,5 +25,6 @@ export interface ProjectAdapter {
 export type ProjectManagerProps = {
   adapter: ProjectAdapter;
   onOpenProject: (project: Project) => void;
+  /** adapter またはこのオブジェクトの差替えで一覧・選択・入力をリセットする。通常の再描画では参照を維持する。 */
   initialSnapshot?: ProjectCatalogSnapshot;
 };
