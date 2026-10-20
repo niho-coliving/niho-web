@@ -29,6 +29,7 @@ React 18.3 または 19 と、同じ版の React DOM を利用側で用意して
 | `release(plan, signal)` | 確認済みの内容を公開 / rollback。成功時は最新 snapshot、競合時は `status: 'conflict'` |
 | `preparePageChange` / `applyPageChange`（任意） | ページの作成・複製・名前とURLの変更・公開切替。影響の確認と一回限りの確認 token。[ページ管理の契約](page-contract.md) |
 | `readSiteSettings` / `saveSiteSettings`（任意） | サイト共通の公開情報。楽観ロック付き |
+| `listRevisions` / `readRevision` / `createSnapshot`（任意） | 版履歴の一覧・読み取り専用の表示・名前付きスナップショット。[保存・履歴の契約](save-history-contract.md) |
 
 `listPages` の各ページに任意で `path`・`kind`（page / template / shared）・`visibility`・`published` を返すと、左のページパネルにフォルダ・種別・公開状態を表示します。任意メソッドを実装しないホストでは、ページ操作とサイト設定の保存を表示しません。
 
@@ -48,7 +49,7 @@ HTTP 409 は adapter で `{ status: 'conflict' }` へ変換します。`status: 
 
 作業コピーと履歴の revision は最新の保存先を表す基準です。編集中の内容をその revision の公開済み文書として扱わず、永続化・公開する際は保存で採番した不変の文書を使います。rollback で過去の内容を復元するときも、異なる内容へ古い revision を再利用せず、新しい revision の文書を返してください。
 
-編集履歴はメモリ内で最大50操作です。undo/redo・保存済み表示は文書内容と保存済みの基準を比較します。サイト/ページ移動・再読込は未保存の文書と入力途中の値を破棄する前に確認します。タブを閉じる際もブラウザへ離脱確認を要求します。ブラウザや端末を閉じた後の復元、localStorage、自動保存はこの版に含みません。
+編集履歴はメモリ内で最大50操作です。undo/redo・保存済み表示は文書内容と保存済みの基準を比較します。サイト/ページ移動・再読込は未保存の文書と入力途中の値を破棄する前に確認します。タブを閉じる際もブラウザへ離脱確認を要求します。自動保存、ブラウザや端末を閉じた後の復元、版履歴は、ホストが明示的に有効にした場合だけ動作します。[保存・作業復元・版履歴の契約](save-history-contract.md) を参照してください。
 
 ## 安全な入力と編集範囲
 

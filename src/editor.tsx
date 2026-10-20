@@ -7,7 +7,7 @@ import { parsePageDocument } from "./document.js";
 import { pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
 import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
-import { editorCss, pagesCss } from "./editor-style.js";
+import { editorCss, historyCss, pagesCss } from "./editor-style.js";
 import { styleEditorCss } from "./editor-style-css.js";
 import { Field } from "./editor-fields.js";
 import { StyleInspector, type StyleRange } from "./editor-style-inspector.js";
@@ -15,6 +15,7 @@ import { StyleLibrary } from "./editor-style-library.js";
 import { editorTiers, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
 import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
+import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
@@ -30,7 +31,6 @@ type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorT
 const message = (error: unknown) => error instanceof DocumentValidationError ? publicInfoMessage(error) ??
   (/nesting|parent|void element/.test(error.message) ? "この場所には要素を配置できません。別のセクションかボックスを選んでください。" : "文書のルールに合いません。URL・単位・親要素を確認してください。") :
   error instanceof Error ? error.message : "入力を適用できません。";
-const conflict = (error: unknown) => !!error && typeof error === "object" && "status" in error && error.status === 409;
 const label = (node: PageNode, blocks: EditorBlockRegistry) => node.type === "text" ? `文字: ${node.text.slice(0, 24) || "（空）"}` : node.type === "component" ? `${blocks[node.block]?.label ?? node.block} · ${node.id}` : node.type === "instance" ? `部品 · ${node.component}` : `${node.tag} · ${node.id}`;
 function sessionFrom(snapshot: EditorSnapshot, target: EditorTarget, blocks: EditorBlockRegistry): Session {
   const document = parsePageDocument(snapshot.document, blocks);
@@ -215,7 +215,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
 }
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets, breakpoints: hostBreakpoints }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -236,12 +236,25 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   useEffect(() => { setPicker(null); }, [selection]);
   const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null), pageList = useRef<AbortController | null>(null);
   const [pageChange, setPageChange] = useState<PageChangeStart | null>(null), siteSettings = useSiteSettings(adapter, siteId);
+  const [problem, setProblem] = useState<SaveProblem | null>(null), [savedAt, setSavedAt] = useState<Date | null>(null), [loadEpoch, setLoadEpoch] = useState(0);
+  const [conflictView, setConflictView] = useState(0), [recoveryCompare, setRecoveryCompare] = useState(false), [autosaveOn, setAutosaveOn] = useState(true);
+  const problemRef = useRef(problem); problemRef.current = problem;
   const pending = useCallback((key: string, value: boolean) => setPendingFields((previous) => {
     if (!!previous[key] === value) return previous;
     const next = { ...previous }; if (value) next[key] = true; else delete next[key]; return next;
   }), []);
   const hasInput = Object.values(pendingFields).some(Boolean), dirty = !!session && fingerprint(session.history.present) !== session.saved;
-  const blocked = !!busy || !!plan || !!pageChange, editBlocked = blocked && busy !== "保存中";
+  const blocked = !!busy || !!plan || !!pageChange;
+  const versions = useVersionHistory({ adapter, blocks, target: session?.target, version: session?.version, epoch: loadEpoch, report: setNotice,
+    guard: () => hasInput ? "入力を適用するか取り消してから版を選んでください。" : busy ? "処理が完了してから版を選んでください。" : undefined });
+  const historyMode = !!versions.viewing, editBlocked = (blocked && busy !== "保存中") || historyMode;
+  const recoveryState = useRecovery({ store: recovery, session: session ? { target: session.target, version: session.version, present: session.history.present } : undefined, dirty, blocks, epoch: loadEpoch, report: setNotice });
+  const autosaveMs = autosaveDelay(autosave), autosaveActive = autosaveMs !== undefined && autosaveOn;
+  // オフラインで失敗した後、接続が戻ったら自動保存は1回だけ再試行する。
+  const online = useOnline(() => { if (problemRef.current !== "offline") return; if (!autosaveActive) setProblem("failed"); else if (!dirty) setProblem(null); else void save("auto"); });
+  const modal = !!plan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null;
+  useAutosave(autosaveMs, autosaveActive && dirty && !hasInput && !busy && !modal && !historyMode && online && !problem, session?.history.present, targetKeyOf(session?.target),
+    (key) => { if (targetKeyOf(sessionRef.current?.target) === key) void save("auto"); });
   const replace = useCallback((next: Session | null) => { sessionRef.current = next; setSession(next); }, []);
   const load = useCallback(async (target: EditorTarget): Promise<boolean> => {
     const editorTarget: EditorTarget = { siteId: target.siteId, pageId: target.pageId, locale: target.locale };
@@ -251,6 +264,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       const snapshot = await adapter.readDocument(editorTarget, controller.signal);
       if (controller.signal.aborted) return false;
       replace(sessionFrom(snapshot, editorTarget, blocks)); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({}); setPlan(null); setRollbackRevision(""); setParentId("");
+      setProblem(null); setSavedAt(null); setConflictView(0); setRecoveryCompare(false); setLoadEpoch((value) => value + 1);
       return true;
     } catch { if (!controller.signal.aborted) setNotice("文書を読み込めませんでした。現在の編集内容は保持されています。"); return false; }
     finally { if (!controller.signal.aborted) setBusy(""); }
@@ -297,7 +311,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   function navigate(next: Navigation) {
     setNavigation(null); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({});
     setPicker(null);
-    if (next.type === "site") { replace(null); setSiteId(next.id); }
+    if (next.type === "site") { replace(null); setSiteId(next.id); setProblem(null); setSavedAt(null); }
     else if (next.type === "page") void load(next.target);
     else if (sessionRef.current) void load(sessionRef.current.target);
   }
@@ -317,33 +331,38 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   }
   function structural(operation: EditorOperation) { const error = apply(operation); if (error) setNotice(error); else setSelection(null); }
   function travel(direction: "undo" | "redo") {
-    if (!session || blocked || hasInput) return;
+    if (!session || blocked || hasInput || historyMode) return;
     try { replace({ ...session, history: travelHistory(session.history, direction, blocks, session.locks) }); setSelection(null); setNotice(""); } catch (error) { setNotice(message(error)); }
   }
-  async function save() {
-    const current = sessionRef.current; if (!current || action.current || blocked || hasInput) return;
-    const controller = new AbortController(); action.current = controller; setBusy("保存中"); setNotice("");
+  /** 手動保存と自動保存の共通処理。応答は送信時のサイト・ページ・locale と version が一致する場合だけ採用する。 */
+  async function save(mode: "manual" | "auto" = "manual"): Promise<boolean> {
+    const current = sessionRef.current; if (!current || action.current || blocked || hasInput || historyMode || mode === "auto" && isOffline()) return false;
+    const controller = new AbortController(), auto = mode === "auto", hadProblem = !!problemRef.current; action.current = controller; setBusy("保存中"); if (!auto) setNotice("");
     const document = parsePageDocument(current.history.present, blocks);
+    const sameSession = () => { const latest = sessionRef.current; return !!latest && sameTarget(latest.target, current.target); };
+    const failed = (next: SaveProblem, thrown: boolean) => { if (!sameSession()) return; setProblem(next); setNotice(saveProblemNotice(next, auto, thrown)); if (next === "conflict" && !auto) setConflictView((value) => value + 1); };
     try {
-      const result = await adapter.saveDraft({ target: current.target, document: structuredClone(document), expectedVersion: current.version }, controller.signal);
-      if (controller.signal.aborted) return;
-      if (result.status === "conflict") { setNotice("保存が競合しました（409）。編集内容を保持しています。コピーして保管するか、再読込して最新の文書を確認してください。"); return; }
+      const result = await adapter.saveDraft({ target: current.target, document: structuredClone(document), expectedVersion: current.version, ...(auto ? { trigger: "autosave" as const } : {}) }, controller.signal);
+      if (controller.signal.aborted) return false;
+      if (result.status === "conflict") { failed("conflict", false); return false; }
       if (typeof result.version !== "string" || !result.version || result.version === current.version) throw new Error("version must advance");
       const latest = sessionRef.current;
       if (latest && sameTarget(latest.target, current.target) && latest.version === current.version) {
         const acknowledged = acceptSavedRevision(latest.history, document, result.revision);
         replace({ ...latest, ...acknowledged, version: result.version });
       }
-      setNotice("下書きを保存しました。");
-    } catch (error) { if (!controller.signal.aborted) setNotice(conflict(error) ? "保存が競合しました（409）。編集内容を保持しています。最新状態を確認してからやり直してください。" : "下書きを保存できませんでした。編集内容を保持しています。時間をおいて再試行してください。"); }
+      if (sameSession()) { setProblem(null); setSavedAt(new Date()); setConflictView(0); }
+      if (!auto) setNotice("下書きを保存しました。"); else if (hadProblem) setNotice("");
+      return true;
+    } catch (error) { if (!controller.signal.aborted) failed(classifySaveError(error), true); return false; }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
   }
-  async function prepare(actionType: "publish" | "rollback") {
+  async function prepare(actionType: "publish" | "rollback", revision = Number(rollbackRevision)) {
     const current = sessionRef.current, site = sites.find((site) => site.id === current?.target.siteId);
-    if (!current || !site || action.current || blocked || dirty || hasInput || (actionType === "rollback" && !current.releases.some((release) => release.revision === Number(rollbackRevision)))) return;
+    if (!current || !site || action.current || blocked || dirty || hasInput || (actionType === "rollback" && !current.releases.some((release) => release.revision === revision))) return;
     const controller = new AbortController(); action.current = controller; setBusy("公開差分を取得中"); setNotice("");
     const input: EditorReleaseRequest = { target: current.target, expectedVersion: current.version, action: actionType,
-      ...(actionType === "rollback" ? { revision: Number(rollbackRevision) } : {}) };
+      ...(actionType === "rollback" ? { revision } : {}) };
     try {
       const result = await adapter.prepareRelease(input, controller.signal);
       if (controller.signal.aborted) return;
@@ -359,10 +378,59 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       const result = await adapter.release(plan, controller.signal);
       if (controller.signal.aborted) return;
       if (result.status === "conflict") { setNotice("公開が競合しました（409）。編集内容を保持しています。最新状態を確認してからやり直してください。"); setPlan(null); return; }
-      replace(sessionFrom(result.snapshot, current.target, blocks)); setSelection(null); setFieldEpoch((value) => value + 1); setPlan(null); setNotice(plan.action === "rollback" ? "指定した版に戻しました。" : "公開しました。");
+      replace(sessionFrom(result.snapshot, current.target, blocks)); setSelection(null); setFieldEpoch((value) => value + 1); setPlan(null); setProblem(null); setNotice(plan.action === "rollback" ? "指定した版に戻しました。" : "公開しました。");
       setPicker(null);
     } catch { if (!controller.signal.aborted) { setNotice("反映結果を確認できませんでした。再試行前に公開状態をホスト側で確認してください。編集内容は保持しています。"); setPlan(null); } }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
+  }
+  /** 版・退避内容を通常の編集として作業コピーへ適用する。履歴モード中も呼べる。 */
+  function restoreDocument(source: PageDocument): string | undefined {
+    const current = sessionRef.current;
+    if (!current || blocked && busy !== "保存中") return "処理が完了してから復元してください。";
+    if (hasInput) return "入力を適用するか取り消してから復元してください。";
+    try {
+      replace({ ...current, history: commitHistory(current.history, editDocument(current.history.present, { type: "restore", document: source }, blocks, current.locks)) });
+      setSelection(null); setInspector("page"); return undefined;
+    } catch (error) { return message(error); }
+  }
+  function restoreRecovered() {
+    const offer = recoveryState.offer; if (!offer) return;
+    const problem = restoreDocument(offer.document);
+    setRecoveryCompare(false);
+    if (problem) { setNotice(problem); return; }
+    recoveryState.accepted(); setNotice("端末に残っていた変更を復元しました。保存すると新しい版として記録されます。");
+  }
+  function restoreRevision() {
+    const viewing = versions.viewing; if (!viewing) return;
+    const problem = restoreDocument(viewing.document);
+    if (problem) { setNotice(problem); return; }
+    versions.exit(); setNotice(`${formatDateTime(viewing.entry.createdAt)} の版を作業コピーに復元しました。保存すると新しい版として記録されます。`);
+  }
+  /** 最新の保存内容へ切り替え、手元の編集と退避内容を破棄する。 */
+  function loadLatest({ snapshot }: LatestSnapshot) {
+    const current = sessionRef.current; if (!current) return;
+    try {
+      const next = sessionFrom(snapshot, current.target, blocks);
+      recoveryState.drop(current.target); replace(next); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({}); setRollbackRevision(""); setParentId("");
+      setProblem(null); setSavedAt(null); setConflictView(0); setNotice("最新の保存内容を読み込みました。");
+    } catch { setNotice("最新の内容を読み込めませんでした。編集内容は保持しています。"); }
+  }
+  /** 最新の version と revision を基準にして、あなたの編集で保存し直す。 */
+  function overwriteWith({ snapshot, document: latest }: LatestSnapshot) {
+    const current = sessionRef.current; if (!current || !sameTarget(current.target, latest)) return;
+    const rebase = (document: PageDocument): PageDocument => ({ ...document, revision: latest.revision });
+    const history = { past: current.history.past.map(rebase), present: rebase(current.history.present), future: current.history.future.map(rebase) };
+    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
+    setConflictView(0); setProblem(null);
+    if (fingerprint(history.present) === fingerprint(latest)) { setNotice("最新の保存内容と同じ内容です。"); return; }
+    void save("manual");
+  }
+  async function saveAndNavigate(next: Navigation) {
+    setNavigation(null);
+    if (!await save("manual")) return;
+    const current = sessionRef.current;
+    if (current && fingerprint(current.history.present) !== current.saved) { setNotice("保存中に変更がありました。もう一度保存してから移動してください。"); return; }
+    navigate(next);
   }
 
   const document = session?.history.present, entries = document ? walkNodes(document) : [];
@@ -373,7 +441,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const tiers = document ? editorTiers(document, breakpoints) : [], tier = tiers.some((entry) => entry.key === breakpoint) ? breakpoint : "base";
   const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft?.base === document ? draft.document : document;
   const nextTier = tiers[tiers.findIndex((entry) => entry.key === tier) + 1], until = range === "only" ? nextTier?.start : undefined;
-  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, document, fieldEpoch), localUsage = useLocalAssetUsage(document);
+  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, versions.viewing?.document ?? document, fieldEpoch), localUsage = useLocalAssetUsage(document);
   function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: FieldOptions = {}) {
     return <Field key={`${pathKey}-${key}`} name={name} value={value} fieldKey={`${pathKey}-${key}`} pending={pending} disabled={editBlocked}
       apply={(value) => apply(operation(value))} {...options} />;
@@ -476,20 +544,25 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   };
   const site = sites.find((site) => site.id === siteId), page = session ? pages.find((page) => sameTarget(page, session.target)) : undefined;
   const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
-  const pageOperationsDisabled = unsaved || blocked || !!navigation || !site;
+  const pageOperationsDisabled = unsaved || blocked || !!navigation || !site || historyMode;
   const startPageChange = (start: PageChangeStart) => { if (pageOperations && !pageOperationsDisabled) setPageChange(start); };
-  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss + styleEditorCss }} />
+  const status = saveStatus({ busy, hasInput, problem, dirty, online, autosave: autosaveActive, savedAt, loaded: !!session });
+  const recoveryStale = !!recoveryState.offer && !!session && recoveryState.offer.baseVersion !== session.version;
+  const viewed = versions.viewing?.entry, viewedRelease = viewed && (viewed.kind === "publish" || viewed.kind === "rollback") && session?.releases.some((release) => release.revision === viewed.revision) ? viewed.revision : undefined;
+  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss + styleEditorCss + historyCss }} />
     {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
-    <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation || !!pageChange; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
-      <span className={`e-status${dirty ? " is-dirty" : ""}`} role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
-      <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>
-      <button onClick={() => travel("redo")} disabled={!session?.history.future.length || blocked || hasInput}>やり直す</button>
-      <button aria-pressed={preview} onClick={() => setPreview((value) => !value)} disabled={!document || blocked}>{preview ? "編集に戻る" : "プレビュー"}</button>
-      <button onClick={() => void save()} disabled={!dirty || blocked || hasInput}>下書き保存</button>
-      <button className="e-primary" onClick={() => void prepare("publish")} disabled={!session || dirty || blocked || hasInput}>公開前の確認</button>
+    <header className="e-toolbar" ref={(element) => { if (element) element.inert = modal; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
+      <SaveStatus {...status} retry={() => void save()} compare={() => setConflictView((value) => value + 1)} retryDisabled={blocked || hasInput || historyMode} compareDisabled={!!busy || hasInput || historyMode} />
+      {autosaveMs !== undefined && <AutosaveSwitch on={autosaveOn} set={setAutosaveOn} />}
+      <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput || historyMode}>元に戻す</button>
+      <button onClick={() => travel("redo")} disabled={!session?.history.future.length || blocked || hasInput || historyMode}>やり直す</button>
+      {versions.supported && <button aria-pressed={versions.open} onClick={versions.toggle} disabled={!session || preview}>履歴</button>}
+      <button aria-pressed={preview} onClick={() => setPreview((value) => !value)} disabled={!document || blocked || historyMode}>{preview ? "編集に戻る" : "プレビュー"}</button>
+      <button onClick={() => void save()} disabled={!dirty || blocked || hasInput || historyMode}>下書き保存</button>
+      <button className="e-primary" onClick={() => void prepare("publish")} disabled={!session || dirty || blocked || hasInput || historyMode}>公開前の確認</button>
     </header>
     {notice && <div className="e-notice" role="alert">{notice}</div>}
-    <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation || !!pageChange; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
+    <div className="e-body" ref={(element) => { if (element) element.inert = modal; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
       <nav className="e-tools" aria-label="編集ツール">{([
         ["add", "追加", "＋"], ["pages", "ページ", "▤"], ["layers", "レイヤー", "▦"], ["styles", "スタイル", "◐"], ["assets", "素材", "▧"], ["components", "部品", "◇"]
       ] as const).map(([key, name, glyph]) => <button key={key} type="button" aria-pressed={visiblePanel === key} title={name} onClick={() => { setPicker(null); setPanel(key); }}><span aria-hidden="true">{glyph}</span><small>{name}</small></button>)}</nav>
@@ -528,8 +601,13 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small></details>
       </div>
     </aside>
-    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}</div><div className="e-stage">{document && canvasDocument ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={canvasDocument} blocks={blocks} width={width} breakpoint={tier} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
-    <aside className="e-rail e-right" aria-label="インスペクタ"><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
+    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}</div>
+      {recoveryState.offer && session && <RecoveryBanner offer={recoveryState.offer} stale={recoveryStale} disabled={historyMode || (blocked && busy !== "保存中")} compare={() => setRecoveryCompare(true)}
+        restore={() => { if (recoveryStale) setRecoveryCompare(true); else restoreRecovered(); }} discard={recoveryState.discard} />}
+      <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} rollbackHint={dirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
+        rollback={viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
+{document && canvasDocument ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={versions.viewing?.document ?? canvasDocument} blocks={blocks} width={width} breakpoint={tier} selection={historyMode ? null : selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
+    <aside className="e-rail e-right" aria-label="インスペクタ">{versions.open ? <VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /> : <><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
       {inspector === "site" && <section className="e-inspector-content"><SiteSettingsPanel site={site} state={siteSettings} /></section>}
       {inspector === "page" && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked}
         operations={pageOperations} operationsDisabled={pageOperationsDisabled} unsaved={unsaved} start={startPageChange} />}</section>}
@@ -551,10 +629,11 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
           lock={(property) => reason(tier === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint: tier })}
           onClear={() => { const error = apply({ type: "background", path: selection, breakpoint: tier, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint: tier, property, value }); if (error) setNotice(error); }} />} />}
       </section>}
-    </aside></div>
-    {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => navigate(navigation)}>変更を破棄して移動</button></div></Dialog>}
+    </>}</aside></div>
+    {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => { if (session) recoveryState.drop(session.target); navigate(navigation); }}>変更を破棄して移動</button>
+      {dirty && !hasInput && !historyMode && !(navigation.type === "site" && siteSettings.dirty) && <button className="e-primary" onClick={() => void saveAndNavigate(navigation)}>保存して移動</button>}</div></Dialog>}
     {plan && <Dialog name="公開前の対象と差分" dismiss={() => { if (!busy) setPlan(null); }}><h2>{plan.action === "rollback" ? `版 ${plan.revision} に戻す前の確認` : "公開前の確認"}</h2><p>反映先のドメイン</p><p className="e-domain">{plan.domain}</p><p>{session?.target.pageId} · {session?.target.locale}</p>
-      <ReleaseSearchSummary document={document} page={page} domain={plan.domain} settings={siteSettings.settings} rollback={plan.action === "rollback"} /><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
+      <ReleaseSearchSummary document={document} page={page} domain={plan.domain} settings={siteSettings.settings} rollback={plan.action === "rollback"} url={plan.url} /><ReleaseAffected affected={plan.affected} /><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
       <label className="e-check"><input type="checkbox" checked={confirmed} disabled={!!busy} onChange={(event) => setConfirmed(event.target.checked)} />このドメインと差分を確認し、反映する内容に同意しました</label>
       <div className="e-actions"><button autoFocus disabled={!!busy} onClick={() => setPlan(null)}>編集に戻る</button><button className="e-primary" disabled={!confirmed || !!busy} onClick={() => void release()}>{plan.action === "rollback" ? "この版に戻す" : "この内容を公開"}</button></div>
     </Dialog>}
@@ -562,5 +641,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       prepare={(change, signal) => adapter.preparePageChange!(change, signal)} apply={(plan, signal) => adapter.applyPageChange!(plan, signal)}
       applied={(page, change) => void pageApplied(page, change)} conflicted={() => void reloadPages()} close={() => setPageChange(null)}
       reload={() => { const current = sessionRef.current?.target; setPageChange(null); void reloadPages().then(() => current && load(current)); }} />}
+    {conflictView > 0 && session && document && <ConflictDialog key={conflictView} adapter={adapter} target={session.target} present={document} blocks={blocks} close={() => setConflictView(0)} discard={loadLatest} overwrite={overwriteWith} />}
+    {recoveryCompare && recoveryState.offer && document && <RecoveryCompareDialog base={document} baseLabel={dirty ? "現在の編集内容" : "保存済みの内容"} recovered={recoveryState.offer} stale={recoveryStale} close={() => setRecoveryCompare(false)} apply={restoreRecovered} />}
+    <HistoryDialogs history={versions} present={document} />
   </div>;
 }

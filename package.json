@@ -35,6 +35,10 @@
       "types": "./dist/pages.d.ts",
       "import": "./dist/pages.js"
     },
+    "./history": {
+      "types": "./dist/history.d.ts",
+      "import": "./dist/history.js"
+    },
     "./projects": {
       "types": "./dist/projects.d.ts",
       "import": "./dist/projects.js"

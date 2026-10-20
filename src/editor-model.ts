@@ -38,6 +38,8 @@ export type EditorOperation =
   | { type: "detach"; path: NodePath }
   /** 業務ブロックの表示領域の見た目。registry が許可したプロパティだけを通す。 */
   | { type: "slotStyle"; path: NodePath; slot: string; breakpoint: number | "base"; property: StyleProperty; value: StyleValue | undefined }
+  /** 版履歴・端末内の退避から内容だけを戻す。対象・schemaVersion・revision は現在の文書のまま。 */
+  | { type: "restore"; document: PageDocument }
   | MetaOperation;
 /** undefined・空文字・false・空配列はその項目を削除する。 */
 export type MetaOperation = { [K in keyof PageMeta]-?: { type: "meta"; field: K; value: PageMeta[K] | undefined } }[keyof PageMeta];
@@ -187,6 +189,13 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
   };
   const pruneResponsive = (node: ElementNode | ComponentNode | InstanceNode) => { if (node.style?.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length); };
   if (operation.type === "title") draft.title = operation.value;
+  else if (operation.type === "restore") {
+    const source = operation.document;
+    if (!source || typeof source !== "object") throw new Error("復元する内容を確認できません。");
+    draft.title = source.title; draft.tokens = structuredClone(source.tokens); draft.body = structuredClone(source.body);
+    if (source.meta === undefined) delete draft.meta; else draft.meta = structuredClone(source.meta);
+    if (source.textStyles === undefined) delete draft.textStyles; else draft.textStyles = structuredClone(source.textStyles);
+  }
   else if (operation.type === "meta") {
     const meta: Record<string, unknown> = { ...draft.meta }, value = operation.value;
     if (value === undefined || value === "" || value === false || Array.isArray(value) && !value.length) delete meta[operation.field];
@@ -373,7 +382,12 @@ export function validateReleasePlan(plan: EditorReleasePlan, request: EditorRele
     plan.componentsVersion !== request.componentsVersion ||
     typeof plan.confirmationToken !== "string" || !plan.confirmationToken || !Array.isArray(plan.changes) ||
     plan.changes.some((change) => !change || typeof change.path !== "string" || typeof change.before !== "string" || typeof change.after !== "string") ||
-    (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1))) throw new Error("公開対象または差分確認の情報が一致しません。再取得してください。");
+    (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1)) ||
+    (plan.url !== undefined && !(planText(plan.url, 2048) && plan.url.startsWith(`${plan.domain}/`))) ||
+    (plan.affected !== undefined && !(Array.isArray(plan.affected) && plan.affected.length <= 100 && plan.affected.every((item: unknown) => {
+      const { kind, name, detail } = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+      return (kind === "shared" || kind === "page" || kind === "site") && planText(name, 120) && name.length > 0 && (detail === undefined || planText(detail, 300));
+    })))) throw new Error("公開対象または差分確認の情報が一致しません。再取得してください。");
 }
 const changeTarget = (change: EditorPageChange): EditorTarget | undefined => change.action === "create" ? undefined : change.action === "duplicate" ? change.source : change.target;
 type PageChangeProblem = { field: "title" | "path" | "change"; message: string };

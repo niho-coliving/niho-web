@@ -334,3 +334,38 @@ test("resize handles keep wider widths when the edit is limited to one tier", ()
   assert.equal(wide.width, "64rem"); assert.equal(wide.height, "auto");
   assert.throws(() => editDocument(original, { type: "resize", path: [0], breakpoint: "base", width: 0, height: 10 }), /1〜10000px/);
 });
+test("restore replaces content as an ordinary validated edit while keeping identity and revision", () => {
+  const present = { ...doc(), revision: 7, meta: { description: "現在の説明" } };
+  const old = { ...doc(), siteId: "other", pageId: "old", locale: "en", revision: 2, title: "以前のタイトル", tokens: { ink: { type: "color", value: "#000000" } } };
+  old.body[0].style.base.color = "#000000"; old.body[0].style.base.fontFamily = "serif"; old.body[0].style.base.padding = 8; old.body[0].children[0].children[0].text = "以前の見出し";
+  const restored = editDocument(present, { type: "restore", document: old });
+  assert.deepEqual([restored.siteId, restored.pageId, restored.locale, restored.revision, restored.schemaVersion], ["demo", "home", "ja-JP", 7, 1]);
+  assert.equal(restored.title, "以前のタイトル"); assert.equal(restored.meta, undefined); assert.deepEqual(restored.tokens, old.tokens);
+  assert.equal(nodeAt(restored, [0, 0, 0]).text, "以前の見出し");
+  const styled = editDocument(present, { type: "restore", document: { ...old, textStyles: { lead: { label: "リード", base: { fontSize: 18 } } } } });
+  assert.deepEqual(styled.textStyles, { lead: { label: "リード", base: { fontSize: 18 } } });
+  assert.equal(editDocument(styled, { type: "restore", document: old }).textStyles, undefined, "text styles follow the restored version");
+  old.body[0].children[0].children[0].text = "後から変えた"; assert.equal(nodeAt(restored, [0, 0, 0]).text, "以前の見出し", "restored content is copied");
+  const history = commitHistory({ past: [], present, future: [] }, restored);
+  assert.equal(history.past.length, 1); assert.equal(travelHistory(history, "undo", {}, []).present, present);
+  const broken = structuredClone(old); broken.body[0].attrs = { onclick: "alert(1)" };
+  assert.throws(() => editDocument(present, { type: "restore", document: broken }), DocumentValidationError);
+  const blocks = { Notice: { props: { count: { type: "number" } }, component: () => null, lockedProps: { count: "外部データから取得します" } } };
+  const withBlock = { ...present, body: [...present.body, { type: "component", id: "notice", block: "Notice", props: { count: 3 } }] };
+  const oldBlock = { ...old, body: [...old.body, { type: "component", id: "notice", block: "Notice", props: { count: 9 } }] };
+  assert.throws(() => editDocument(withBlock, { type: "restore", document: oldBlock }, blocks), /データ連動値/);
+  assert.throws(() => editDocument(withBlock, { type: "restore", document: old }, blocks), /データ連動値/);
+  assert.doesNotThrow(() => editDocument(withBlock, { type: "restore", document: { ...oldBlock, body: [...old.body, { ...oldBlock.body.at(-1), props: { count: 3 } }] } }, blocks));
+});
+test("release plans may carry a public URL under the domain and a bounded affected list", () => {
+  const request = { target: { siteId: "demo", pageId: "home", locale: "ja-JP" }, expectedVersion: "v2", action: "publish" };
+  const plan = { ...request, domain: "https://example.com", confirmationToken: "token", changes: [], url: "https://example.com/about",
+    affected: [{ kind: "shared", name: "ヘッダー", detail: "全ページのナビゲーション" }, { kind: "page", name: "ホーム" }, { kind: "site", name: "サイト共通の設定" }] };
+  const site = { id: "demo", name: "Demo", domains: ["https://example.com"] };
+  assert.doesNotThrow(() => validateReleasePlan(plan, request, site));
+  for (const invalid of [{ ...plan, url: "https://example.com.evil.test/about" }, { ...plan, url: "https://example.com" }, { ...plan, url: "https://evil.test/about" }, { ...plan, url: 1 },
+    { ...plan, url: `https://example.com/${"a".repeat(2048)}` }, { ...plan, url: "https://example.com/a\nb" }, { ...plan, affected: "ヘッダー" },
+    { ...plan, affected: [{ kind: "layout", name: "x" }] }, { ...plan, affected: [{ kind: "page", name: "" }] }, { ...plan, affected: [{ kind: "page", name: "a".repeat(121) }] },
+    { ...plan, affected: [{ kind: "page", name: "x", detail: "a".repeat(301) }] }, { ...plan, affected: [null] }, { ...plan, affected: Array.from({ length: 101 }, () => ({ kind: "page", name: "x" })) }])
+    assert.throws(() => validateReleasePlan(invalid, request, site), /一致しません/);
+});

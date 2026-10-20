@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
-import { PageEditor, type EditorAdapter, type EditorBlockRegistry, type EditorPage, type EditorPageChange, type EditorPageImpact } from "@niho/web/editor";
+import { PageEditor, type EditorAdapter, type EditorBlockRegistry, type EditorPage, type EditorPageChange, type EditorPageImpact, type EditorRevisionEntry } from "@niho/web/editor";
+import { createBrowserRecoveryStore, diffDocuments } from "@niho/web/history";
 import { findInternalLinks, findPathConflict, pageUrl, parseSiteSettings, rewriteInternalLinks, validatePagePath, type SiteSettings } from "@niho/web/pages";
 import fixture from "./page.json";
 import type { ElementNode, PageDocument, PageNode } from "@niho/web/core";
@@ -10,7 +11,15 @@ declare const DEMO_ASSET_SEED: Readonly<Record<"uploads" | "experience" | "stock
 
 // 公開可能なインメモリ動作例。認証や本番 API には接続しない。
 const domain = "https://demo.example.test", domains = [domain];
-type Entry = { page: EditorPage; draft: PageDocument; published: PageDocument | null; initial: PageDocument; version: number; confirmedPlan: string | null };
+type Revision = { entry: EditorRevisionEntry; document: PageDocument };
+/** revisions は古い順。版の識別子は opaque な値として返す。 */
+type Entry = { page: EditorPage; draft: PageDocument; published: PageDocument | null; version: number; confirmedPlan: string | null; revisions: Revision[] };
+const actor = "デモ編集者";
+let nextRevision = 1;
+function record(item: Entry, kind: EditorRevisionEntry["kind"], document: PageDocument, label?: string): EditorRevisionEntry {
+  const entry: EditorRevisionEntry = { id: `rev-${nextRevision++}`, revision: document.revision, kind, createdAt: new Date().toISOString(), actor, ...(label ? { label } : {}) };
+  item.revisions.push({ entry, document: structuredClone(document) }); return entry;
+}
 const text = (value: string): PageNode => ({ type: "text", text: value });
 const link = (id: string, href: string, label: string): PageNode => ({ type: "element", id, tag: "a", attrs: { href }, children: [text(label)] });
 function pageDocument(pageId: string, title: string, children: PageNode[]): PageDocument {
@@ -43,7 +52,9 @@ const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "header", locale: "ja-JP", title: "ヘッダー", kind: "shared" }, pageDocument("header", "ヘッダー", [
     { type: "element", id: "nav", tag: "nav", children: [link("nav_home", "/", "ホーム"), link("nav_about", "https://demo.example.test/about", "私たちについて")] }])]
 ];
-const entries = new Map<string, Entry>(seeds.map(([page, document]) => [page.pageId, { page, draft: document, published: structuredClone(document), initial: structuredClone(document), version: 1, confirmedPlan: null }]));
+const entries = new Map<string, Entry>(seeds.map(([page, document]) => [page.pageId, { page, draft: document, published: structuredClone(document), version: 1, confirmedPlan: null,
+  revisions: [{ entry: { id: `rev-${nextRevision++}`, revision: document.revision, kind: "publish", createdAt: "2026-10-01T09:00:00+09:00", actor, label: "最初の公開" }, document: structuredClone(document) }] }]));
+const recovery = createBrowserRecoveryStore({ scope: "demo-staff" });
 let pageListVersion = 1, nextPage = 1, nextToken = 1;
 const pageTokens = new Map<string, { change: string; listVersion: number }>();
 let siteSettings: SiteSettings = { title: "デモサイト", description: "鎌倉の海のそばで暮らす人のための動作例です。", locale: "ja" }, settingsVersion = 1;
@@ -54,19 +65,15 @@ function entry(pageId: string): Entry {
   return found;
 }
 const listed = (item: Entry): EditorPage => ({ ...structuredClone(item.page), published: item.published !== null });
-const snapshot = (item: Entry) => ({ document: item.draft, version: `draft-${item.version}`, releases: item.page.pageId === "home" ? [{ revision: 1, label: "デモの最初の公開版" }] : [] });
-function summary(document: PageDocument): Record<string, string> {
-  const values: Record<string, string> = { "ページタイトル": document.title, "説明文": document.meta?.description ?? "（なし）" }, layers: string[] = [];
-  function visit(nodes: PageNode[], parent = "ページ"): void {
-    nodes.forEach((node, index) => {
-      if (node.type === "text") { values[`${parent} のテキスト ${index + 1}`] = node.text; return; }
-      layers.push(`${node.id} (${node.type === "element" ? node.tag : node.type === "component" ? node.block : node.component})`);
-      values[`${node.id} の見た目`] = JSON.stringify(node.style ?? {});
-      if (node.type === "element") { for (const [key, value] of Object.entries(node.attrs ?? {})) values[`${node.id} の ${key}`] = String(value); visit(node.children, node.id); }
-      else for (const [key, value] of Object.entries(node.props ?? {})) values[`${node.id} の ${key}`] = String(value);
-    });
-  }
-  visit(document.body); values["レイヤー構成"] = layers.join(" → "); return values;
+/** 公開・rollback した版だけを戻せる公開版として返す。 */
+const releases = (item: Entry) => [...new Map(item.revisions.filter(({ entry }) => entry.kind === "publish" || entry.kind === "rollback")
+  .map(({ entry }) => [entry.revision, { revision: entry.revision, label: `版 ${entry.revision}（${entry.label ?? (entry.kind === "rollback" ? "公開版に戻した版" : "公開")}）` }])).values()].reverse();
+const snapshot = (item: Entry) => ({ document: item.draft, version: `draft-${item.version}`, releases: releases(item) });
+const blank = (document: PageDocument): PageDocument => ({ schemaVersion: 1, siteId: document.siteId, pageId: document.pageId, locale: document.locale, revision: document.revision, title: "", tokens: {}, body: [] });
+function releasedDocument(item: Entry, revision: number | undefined): PageDocument {
+  const found = [...item.revisions].reverse().find(({ entry }) => entry.revision === revision && (entry.kind === "publish" || entry.kind === "rollback"));
+  if (!found) throw new Error("revision not found");
+  return found.document;
 }
 /** 変更要求を既知の項目だけで比較する。 */
 function changeKey(change: EditorPageChange): string {
@@ -113,22 +120,41 @@ const adapter: EditorAdapter = {
   saveDraft: async (request) => {
     const item = entry(request.target.pageId);
     if (request.expectedVersion !== `draft-${item.version}`) return { status: "conflict" };
-    item.draft = { ...structuredClone(request.document), revision: item.draft.revision + 1 }; item.version++; return { status: "saved", version: `draft-${item.version}`, revision: item.draft.revision };
+    item.draft = { ...structuredClone(request.document), revision: item.draft.revision + 1 }; item.version++; record(item, request.trigger === "autosave" ? "autosave" : "draft", item.draft);
+    return { status: "saved", version: `draft-${item.version}`, revision: item.draft.revision };
   },
   prepareRelease: async (request) => {
     const item = entry(request.target.pageId);
     if (request.expectedVersion !== `draft-${item.version}`) throw new Error("conflict");
-    item.confirmedPlan = `demo-confirm-${item.version}-${request.action}`;
-    const before = item.published ? summary(item.published) : {}, after = summary(request.action === "rollback" ? item.initial : item.draft);
-    const changes = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((path) => before[path] !== after[path]).map((path) => ({ path, before: before[path] ?? "（なし）", after: after[path] ?? "（なし）" }));
-    return { ...request, confirmationToken: item.confirmedPlan, domain, changes };
+    item.confirmedPlan = `demo-confirm-${item.version}-${request.action}-${request.revision ?? ""}`;
+    const after = request.action === "rollback" ? releasedDocument(item, request.revision) : item.draft;
+    const changes = diffDocuments(item.published ?? blank(after), after);
+    const header = entries.get("header")?.page;
+    return { ...request, confirmationToken: item.confirmedPlan, domain, changes, ...(item.page.path && validatePagePath(item.page.path) === null ? { url: pageUrl(domain, item.page.path) } : {}),
+      affected: [...(header && header.pageId !== item.page.pageId ? [{ kind: "shared" as const, name: header.title, detail: "全ページで共通のナビゲーションです。このページの公開では変わりません。" }] : []),
+        { kind: "site" as const, name: "サイト共通の設定", detail: "保存済みのタイトル・説明文がこの公開で反映されます。" }] };
   },
   release: async (request) => {
     const item = entry(request.target.pageId);
     if (request.expectedVersion !== `draft-${item.version}` || request.confirmationToken !== item.confirmedPlan) return { status: "conflict" };
-    item.confirmedPlan = null; if (request.action === "rollback") item.draft = { ...structuredClone(item.initial), revision: item.draft.revision + 1 };
+    item.confirmedPlan = null; if (request.action === "rollback") item.draft = { ...structuredClone(releasedDocument(item, request.revision)), revision: item.draft.revision + 1 };
     item.published = structuredClone(item.draft); item.version++;
+    record(item, request.action, item.draft, request.action === "rollback" ? `版 ${request.revision} に戻した` : undefined);
     return { status: "released", snapshot: snapshot(item) };
+  },
+  listRevisions: async ({ target, cursor }) => {
+    const all = [...entry(target.pageId).revisions].reverse().map(({ entry }) => structuredClone(entry)), start = cursor ? Number(cursor.replace("page-", "")) : 0;
+    return { entries: all.slice(start, start + 5), ...(start + 5 < all.length ? { next: `page-${start + 5}` } : {}) };
+  },
+  readRevision: async ({ target, id }) => {
+    const found = entry(target.pageId).revisions.find(({ entry }) => entry.id === id);
+    if (!found) throw new Error("not found");
+    return { document: structuredClone(found.document) };
+  },
+  createSnapshot: async ({ target, expectedVersion, label }) => {
+    const item = entry(target.pageId);
+    if (expectedVersion !== `draft-${item.version}`) return { status: "conflict" };
+    return { status: "saved", entry: structuredClone(record(item, "snapshot", item.draft, label)) };
   },
   preparePageChange: async (change) => {
     checkChange(change);
@@ -158,8 +184,8 @@ const adapter: EditorAdapter = {
     if (change.action === "create" || change.action === "duplicate") {
       const pageId = `page_${nextPage++}`, source = change.action === "duplicate" ? entry(change.source.pageId) : undefined;
       const draft = source ? { ...structuredClone(source.draft), pageId, revision: 1 } : pageDocument(pageId, change.title, [{ type: "element", id: "heading", tag: "h1", children: [text(change.title)] }]);
-      result = { page: { siteId: "demo", pageId, locale: "ja-JP", title: change.title, path: change.path }, draft, published: null, initial: structuredClone(draft), version: 1, confirmedPlan: null };
-      entries.set(pageId, result);
+      result = { page: { siteId: "demo", pageId, locale: "ja-JP", title: change.title, path: change.path }, draft, published: null, version: 1, confirmedPlan: null, revisions: [] };
+      record(result, "draft", draft, change.action === "duplicate" ? "複製して作成" : "ページを作成"); entries.set(pageId, result);
     } else {
       result = entry(change.target.pageId);
       if (change.action === "visibility") result.page = { ...result.page, visibility: change.visibility };
@@ -168,7 +194,7 @@ const adapter: EditorAdapter = {
         result.page = { ...result.page, title: change.title, path: change.path };
         if (from && from !== change.path) for (const item of entries.values()) {
           if (!findInternalLinks(item.draft, from, domains).length) continue;
-          item.draft = { ...rewriteInternalLinks(item.draft, from, change.path, domains), revision: item.draft.revision + 1 }; item.version++;
+          item.draft = { ...rewriteInternalLinks(item.draft, from, change.path, domains), revision: item.draft.revision + 1 }; item.version++; record(item, "draft", item.draft, "リンク先の URL を更新");
         }
       }
     }
@@ -206,4 +232,4 @@ const assets = createMemoryAssetLibrary({
     return await response.json();
   }
 });
-createRoot(document.getElementById("root")!).render(<PageEditor adapter={adapter} blocks={blocks} assets={assets} />);
+createRoot(document.getElementById("root")!).render(<PageEditor adapter={adapter} blocks={blocks} assets={assets} autosave={{ delayMs: 1500 }} recovery={recovery} />);
