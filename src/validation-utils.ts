@@ -1,7 +1,8 @@
 import type { AssetReference } from "./types.js";
 
 export class DocumentValidationError extends Error {
-  constructor(public readonly path: string, reason: string) {
+  /** reason は入力値を含まない。展開後の検証エラーを位置だけ付け替えて投げ直すために保持する。 */
+  constructor(public readonly path: string, public readonly reason: string) {
     super(`${path}: ${reason}`);
     this.name = "DocumentValidationError";
   }

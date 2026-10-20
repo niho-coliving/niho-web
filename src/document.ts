@@ -1,8 +1,9 @@
 import type {
-  BlockContracts, ElementAttributes, ElementTag, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
+  BlockContracts, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
 } from "./types.js";
+import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
 import { parseStyle, parseTokens } from "./style-values.js";
-import { fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
+import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
@@ -106,77 +107,148 @@ export function parsePageMeta(input: unknown, path = "$.meta"): PageMeta {
   return result;
 }
 
-/** 外部 JSON を検証し、未知フィールドを捨てずに拒否して新しい文書を返す。 */
-export function parsePageDocument(input: unknown, blocks: BlockContracts = {}): PageDocument {
-  const source = record(input, "$"), ids = new Set<string>(), htmlIds = new Set<string>();
+/** @internal インスタンスの検証に使う部品の外形（外枠のタグと公開 props の field）。 */
+export type ComponentShape = { readonly tag: ElementTag; readonly props: ReadonlyMap<string, ComponentPropField> };
+/** @internal 文書の body と部品の root で共有する検証状態。ノード数と文字数は usage へ合算する。 */
+export type NodeContext = {
+  readonly blocks: BlockContracts;
+  readonly tokens: Record<string, DesignToken>;
+  /** インスタンスの style は部品ライブラリと文書の tokens を重ねて検証する。 */
+  readonly instanceTokens: Record<string, DesignToken>;
+  readonly components: ReadonlyMap<string, ComponentShape> | undefined;
+  readonly ids: Set<string>;
+  readonly htmlIds: Set<string>;
+  readonly usage: { nodes: number; text: number };
+};
+/** @internal */
+export const reservedPropNames: readonly string[] = ["__proto__", "prototype", "constructor"];
+/** @internal */
+export const isElementTag = (value: unknown): value is ElementTag => typeof value === "string" && tags.has(value);
+/** @internal */
+export function componentShapes(library: ComponentLibrary): Map<string, ComponentShape> {
+  return new Map(library.components.map((component): [string, ComponentShape] =>
+    [component.id, { tag: component.root.tag, props: new Map(Object.entries(component.props ?? {}).map(([name, prop]) => [name, prop.field])) }]));
+}
+function instanceProps(value: unknown, shape: ComponentShape, path: string): { props?: Record<string, string> } {
+  if (value === undefined) return {};
+  const source = record(value, path), props: Record<string, string> = {};
+  if (Object.keys(source).length > COMPONENT_LIMITS.instanceProps) fail(path, "too many instance props");
+  for (const [name, raw] of Object.entries(source)) {
+    identifier(name, path);
+    if (reservedPropNames.includes(name)) fail(path, "reserved prop name");
+    // 公開をやめた名前の値も保持するため、文字列としてだけ検証する。
+    const field = shape.props.get(name), at = `${path}.${name}`;
+    if (field === "href" || field === "src") {
+      if (!isSafePublicUrl(raw)) fail(at, "unsafe URL");
+      props[name] = raw;
+    } else props[name] = string(raw, at, field === "alt" ? 2048 : 4096);
+  }
+  return { props };
+}
+
+/** @internal 文書の body と部品の root を同じ規則で検証し、新しいノードを返す。 */
+export function parseNodes(input: unknown, path: string, context: NodeContext, depth = 0, parent?: string, insideLink = false, inline = false): PageNode[] {
+  if (!Array.isArray(input)) fail(path, "expected node array");
+  if (depth > 48 || input.length > 5000) fail(path, "document exceeds limits");
+  return input.map((raw, index) => parseNode(raw, `${path}[${index}]`, context, depth, parent, insideLink, inline));
+}
+/** @internal depth はノードを含む配列の深さ。 */
+export function parseNode(raw: unknown, at: string, context: NodeContext, depth = 0, parent?: string, insideLink = false, inline = false): PageNode {
+  const node = record(raw, at), { blocks, tokens, ids, htmlIds, usage } = context;
+  if (++usage.nodes > 5000) fail(at, "too many nodes");
+  if (node.type === "text") {
+    keys(node, ["type", "text"], at);
+    const text = string(node.text, `${at}.text`, 100000);
+    usage.text += text.length;
+    if (usage.text > 1000000) fail(at, "too much text");
+    if (["ul", "ol", "dl", "picture"].includes(parent ?? "") && text.trim()) fail(at, "text not allowed in this parent");
+    return { type: "text", text };
+  }
+  if (node.type === "instance" && !context.components) fail(at, "component instance requires a component library");
+  if (node.type !== "element" && node.type !== "component" && node.type !== "instance") fail(`${at}.type`, "unknown node type");
+  keys(node, node.type === "element" ? ["type", "id", "tag", "asset", "attrs", "style", "children"] : node.type === "component" ? ["type", "id", "block", "props", "style"] : ["type", "id", "component", "props", "style"], at);
+  const id = identifier(node.id, `${at}.id`);
+  if (ids.has(id)) fail(`${at}.id`, "duplicate node ID");
+  ids.add(id);
+  const style = node.style === undefined ? {} : { style: parseStyle(node.style, node.type === "instance" ? context.instanceTokens : tokens, `${at}.style`) };
+  const constrainedParent = parent === "ul" || parent === "ol" ? ["li"] : parent === "dl" ? ["dt", "dd"] : parent === "picture" ? ["source", "img"] : undefined;
+  if (node.type === "instance") {
+    const component = identifier(node.component, `${at}.component`), shape = context.components?.get(component);
+    if (!shape) fail(`${at}.component`, "unknown component");
+    // 展開後の root と同じ入れ子規則。内側の規則は展開後の文書で検証する。
+    if (inline && !phrasing.has(shape.tag) || constrainedParent && !constrainedParent.includes(shape.tag) || insideLink && shape.tag === "a") fail(at, "invalid HTML content nesting");
+    return { type: "instance", id, component, ...instanceProps(node.props, shape, `${at}.props`), ...style };
+  }
+  if (node.type === "component") {
+    if (inline || constrainedParent) fail(at, "component requires a flow content parent");
+    const block = identifier(node.block, `${at}.block`);
+    if (!Object.hasOwn(blocks, block)) fail(`${at}.block`, "unregistered block");
+    const contract = blocks[block]!;
+    const sourceProps = record(node.props, `${at}.props`), props: Record<string, PublicPropValue> = {};
+    keys(sourceProps, Object.keys(contract.props), `${at}.props`);
+    for (const [name, rule] of Object.entries(contract.props)) {
+      if (["__proto__", "prototype", "constructor", "key", "ref", "children", "dangerouslySetInnerHTML"].includes(name) || /^on/i.test(name)) fail(`${at}.props`, "unsafe prop contract");
+      if (!Object.hasOwn(sourceProps, name)) {
+        if (rule.required) fail(`${at}.props.${name}`, "required prop missing");
+      } else props[name] = prop(sourceProps[name], rule, `${at}.props.${name}`);
+    }
+    return { type: "component", id, block, props, ...style };
+  }
+  if (!isElementTag(node.tag)) fail(`${at}.tag`, "unsupported element");
+  const tag = node.tag;
+  if (inline && !phrasing.has(tag) || constrainedParent && !constrainedParent.includes(tag) || insideLink && tag === "a") fail(at, "invalid HTML content nesting");
+  if (node.asset !== undefined && tag !== "img") fail(`${at}.asset`, "only img can reference an asset");
+  const asset = node.asset === undefined ? {} : { asset: parseAssetReference(node.asset, `${at}.asset`) };
+  const attrs = node.attrs === undefined ? {} : { attrs: attributes(node.attrs, tag, `${at}.attrs`, !!asset.asset) };
+  const htmlId = attrs.attrs?.id;
+  if (typeof htmlId === "string") {
+    if (htmlIds.has(htmlId)) fail(`${at}.attrs.id`, "duplicate HTML ID");
+    htmlIds.add(htmlId);
+  }
+  if (tag === "img" && !attrs.attrs) fail(at, "img requires attributes");
+  const children = parseNodes(node.children, `${at}.children`, context, depth + 1, tag, insideLink || tag === "a", inline || phrasingParents.has(tag));
+  if (voidTags.has(tag) && children.length) fail(at, "void element cannot have children");
+  if (tag === "picture") {
+    const childTags = children.flatMap((child) => child.type === "element" ? [child.tag] : child.type === "instance" ? [context.components!.get(child.component)!.tag] : []);
+    if (childTags[childTags.length - 1] !== "img" || childTags.filter((childTag) => childTag === "img").length !== 1) {
+      fail(`${at}.children`, "picture requires source elements followed by one img");
+    }
+  }
+  return { type: "element", id, tag, ...asset, ...attrs, ...style, children };
+}
+
+export type PageParseOptions = {
+  /** parseComponentLibrary で検証済みの同じサイトのライブラリ。インスタンスを含む文書の検証に必須。 */
+  components?: ComponentLibrary;
+};
+/**
+ * 外部 JSON を検証し、未知フィールドを捨てずに拒否して新しい文書を返す。
+ * インスタンスは展開せずに返すが、展開後の文書も検証し、その失敗は $.resolved 以下の位置で返す。
+ */
+export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, options: PageParseOptions = {}): PageDocument {
+  const source = record(input, "$"), library = options.components;
   keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "body"], "$");
   if (source.schemaVersion !== 1) fail("$.schemaVersion", "unsupported schema version");
   const siteId = identifier(source.siteId, "$.siteId"), pageId = identifier(source.pageId, "$.pageId");
+  if (library && library.siteId !== siteId) fail("$.siteId", "component library belongs to another site");
   const locale = localeCode(source.locale, "$.locale");
   if (typeof source.revision !== "number" || !Number.isSafeInteger(source.revision) || source.revision < 1) fail("$.revision", "expected positive safe integer");
   const title = string(source.title, "$.title", 300);
   if (!title.trim()) fail("$.title", "title is required");
   const meta = source.meta === undefined ? {} : parsePageMeta(source.meta, "$.meta");
   const tokens = parseTokens(source.tokens, "$.tokens");
-  let count = 0, totalText = 0;
-  function nodes(input: unknown, path: string, depth: number, parent?: string, insideLink = false, inline = false): PageNode[] {
-    if (!Array.isArray(input)) fail(path, "expected node array");
-    if (depth > 48 || input.length > 5000) fail(path, "document exceeds limits");
-    return input.map((raw, index) => {
-      const at = `${path}[${index}]`, node = record(raw, at);
-      if (++count > 5000) fail(at, "too many nodes");
-      if (node.type === "text") {
-        keys(node, ["type", "text"], at);
-        const text = string(node.text, `${at}.text`, 100000);
-        totalText += text.length;
-        if (totalText > 1000000) fail(at, "too much text");
-        if (["ul", "ol", "dl", "picture"].includes(parent ?? "") && text.trim()) fail(at, "text not allowed in this parent");
-        return { type: "text", text };
-      }
-      if (node.type !== "element" && node.type !== "component") fail(`${at}.type`, "unknown node type");
-      keys(node, node.type === "element" ? ["type", "id", "tag", "asset", "attrs", "style", "children"] : ["type", "id", "block", "props", "style"], at);
-      const id = identifier(node.id, `${at}.id`);
-      if (ids.has(id)) fail(`${at}.id`, "duplicate node ID");
-      ids.add(id);
-      const style = node.style === undefined ? {} : { style: parseStyle(node.style, tokens, `${at}.style`) };
-      const constrainedParent = parent === "ul" || parent === "ol" ? ["li"] : parent === "dl" ? ["dt", "dd"] : parent === "picture" ? ["source", "img"] : undefined;
-      if (node.type === "component") {
-        if (inline || constrainedParent) fail(at, "component requires a flow content parent");
-        const block = identifier(node.block, `${at}.block`);
-        if (!Object.hasOwn(blocks, block)) fail(`${at}.block`, "unregistered block");
-        const contract = blocks[block]!;
-        const sourceProps = record(node.props, `${at}.props`), props: Record<string, PublicPropValue> = {};
-        keys(sourceProps, Object.keys(contract.props), `${at}.props`);
-        for (const [name, rule] of Object.entries(contract.props)) {
-          if (["__proto__", "prototype", "constructor", "key", "ref", "children", "dangerouslySetInnerHTML"].includes(name) || /^on/i.test(name)) fail(`${at}.props`, "unsafe prop contract");
-          if (!Object.hasOwn(sourceProps, name)) {
-            if (rule.required) fail(`${at}.props.${name}`, "required prop missing");
-          } else props[name] = prop(sourceProps[name], rule, `${at}.props.${name}`);
-        }
-        return { type: "component", id, block, props, ...style };
-      }
-      if (typeof node.tag !== "string" || !tags.has(node.tag)) fail(`${at}.tag`, "unsupported element");
-      const tag = node.tag as ElementTag;
-      if (inline && !phrasing.has(tag) || constrainedParent && !constrainedParent.includes(tag) || insideLink && tag === "a") fail(at, "invalid HTML content nesting");
-      if (node.asset !== undefined && tag !== "img") fail(`${at}.asset`, "only img can reference an asset");
-      const asset = node.asset === undefined ? {} : { asset: parseAssetReference(node.asset, `${at}.asset`) };
-      const attrs = node.attrs === undefined ? {} : { attrs: attributes(node.attrs, tag, `${at}.attrs`, !!asset.asset) };
-      const htmlId = attrs.attrs?.id;
-      if (typeof htmlId === "string") {
-        if (htmlIds.has(htmlId)) fail(`${at}.attrs.id`, "duplicate HTML ID");
-        htmlIds.add(htmlId);
-      }
-      if (tag === "img" && !attrs.attrs) fail(at, "img requires attributes");
-      const children = nodes(node.children, `${at}.children`, depth + 1, tag, insideLink || tag === "a", inline || phrasingParents.has(tag));
-      if (voidTags.has(tag) && children.length) fail(at, "void element cannot have children");
-      if (tag === "picture") {
-        const childTags = children.flatMap((child) => child.type === "element" ? [child.tag] : []);
-        if (childTags[childTags.length - 1] !== "img" || childTags.filter((childTag) => childTag === "img").length !== 1) {
-          fail(`${at}.children`, "picture requires source elements followed by one img");
-        }
-      }
-      return { type: "element", id, tag, ...asset, ...attrs, ...style, children };
-    });
+  const context: NodeContext = {
+    blocks, tokens, instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
+    ids: new Set(), htmlIds: new Set(), usage: { nodes: 0, text: 0 }
+  };
+  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: parseNodes(source.body, "$.body", context) };
+  if (library && instancesOf(document.body).length) {
+    try {
+      parsePageDocument(expandDocument(document, library).document, blocks);
+    } catch (error) {
+      if (error instanceof DocumentValidationError) throw new DocumentValidationError(`$.resolved${error.path.slice(1)}`, error.reason);
+      throw error;
+    }
   }
-  return { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: nodes(source.body, "$.body", 0) };
+  return document;
 }

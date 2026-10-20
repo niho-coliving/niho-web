@@ -1,7 +1,7 @@
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
-import type { PageDocument, PublicPropValue } from "./types.js";
+import type { ComponentLibrary, PageDocument, PublicPropValue } from "./types.js";
 export type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 
 export type EditorTarget = { siteId: string; pageId: string; locale: string };
@@ -33,6 +33,8 @@ export type EditorReleaseRequest = {
   expectedVersion: string;
   action: "publish" | "rollback";
   revision?: number;
+  /** 公開確認時にエディターが表示している部品ライブラリの version。ホストは確認 token に結び付ける。 */
+  componentsVersion?: string;
 };
 export type EditorReleasePlan = EditorReleaseRequest & {
   confirmationToken: string;
@@ -40,6 +42,28 @@ export type EditorReleasePlan = EditorReleaseRequest & {
   changes: readonly { path: string; before: string; after: string }[];
 };
 export type EditorReleaseResult = { status: "released"; snapshot: EditorSnapshot } | { status: "conflict" };
+export type ComponentLibrarySnapshot = {
+  /** 検証前のライブラリ。まだないサイトでは revision: 1、components: [] の空ライブラリ。 */
+  library: unknown;
+  /** ホストが発行する opaque な楽観ロック値。 */
+  version: string;
+};
+export type ComponentUsageEntry = {
+  target: EditorTarget;
+  title: string;
+  role?: "page" | "template" | "frame";
+  /** template / frame の場合、その文書と一緒に表示される公開ページ数。 */
+  reach?: number;
+  /** 部品 ID ごとのインスタンス数（入れ子の部品経由を含む）。 */
+  components: Readonly<Record<string, number>>;
+};
+/** 保存はページの下書きと同じく、expectedVersion の比較・revision の採番・競合の変換をホストが原子的に行う。 */
+export interface EditorComponentAdapter {
+  readLibrary(siteId: string, signal: AbortSignal): Promise<ComponentLibrarySnapshot>;
+  saveLibrary(request: { siteId: string; library: ComponentLibrary; expectedVersion: string }, signal: AbortSignal): Promise<EditorSaveResult>;
+  /** 保存済みの下書きを対象にした使用状況。 */
+  listUsage(siteId: string, signal: AbortSignal): Promise<readonly ComponentUsageEntry[]>;
+}
 export type EditorPageChange =
   | { action: "create"; siteId: string; locale: string; title: string; path: string }
   | { action: "duplicate"; source: EditorTarget; title: string; path: string }
@@ -66,6 +90,8 @@ export interface EditorAdapter {
   saveDraft(request: { target: EditorTarget; document: PageDocument; expectedVersion: string }, signal: AbortSignal): Promise<EditorSaveResult>;
   prepareRelease(request: EditorReleaseRequest, signal: AbortSignal): Promise<EditorReleasePlan>;
   release(request: EditorReleasePlan, signal: AbortSignal): Promise<EditorReleaseResult>;
+  /** 省略したホストでは部品機能を使わない。 */
+  components?: EditorComponentAdapter;
   /** ページ操作の影響と確認 token。両方を実装した場合だけページ操作を表示する。 */
   preparePageChange?(change: EditorPageChange, signal: AbortSignal): Promise<EditorPageChangePlan>;
   applyPageChange?(plan: EditorPageChangePlan, signal: AbortSignal): Promise<EditorPageChangeResult>;

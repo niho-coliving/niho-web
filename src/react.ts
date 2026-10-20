@@ -24,6 +24,8 @@ export function PageRenderer({ document: input, blocks = {}, assets: assetInput,
   const scope = pageScope(document);
   function render(node: PageNode): ReactElement | string | null {
     if (node.type === "text") return node.text;
+    // 部品ライブラリなしの検証で拒否済み。下書きは resolvePageDocument で展開してから描画する。
+    if (node.type === "instance") throw new Error("Unresolved component instance: resolve the document before rendering");
     if (node.type === "component") {
       const definition = blocks[node.block]!;
       if (!definition.component) throw new Error(`Registered block has no React component: ${node.block}`);

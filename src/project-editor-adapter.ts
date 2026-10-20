@@ -1,5 +1,5 @@
 import { normalizePageChange, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
-import type { EditorAdapter, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
+import type { EditorAdapter, EditorComponentAdapter, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
 import { parseSiteSettings } from "./pages.js";
 import { parseProject, type Project } from "./projects.js";
 import { identifier, line, record } from "./validation-utils.js";
@@ -18,6 +18,20 @@ function sameSite(left: EditorSite, right: EditorSite): boolean {
 function assertDocumentTarget(document: unknown, target: EditorTarget): void {
   const value = record(document, "document");
   if (value.siteId !== target.siteId || value.pageId !== target.pageId || value.locale !== target.locale) throw new Error("文書の対象が一致しません。");
+}
+
+function assertLibrarySite(library: unknown, site: EditorSite): void {
+  if (record(library, "library").siteId !== site.id) throw new Error("部品ライブラリの対象サイトが一致しません。");
+}
+
+function releaseRequest(request: EditorReleaseRequest, target: EditorTarget): EditorReleaseRequest {
+  return {
+    target,
+    expectedVersion: request.expectedVersion,
+    action: request.action,
+    ...(request.revision === undefined ? {} : { revision: request.revision }),
+    ...(request.componentsVersion === undefined ? {} : { componentsVersion: request.componentsVersion })
+  };
 }
 
 /** 既知の任意項目だけを検証して渡す。 */
@@ -63,16 +77,37 @@ function changeForProject(change: EditorPageChange, site: EditorSite): EditorPag
 
 function checkedPlan(plan: EditorReleasePlan, request: EditorReleaseRequest, site: EditorSite): EditorReleasePlan {
   const copy: EditorReleasePlan = {
-    target: targetForProject(plan.target, site),
-    expectedVersion: plan.expectedVersion,
-    action: plan.action,
-    ...(plan.revision === undefined ? {} : { revision: plan.revision }),
+    ...releaseRequest(plan, targetForProject(plan.target, site)),
     confirmationToken: plan.confirmationToken,
     domain: plan.domain,
     changes: plan.changes.map((change) => ({ path: change.path, before: change.before, after: change.after }))
   };
   validateReleasePlan(copy, request, site);
   return copy;
+}
+
+/** 部品ライブラリと使用状況も Project の Site だけに限定する。 */
+function componentsForProject(components: EditorComponentAdapter, site: EditorSite): EditorComponentAdapter {
+  return {
+    async readLibrary(siteId, signal) {
+      if (siteId !== site.id) throw new Error("プロジェクト外のサイトは参照できません。");
+      const snapshot = structuredClone(await components.readLibrary(site.id, signal));
+      assertLibrarySite(snapshot.library, site);
+      return snapshot;
+    },
+    async saveLibrary(request, signal) {
+      if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトには保存できません。");
+      const library = structuredClone(request.library);
+      assertLibrarySite(library, site);
+      return components.saveLibrary({ siteId: site.id, library, expectedVersion: request.expectedVersion }, signal);
+    },
+    async listUsage(siteId, signal) {
+      if (siteId !== site.id) throw new Error("プロジェクト外のサイトは参照できません。");
+      const usage = structuredClone(await components.listUsage(site.id, signal));
+      if (usage.some((entry) => entry.target.siteId !== site.id)) throw new Error("使用状況に別サイトの項目が含まれています。");
+      return usage;
+    }
+  };
 }
 
 /**
@@ -108,20 +143,13 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion }, signal);
     },
     async prepareRelease(request, signal) {
-      const target = targetForProject(request.target, site);
-      const checked: EditorReleaseRequest = {
-        target,
-        expectedVersion: request.expectedVersion,
-        action: request.action,
-        ...(request.revision === undefined ? {} : { revision: request.revision })
-      };
+      const checked = releaseRequest(request, targetForProject(request.target, site));
       const plan = await adapter.prepareRelease(checked, signal);
       return checkedPlan(plan, checked, site);
     },
     async release(request, signal) {
       const target = targetForProject(request.target, site);
-      const basis: EditorReleaseRequest = { target, expectedVersion: request.expectedVersion, action: request.action, ...(request.revision === undefined ? {} : { revision: request.revision }) };
-      const checked = checkedPlan(request, basis, site);
+      const checked = checkedPlan(request, releaseRequest(request, target), site);
       const result = await adapter.release(checked, signal);
       if (result.status === "released") {
         const snapshot = structuredClone(result.snapshot);
@@ -130,6 +158,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       }
       return result;
     },
+    ...(adapter.components ? { components: componentsForProject(adapter.components, site) } : {}),
     ...(adapter.preparePageChange ? {
       async preparePageChange(change, signal) {
         const checked = changeForProject(change, site);

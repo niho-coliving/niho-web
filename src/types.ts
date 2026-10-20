@@ -50,7 +50,17 @@ export type ComponentNode = {
   props: Record<string, PublicPropValue>;
   style?: NodeStyle;
 };
-export type PageNode = TextNode | ElementNode | ComponentNode;
+/** 共通部品の参照。公開前に resolvePageDocument で element へ展開する。 */
+export type InstanceNode = {
+  type: "instance";
+  id: string;
+  component: string;
+  /** 部品が公開した props の値。公開をやめた名前の値も保持する。 */
+  props?: Record<string, string>;
+  /** 部品の root だけに重ねる見た目。 */
+  style?: NodeStyle;
+};
+export type PageNode = TextNode | ElementNode | ComponentNode | InstanceNode;
 export type PageImage = { src: string; alt: string };
 /** 公開メタ情報。値が無い項目は保存しない。 */
 export type PageMeta = {
@@ -71,6 +81,27 @@ export type PageDocument = {
   meta?: PageMeta;
   tokens: Record<string, DesignToken>;
   body: PageNode[];
+};
+
+export type ComponentKind = "header" | "footer" | "navigation" | "section" | "part";
+export type ComponentPropField = "text" | "href" | "src" | "alt";
+export type ComponentPropDefinition = { label: string; node: string; field: ComponentPropField };
+export type ComponentDefinition = {
+  id: string;
+  name: string;
+  kind: ComponentKind;
+  /** 定義を変更するたびに増える。 */
+  version: number;
+  root: ElementNode;
+  props?: Record<string, ComponentPropDefinition>;
+};
+/** サイトごとに1つ。部品の内側は文書と同じノード規則で検証する。 */
+export type ComponentLibrary = {
+  schemaVersion: 1;
+  siteId: string;
+  revision: number;
+  tokens: Record<string, DesignToken>;
+  components: ComponentDefinition[];
 };
 
 export type PropRule =

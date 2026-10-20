@@ -1,10 +1,12 @@
+import { detachInstance } from "./component-model.js";
 import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
 import { findPathConflict, validatePagePath } from "./pages.js";
-import type { AssetReference, ComponentNode, ElementNode, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
+import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
+import type { AssetReference, ComponentLibrary, ComponentNode, ElementNode, InstanceNode, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
 import { isSafeHttpsOrigin } from "./validation-utils.js";
 
-export type NodePath = readonly number[];
+export { nodeAt, walkNodes, type NodePath };
 export type EditorOperation =
   | { type: "text"; path: NodePath; value: string }
   | { type: "attribute"; path: NodePath; name: string; value: string }
@@ -20,34 +22,15 @@ export type EditorOperation =
   | { type: "replaceAsset"; from: AssetReference; to: AssetReference }
   | { type: "duplicate" | "remove"; path: NodePath }
   | { type: "move"; path: NodePath; parentId: string | null; index: number }
+  /** インスタンスのページごとの値。undefined で解除する。 */
+  | { type: "instanceProp"; path: NodePath; name: string; value: string | undefined }
+  /** インスタンスを展開した element に置き換え、以後は部品の更新を受けない。 */
+  | { type: "detach"; path: NodePath }
   | MetaOperation;
 /** undefined・空文字・false・空配列はその項目を削除する。 */
 export type MetaOperation = { [K in keyof PageMeta]-?: { type: "meta"; field: K; value: PageMeta[K] | undefined } }[keyof PageMeta];
 export type EditorHistory = { past: PageDocument[]; present: PageDocument; future: PageDocument[] };
 export const fingerprint = (document: PageDocument): string => JSON.stringify(document);
-export function nodeAt(document: PageDocument, path: NodePath): PageNode {
-  if (!path.length) throw new Error("要素を選択してください。");
-  let children = document.body, result: PageNode | undefined;
-  for (const [level, index] of path.entries()) {
-    if (!Number.isInteger(index) || index < 0 || !children[index]) throw new Error("選択した要素が見つかりません。");
-    result = children[index]!;
-    if (level < path.length - 1) {
-      if (result.type !== "element") throw new Error("この要素は子を持てません。");
-      children = result.children;
-    }
-  }
-  return result!;
-}
-export function walkNodes(document: PageDocument): { node: PageNode; path: number[] }[] {
-  const result: { node: PageNode; path: number[] }[] = [];
-  function visit(nodes: PageNode[], parent: number[]): void {
-    nodes.forEach((node, index) => {
-      const path = [...parent, index]; result.push({ node, path });
-      if (node.type === "element") visit(node.children, path);
-    });
-  }
-  visit(document.body, []); return result;
-}
 export function effectiveLocks(document: PageDocument, locks: readonly EditorLock[], blocks: EditorBlockRegistry): EditorLock[] {
   return [...locks, ...walkNodes(document).flatMap(({ node }) => node.type === "component"
     ? Object.entries(blocks[node.block]?.lockedProps ?? {}).map(([name, reason]) => ({ nodeId: node.id, fields: [`props.${name}`], reason })) : [])];
@@ -81,21 +64,17 @@ export function lockReason(document: PageDocument, path: NodePath, field: string
   }
   return undefined;
 }
-export function editDocument(document: PageDocument, operation: EditorOperation, blocks: EditorBlockRegistry = {}, locks: readonly EditorLock[] = []): PageDocument {
+/** components はインスタンスを含む文書の検証に使う、同じサイトの検証済みライブラリ。 */
+export function editDocument(document: PageDocument, operation: EditorOperation, blocks: EditorBlockRegistry = {}, locks: readonly EditorLock[] = [], components?: ComponentLibrary): PageDocument {
   const draft = structuredClone(document), allLocks = effectiveLocks(document, locks, blocks);
-  const parentChildren = (path: NodePath): PageNode[] => {
-    if (path.length === 1) return draft.body;
-    const parent = nodeAt(draft, path.slice(0, -1));
-    if (parent.type !== "element") throw new Error("移動先が要素ではありません。");
-    return parent.children;
-  };
+  const parentChildren = (path: NodePath): PageNode[] => siblingsAt(draft, path);
   const targetChildren = (id: string | null): PageNode[] => {
     if (id === null) return draft.body;
     const found = walkNodes(draft).find(({ node }) => node.type !== "text" && node.id === id)?.node;
     if (!found || found.type !== "element") throw new Error("追加・移動先が見つかりません。");
     return found.children;
   };
-  const declarationsAt = (node: ElementNode | ComponentNode, breakpoint: number | "base"): StyleDeclarations => {
+  const declarationsAt = (node: ElementNode | ComponentNode | InstanceNode, breakpoint: number | "base"): StyleDeclarations => {
     node.style ??= {};
     if (breakpoint === "base") return node.style.base ??= {};
     node.style.responsive ??= [];
@@ -104,7 +83,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     node.style.responsive.sort((a, b) => a.minWidth - b.minWidth);
     return entry.declarations;
   };
-  const pruneResponsive = (node: ElementNode | ComponentNode) => { if (node.style?.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length); };
+  const pruneResponsive = (node: ElementNode | ComponentNode | InstanceNode) => { if (node.style?.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length); };
   if (operation.type === "title") draft.title = operation.value;
   else if (operation.type === "meta") {
     const meta: Record<string, unknown> = { ...draft.meta }, value = operation.value;
@@ -146,6 +125,14 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     } else if (operation.type === "prop") {
       if (node.type !== "component") throw new Error("ブロックを選択してください。");
       if (operation.value === undefined) delete node.props[operation.name]; else node.props[operation.name] = operation.value;
+    } else if (operation.type === "instanceProp") {
+      if (node.type !== "instance") throw new Error("部品のインスタンスを選択してください。");
+      const props = { ...node.props };
+      if (operation.value === undefined) delete props[operation.name]; else props[operation.name] = operation.value;
+      if (Object.keys(props).length) node.props = props; else delete node.props;
+    } else if (operation.type === "detach") {
+      if (!components) throw new Error("部品ライブラリを読み込めていません。");
+      draft.body = detachInstance(draft, operation.path, components, blocks).body;
     } else if (operation.type === "style" || operation.type === "resize") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
       const declarations = declarationsAt(node, operation.breakpoint);
@@ -172,12 +159,11 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       const copy = structuredClone(node), used = new Set(walkNodes(draft).flatMap(({ node }) => node.type === "text" ? [] : [node.id]));
       const usedHtmlIds = new Set(walkNodes(draft).flatMap(({ node }) => node.type === "element" && typeof node.attrs?.id === "string" ? [node.attrs.id] : []));
       const remap = new Map<string, string>();
-      function unique(original: string, set: Set<string>): string { let index = 1, id = original; do { id = `${original.slice(0, 65)}_copy${index++}`; } while (set.has(id)); set.add(id); return id; }
       function rename(current: PageNode): void {
         if (current.type === "text") return;
-        current.id = unique(current.id, used);
+        current.id = copyId(current.id, used);
         if (current.type === "element") {
-          if (typeof current.attrs?.id === "string") { const previous = current.attrs.id; current.attrs.id = unique(previous, usedHtmlIds); remap.set(previous, current.attrs.id); }
+          if (typeof current.attrs?.id === "string") { const previous = current.attrs.id; current.attrs.id = copyId(previous, usedHtmlIds); remap.set(previous, current.attrs.id); }
           current.children.forEach(rename);
         }
       }
@@ -197,7 +183,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       destination.splice(operation.index, 0, node);
     }
   }
-  const result = parsePageDocument(draft, blocks);
+  const result = parsePageDocument(draft, blocks, components ? { components } : {});
   assertLocks(document, result, allLocks);
   return result;
 }
@@ -226,6 +212,7 @@ export function sameTarget(left: EditorTarget, right: EditorTarget): boolean {
 }
 export function validateReleasePlan(plan: EditorReleasePlan, request: EditorReleaseRequest, site: EditorSite): void {
   if (!isSafeHttpsOrigin(plan.domain) || !site.domains.includes(plan.domain) || !sameTarget(plan.target, request.target) || plan.expectedVersion !== request.expectedVersion || plan.action !== request.action || plan.revision !== request.revision ||
+    plan.componentsVersion !== request.componentsVersion ||
     typeof plan.confirmationToken !== "string" || !plan.confirmationToken || !Array.isArray(plan.changes) ||
     plan.changes.some((change) => !change || typeof change.path !== "string" || typeof change.before !== "string" || typeof change.after !== "string") ||
     (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1))) throw new Error("公開対象または差分確認の情報が一致しません。再取得してください。");
