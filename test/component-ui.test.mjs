@@ -467,6 +467,17 @@ test("hover styles edit an instance's outer box on the page and nodes inside a c
   } finally { await app.cleanup(); }
 });
 
+test("component-only changes are autosaved on a site without pages", async () => {
+  const app = await setup({ props: { autosave: { delayMs: 100 } }, adapter: { listPages: async () => [] } });
+  try {
+    await openPanel(); await click(button("名前を変更", card("予備の帯"))); await change(input("部品名", dialog()), "ページのない帯"); await click(button("変更する", dialog()));
+    await wait(400);
+    assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.librarySaves[0].trigger, "autosave");
+    assert.ok(app.calls.librarySaves[0].library.components.some((component) => component.name === "ページのない帯"));
+    assert.equal(app.calls.saves.length, 0);
+  } finally { await app.cleanup(); }
+});
+
 test("the project adapter forwards the autosave trigger of component library saves", async () => {
   const { createProjectEditorAdapter } = await import("@niho/web/project-editor");
   const project = { id: "project_demo", name: "デモ計画", site: { id: "demo", name: "デモサイト", domains: ["https://example.test"] }, members: [] }, sent = [];

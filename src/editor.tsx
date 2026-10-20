@@ -293,8 +293,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const modal = !!plan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null || !!componentDialog;
   // 自動保存は手動保存と同じく部品 → ページの順に保存する。部品とページのどちらが変わっても待ち直す。
   const autosaveSubject = useMemo(() => [session?.history.present, libraryPresent], [session?.history.present, libraryPresent]);
-  useAutosave(autosaveMs, autosaveActive && pendingChanges && !hasInput && !busy && !modal && !historyMode && online && !problem, autosaveSubject, targetKeyOf(session?.target),
-    (key) => { if (targetKeyOf(sessionRef.current?.target) === key) void save("auto"); });
+  // ページが無いサイトでも、部品の変更は部品ライブラリ単位の key で自動保存する（部品は端末の退避の対象外のため）。
+  const autosaveKey = (target: EditorTarget | undefined, lib: LibrarySession | null) => target ? targetKeyOf(target) : lib ? JSON.stringify(["library", lib.siteId]) : "";
+  useAutosave(autosaveMs, autosaveActive && pendingChanges && !hasInput && !busy && !modal && !historyMode && online && !problem, autosaveSubject, autosaveKey(session?.target, library),
+    (key) => { if (autosaveKey(sessionRef.current?.target, libraryRef.current) === key) void save("auto"); });
   const replace = useCallback((next: Session | null) => { sessionRef.current = next; setSession(next); }, []);
   const replaceLibrary = useCallback((next: LibrarySession | null) => { libraryRef.current = next; setLibrary(next); }, []);
   const refreshUsage = useCallback((siteId: string) => {
