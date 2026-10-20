@@ -26,11 +26,11 @@ async function change(target, value) {
 }
 async function setup(options = {}) {
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
-  const calls = { saves: [], prepares: [], releases: [] }; let stored = structuredClone(options.document ?? fixture), version = "v1";
+  const calls = { reads: [], saves: [], prepares: [], releases: [] }; let stored = structuredClone(options.document ?? fixture), version = "v1";
   const adapter = {
     listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }],
     listPages: async () => [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }, { siteId: "demo", pageId: "other", locale: "ja-JP", title: "別ページ" }],
-    readDocument: async (target) => ({ document: { ...structuredClone(stored), pageId: target.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.locks ? { locks: options.locks } : {}) }),
+    readDocument: async (target) => { calls.reads.push(structuredClone(target)); return { document: { ...structuredClone(stored), pageId: target.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.locks ? { locks: options.locks } : {}) }; },
     saveDraft: async (request) => {
       calls.saves.push(structuredClone(request));
       if (options.save) return options.save(request);
@@ -62,6 +62,17 @@ test("three rails edit live text, color, size, position and viewport before draf
     assert.equal(saved.body[0].style.base.color, "#ff0000"); assert.equal(saved.body[0].style.base.fontSize, 24); assert.equal(saved.body[0].style.base.top, 12);
     assert.equal(saved.revision, 1); assert.equal(document.querySelector("iframe").contentDocument.querySelector('[data-nw-scope]').getAttribute("data-nw-scope"), pageScope({ ...fixture, revision: 2 }));
     assert.equal(button("下書き保存").disabled, true);
+  } finally { await app.cleanup(); }
+});
+test("host adapters receive only the documented editor target fields", async () => {
+  const app = await setup(), target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
+  try {
+    assert.deepEqual(app.calls.reads[0], target);
+    await change(input("ページタイトル"), "変更したタイトル"); await click("下書き保存");
+    assert.deepEqual(app.calls.saves[0].target, target);
+    await click("公開前の確認"); assert.deepEqual(app.calls.prepares[0].target, target);
+    await act(async () => document.querySelector('[role="dialog"] input[type="checkbox"]').click());
+    await click("この内容を公開"); assert.deepEqual(app.calls.releases[0].target, target);
   } finally { await app.cleanup(); }
 });
 test("invalid URL buffers stay visible, block saving, and can be cancelled", async () => {

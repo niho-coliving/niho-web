@@ -115,12 +115,13 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
   const blocked = !!busy || !!plan, editBlocked = blocked && busy !== "保存中";
   const replace = useCallback((next: Session | null) => { sessionRef.current = next; setSession(next); }, []);
   const load = useCallback(async (target: EditorTarget) => {
+    const editorTarget: EditorTarget = { siteId: target.siteId, pageId: target.pageId, locale: target.locale };
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     setBusy("読込中"); setNotice("");
     try {
-      const snapshot = await adapter.readDocument(target, controller.signal);
+      const snapshot = await adapter.readDocument(editorTarget, controller.signal);
       if (controller.signal.aborted) return;
-      replace(sessionFrom(snapshot, target, blocks)); setSelection(null); setFieldEpoch((value) => value + 1); setPendingFields({}); setPlan(null); setRollbackRevision(""); setParentId("");
+      replace(sessionFrom(snapshot, editorTarget, blocks)); setSelection(null); setFieldEpoch((value) => value + 1); setPendingFields({}); setPlan(null); setRollbackRevision(""); setParentId("");
     } catch { if (!controller.signal.aborted) setNotice("文書を読み込めませんでした。現在の編集内容は保持されています。"); }
     finally { if (!controller.signal.aborted) setBusy(""); }
   }, [adapter, blocks, replace]);
