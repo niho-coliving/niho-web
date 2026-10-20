@@ -3,6 +3,7 @@ import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 import type { ComponentLibrary, PageDocument, PublicPropValue, StyleProperty } from "./types.js";
 import type { EditorRecoveryStore, EditorRevisionEntry, EditorRevisionPage } from "./history.js";
+import type { BlockLocalizationSchema, LocalizationLocale, LocalizationValue } from "./localization.js";
 export type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 export type { DocumentChange, EditorRecoveryEntry, EditorRecoveryStore, EditorRevisionEntry, EditorRevisionKind, EditorRevisionPage, StoredRecoveryEntry } from "./history.js";
 
@@ -15,6 +16,45 @@ export type EditorSite = {
 };
 /** title はページ一覧の名前。任意項目を省いたホストは従来どおり動作する。 */
 export type EditorPage = EditorTarget & { title: string; path?: string; kind?: PageKind; visibility?: PageVisibility; published?: boolean };
+export type EditorLocalizationPageState = "source" | "missing" | "translating" | "review-needed" | "reviewed" | "failed";
+export type EditorLocalizationLanguageStatus = { state: EditorLocalizationPageState; changed?: number; published?: boolean };
+export type EditorLocalizedPage = Omit<EditorPage, "locale"> & {
+  /** A logical page appears once. Document locale spellings always come from config.documentLocales. */
+  locales: Partial<Record<LocalizationLocale, EditorLocalizationLanguageStatus>>;
+};
+export type EditorTranslationJob = { state: "idle" | "queued" | "running" | "failed"; message?: string };
+export type EditorLocalizationSiteSnapshot = {
+  config: unknown;
+  pages: readonly EditorLocalizedPage[];
+  version: string;
+  job?: EditorTranslationJob;
+};
+export type EditorLocalizationPageSnapshot = {
+  /** Current authoritative source; never inferred from the selected target document. */
+  sourceDocument: unknown;
+  sourceVersion: string;
+  overlay: unknown;
+  /** Opaque host CAS version for commands and overlay persistence. */
+  version: string;
+  components?: unknown;
+  blockLocalization?: BlockLocalizationSchema;
+  previousSourceValues?: Readonly<Record<string, LocalizationValue>>;
+  job?: EditorTranslationJob;
+};
+export type EditorLocalizationCommand =
+  | { action: "request-translation"; target: EditorTarget; expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number }
+  | { action: "adopt-candidate"; target: EditorTarget; unitId: string; candidateVersion: number; expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number }
+  | { action: "review-current"; target: EditorTarget; unitId: string; expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number }
+  | { action: "set-value"; target: EditorTarget; unitId: string; value: LocalizationValue; sourceFingerprint: string; expectedEntryVersion: number;
+    expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number };
+export type EditorLocalizationCommandResult = { status: "applied"; version: string } | { status: "conflict" };
+export interface EditorLocalizationAdapter {
+  readSite(siteId: string, signal: AbortSignal): Promise<EditorLocalizationSiteSnapshot>;
+  readPage(target: EditorTarget, signal: AbortSignal): Promise<EditorLocalizationPageSnapshot>;
+  command(request: EditorLocalizationCommand, signal: AbortSignal): Promise<EditorLocalizationCommandResult>;
+  /** Optional host-owned site-wide async translation queue. The library never calls a provider. */
+  requestSiteTranslation?(request: { siteId: string; targetLocale: LocalizationLocale; expectedVersion: string }, signal: AbortSignal): Promise<EditorLocalizationCommandResult>;
+}
 /** フィールドは props.name / attrs.href / children / style 等。* はノード全体。 */
 export type EditorLock = { nodeId: string; fields: readonly string[]; reason: string };
 export type EditorSnapshot = {
@@ -97,11 +137,16 @@ export interface EditorAdapter {
   listPages(siteId: string, signal: AbortSignal): Promise<readonly EditorPage[]>;
   readDocument(target: EditorTarget, signal: AbortSignal): Promise<EditorSnapshot>;
   /** trigger は自動保存のときだけ "autosave"。ホストは履歴の種類の区別に使える。 */
-  saveDraft(request: { target: EditorTarget; document: PageDocument; expectedVersion: string; trigger?: "autosave" }, signal: AbortSignal): Promise<EditorSaveResult>;
+  saveDraft(request: { target: EditorTarget; document: PageDocument; expectedVersion: string; trigger?: "autosave";
+    /** Present for translated drafts; the host must CAS these values and persist only validated localized overlays. */
+    localization?: { expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number };
+  }, signal: AbortSignal): Promise<EditorSaveResult>;
   prepareRelease(request: EditorReleaseRequest, signal: AbortSignal): Promise<EditorReleasePlan>;
   release(request: EditorReleasePlan, signal: AbortSignal): Promise<EditorReleaseResult>;
   /** 省略したホストでは部品機能を使わない。 */
   components?: EditorComponentAdapter;
+  /** 省略したホストは従来どおり単言語で動作する。認証・永続化・翻訳providerはホストの責務。 */
+  localization?: EditorLocalizationAdapter;
   /** ページ操作の影響と確認 token。両方を実装した場合だけページ操作を表示する。 */
   preparePageChange?(change: EditorPageChange, signal: AbortSignal): Promise<EditorPageChangePlan>;
   applyPageChange?(plan: EditorPageChangePlan, signal: AbortSignal): Promise<EditorPageChangeResult>;

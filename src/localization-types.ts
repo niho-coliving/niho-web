@@ -122,3 +122,10 @@ export type MaterializedLocalization = {
   components?: ComponentLibrary;
   status: LocalizationStatus;
 };
+
+/** Server-safe result for a translated draft save. Values contain only fields declared by the current collection. */
+export type LocalizedDocumentSaveValidation = {
+  document: PageDocument;
+  collection: LocalizationCollection;
+  values: Readonly<Record<string, LocalizationValue>>;
+};

@@ -54,6 +54,9 @@ test("legal read and save preserve compatibility while forwarding identity field
   assert.deepEqual(Object.keys(calls.saves[0]).sort(), ["document", "expectedVersion", "target"]);
   await wrapped.saveDraft({ target, document, expectedVersion: "v2", trigger: "autosave" }, signal());
   assert.equal(calls.saves[1].trigger, "autosave");
+  const localization = { expectedSourceVersion: "source-1", expectedVersion: "loc-1", expectedOverlayVersion: 3 };
+  await wrapped.saveDraft({ target, document, expectedVersion: "v3", localization }, signal());
+  assert.deepEqual(calls.saves[2].localization, localization);
   await assert.rejects(() => wrapped.saveDraft({ target, document: { ...document, siteId: "other" }, expectedVersion: "v1" }, signal()), /文書の対象/);
 });
 
@@ -100,10 +103,35 @@ test("page list optional fields and structured data presets pass through validat
 });
 test("optional page and site methods are absent unless the host implements them", () => {
   const { wrapped } = setup();
-  for (const name of ["preparePageChange", "applyPageChange", "readSiteSettings", "saveSiteSettings"]) assert.equal(name in wrapped, false, name);
+  for (const name of ["preparePageChange", "applyPageChange", "readSiteSettings", "saveSiteSettings", "localization"]) assert.equal(name in wrapped, false, name);
   const calls = { pageChanges: [], applies: [], settings: [], settingsSaves: [] };
   const partial = setup({ readSiteSettings: pageHostMethods(calls).readSiteSettings }).wrapped;
   assert.equal(typeof partial.readSiteSettings, "function"); assert.equal("saveSiteSettings" in partial, false); assert.equal("preparePageChange" in partial, false);
+});
+test("localization methods remain project-scoped and preserve optimistic command fields", async () => {
+  const calls = [];
+  const localization = {
+    readSite: async (siteId) => ({ config: { siteId }, pages: [{ siteId, pageId: "home", title: "ホーム", locales: {} }], version: "site-1" }),
+    readPage: async (target) => ({ sourceDocument: { ...fixture, siteId: target.siteId, pageId: target.pageId }, sourceVersion: "source-1", overlay: {}, version: "loc-1" }),
+    command: async (request) => { calls.push(structuredClone(request)); return { status: "applied", version: "loc-2" }; },
+    requestSiteTranslation: async (request) => { calls.push(structuredClone(request)); return { status: "applied", version: "site-2" }; }
+  };
+  const { wrapped } = setup({ localization });
+  assert.equal((await wrapped.localization.readSite("demo", signal())).version, "site-1");
+  await assert.rejects(() => wrapped.localization.readSite("other", signal()), /プロジェクト外/);
+  const target = { siteId: "demo", pageId: "home", locale: "en" };
+  assert.equal((await wrapped.localization.readPage(target, signal())).sourceVersion, "source-1");
+  await assert.rejects(() => wrapped.localization.readPage({ ...target, siteId: "other" }, signal()), /一致/);
+  const command = { action: "request-translation", target, expectedSourceVersion: "source-1", expectedVersion: "loc-1", expectedOverlayVersion: 2 };
+  assert.equal((await wrapped.localization.command(command, signal())).status, "applied");
+  assert.deepEqual(calls[0], command);
+  const manual = { action: "set-value", target, unitId: "component.header.node.title.text", value: "Manual", sourceFingerprint: `sha256:${"a".repeat(64)}`,
+    expectedEntryVersion: 4, expectedSourceVersion: "source-1", expectedVersion: "loc-1", expectedOverlayVersion: 2 };
+  assert.equal((await wrapped.localization.command(manual, signal())).status, "applied");
+  assert.deepEqual(calls[1], manual);
+  await assert.rejects(() => wrapped.localization.command({ ...command, target: { ...target, siteId: "other" } }, signal()), /一致/);
+  await wrapped.localization.requestSiteTranslation({ siteId: "demo", targetLocale: "en", expectedVersion: "site-1" }, signal());
+  await assert.rejects(() => wrapped.localization.requestSiteTranslation({ siteId: "other", targetLocale: "en", expectedVersion: "site-1" }, signal()), /プロジェクト外/);
 });
 test("page changes and site settings are limited to the project site and re-validated", async () => {
   const calls = { pageChanges: [], applies: [], settings: [], settingsSaves: [] };

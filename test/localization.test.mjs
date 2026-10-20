@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseComponentLibrary, parsePageDocument } from "@niho/web/core";
+import { parseComponentLibrary, parsePageDocument, resolvePageDocument } from "@niho/web/core";
 import {
   acceptTranslationResult, adoptTranslationCandidate, collectLocalizationUnits, createLocalizationOverlay, documentLocaleFor,
-  editLocalizedValue, localizationLocaleFor, localizationStatus, materializeLocalizedPage, parseSiteLocalizationConfig, reviewLocalizedValue
+  editLocalizedValue, localizationLocaleFor, localizationStatus, materializeLocalizedPage, parseSiteLocalizationConfig, reviewLocalizedValue,
+  validateLocalizedDocumentSave
 } from "@niho/web/localization";
 
 const config = (sourceLocale = "ja") => ({
@@ -66,6 +67,44 @@ test("config requires an explicit source locale and explicit ja/en document mapp
   assert.throws(() => parseSiteLocalizationConfig({ ...config(), documentLocales: { ja: "fr", en: "de" } }), /ja language family/);
 });
 
+test("translated save validation allows only current declared values and rejects common structure, style and href changes", async () => {
+  const source = page(), collection = await collectLocalizationUnits(config(), source, "en", options());
+  const target = (await materializeLocalizedPage(config(), source, collection, createLocalizationOverlay(collection), options())).document;
+  target.title = "Experience";
+  target.body[0].children[0].children[0].text = "Welcome";
+  target.body[0].children[2].attrs.alt = "Sea view";
+  target.body[0].children[2].asset = { provider: "uploads", id: "sea-en" };
+  target.body[0].children[5].props.heading = "Book";
+  const accepted = await validateLocalizedDocumentSave(config(), source, target, options());
+  assert.equal(accepted.values["page.node.photo.attr.alt"], "Sea view");
+  assert.deepEqual(accepted.values["page.node.photo.asset"], { kind: "asset", asset: { provider: "uploads", id: "sea-en" } });
+  for (const mutate of [
+    (draft) => { draft.body[0].style.base.padding = 99; },
+    (draft) => { draft.body[0].children[1].children[3].attrs.href = "/changed"; },
+    (draft) => { draft.body[0].children[0].id = "replacement"; },
+    (draft) => { draft.body[0].children[5].props.price = 1; }
+  ]) {
+    const invalid = structuredClone(target); mutate(invalid);
+    await assert.rejects(() => validateLocalizedDocumentSave(config(), source, invalid, options()), /common structure|localization node/);
+  }
+});
+
+test("a source layout change rematerializes the target while only changed content units require review", async () => {
+  const source = page(), initial = await collectLocalizationUnits(config(), source, "en", options()); let overlay = createLocalizationOverlay(initial);
+  for (const unit of initial.units.filter((entry) => entry.required)) {
+    overlay = editLocalizedValue(overlay, initial, { unitId: unit.unitId, value: unit.sourceValue, expectedVersion: overlay.version });
+    overlay = reviewLocalizedValue(overlay, initial, { unitId: unit.unitId, expectedVersion: overlay.version });
+  }
+  const changed = page(); changed.body[0].children[0].children[0].text = "新しい見出し"; changed.body[0].style.base.padding = 72;
+  changed.body[0].children.push({ type: "element", id: "divider", tag: "hr", children: [] });
+  const current = await collectLocalizationUnits(config(), changed, "en", options()), status = localizationStatus(overlay, current);
+  assert.equal(status.reviewNeeded, 1); assert.equal(status.missing, 0);
+  const target = await materializeLocalizedPage(config(), changed, current, overlay, options());
+  assert.equal(target.document.body[0].style.base.padding, 72);
+  assert.equal(target.document.body[0].children.at(-1).id, "divider");
+  assert.equal(target.status.reviewNeeded, 1);
+});
+
 test("extraction uses stable element fields, grouped rich text, shared definitions, explicit instance overrides and block allowlists", async () => {
   const collection = await collectLocalizationUnits(config(), page(), "en", options());
   const ids = collection.units.map((unit) => unit.unitId);
@@ -85,6 +124,30 @@ test("extraction uses stable element fields, grouped rich text, shared definitio
   assert.ok(ids.includes("page.node.detailsLink.attr.title"));
   assert.deepEqual(collection.issues, []);
   assert.equal(localizationStatus(createLocalizationOverlay(collection), collection).details.find((item) => item.unitId === "page.node.photo.asset").state, "source");
+});
+
+test("a real shared definition has one stable unit across two instances, page moves and pages with safe manual versions", async () => {
+  const firstPage = page(), secondPage = page(); secondPage.pageId = "about"; secondPage.title = "私たちについて";
+  const first = await collectLocalizationUnits(config(), firstPage, "en", options());
+  const moved = structuredClone(firstPage); moved.body[0].children.reverse();
+  const afterMove = await collectLocalizationUnits(config(), moved, "en", options());
+  const second = await collectLocalizationUnits(config(), secondPage, "en", options());
+  const unitId = "component.navbar.node.brand.text";
+  assert.equal(first.units.filter((unit) => unit.unitId === unitId).length, 1);
+  assert.equal(firstPage.body[0].children.filter((node) => node.type === "instance" && node.component === "navbar").length, 2);
+  assert.equal(byId(first, unitId).sourceFingerprint, byId(afterMove, unitId).sourceFingerprint);
+  assert.equal(byId(first, unitId).sourceFingerprint, byId(second, unitId).sourceFingerprint);
+
+  let overlay = createLocalizationOverlay(first);
+  overlay = editLocalizedValue(overlay, first, { unitId, value: "Kamakura shared", expectedVersion: overlay.version });
+  assert.throws(() => editLocalizedValue(overlay, first, { unitId, value: "stale", expectedVersion: overlay.version - 1 }), /stale optimistic version/);
+  const materialized = await materializeLocalizedPage(config(), firstPage, first, overlay, options());
+  const resolved = resolvePageDocument(materialized.document, materialized.components, blocks).document;
+  const rendered = resolved.body[0].children.filter((node) => node.type === "element" && node.tag === "nav");
+  assert.equal(rendered.length, 2);
+  assert.equal(rendered[0].children[0].children[0].text, "Kamakura shared");
+  assert.equal(rendered[1].children[0].children[0].text, "Kamakura shared");
+  assert.equal(library().components[0].root.children[0].children[0].text, "鎌倉");
 });
 
 test("ambiguous direct text and unsupported rich groups surface issues instead of leaf translation claims", async () => {

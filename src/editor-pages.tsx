@@ -3,7 +3,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Dialog } from "./editor-dialog.js";
 import { pageChangeProblems, sameTarget, validatePageChangePlan, type EditorOperation } from "./editor-model.js";
-import type { EditorAdapter, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
+import type { EditorAdapter, EditorLocalizedPage, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
+import { localizationStateLabel } from "./editor-localization.js";
 import { buildPageTree, findPathConflict, pageUrl, parseSiteSettings, resolvePageMetadata, validatePagePath, type PageMetadata, type PageTreeNode, type PageVisibility, type SiteSettings } from "./pages.js";
 import type { PageDocument } from "./types.js";
 import { DocumentValidationError } from "./validation-utils.js";
@@ -83,8 +84,9 @@ function PageMenu({ page, open, setOpen, disabled, start }: { page: EditorPage; 
 }
 
 /** 左レールのページ一覧。検索、パスごとのフォルダ、種類と公開状態、行ごとの操作を表示する。 */
-export function PagePanel({ pages, current, disabled, operations, operationsDisabled, unsaved, select, start, children }: {
+export function PagePanel({ pages, localizedPages, current, disabled, operations, operationsDisabled, unsaved, select, start, children }: {
   pages: readonly EditorPage[]; current: EditorTarget | undefined; disabled: boolean;
+  localizedPages?: readonly EditorLocalizedPage[];
   /** 見出しの下に置くホスト側の部品（サイトの選択など）。 */
   children?: ReactNode;
   /** ホストがページ操作を実装しているか。 */
@@ -109,6 +111,7 @@ export function PagePanel({ pages, current, disabled, operations, operationsDisa
       </li>;
     }
     const page: EditorPage = node.page, kind = page.kind ?? "page", key = pageKey(page);
+    const localized = localizedPages?.find((entry) => entry.pageId === page.pageId);
     const secondary = [page.path, multiLocale ? page.locale : undefined].filter(Boolean).join(" · ");
     return <li key={key}><div className="e-page-row">
       <button type="button" className="e-page" aria-current={current && sameTarget(page, current) ? "page" : undefined} style={{ paddingLeft: 8 + node.depth * 14 }}
@@ -118,6 +121,7 @@ export function PagePanel({ pages, current, disabled, operations, operationsDisa
         {kind !== "page" && kindLabels[kind] && <span className="e-badge">{kindLabels[kind]}</span>}
         {page.visibility === "private" && <span className="e-badge e-badge-private">非公開</span>}
         {page.published === false && <span className="e-badge">未公開</span>}
+        {localized && <span className="e-locale-states">{(["ja", "en"] as const).map((locale) => localized.locales[locale] && <span className="e-badge" key={locale}>{locale.toUpperCase()} {localizationStateLabel(localized.locales[locale]!.state)}</span>)}</span>}
       </button>
       {operations && kind === "page" && <PageMenu page={page} open={menu === key} setOpen={(open) => setMenu(open ? key : "")} disabled={disabled || operationsDisabled} start={start} />}
     </div></li>;
@@ -369,9 +373,10 @@ function SearchPreview({ metadata, url }: { metadata: PageMetadata | undefined; 
 }
 
 /** 右レール「ページ」タブの内容。ページ操作は確認付き、公開情報は文書の編集として undo/redo の対象にする。 */
-export function PageSettings({ document, page, site, settings, field, apply, report, disabled, operations, operationsDisabled, unsaved, start }: {
+export function PageSettings({ document, page, site, settings, field, apply, report, disabled, targetMode = false, operations, operationsDisabled, unsaved, start }: {
   document: PageDocument; page: EditorPage | undefined; site: EditorSite | undefined; settings: SiteSettingsState;
   field: FieldRenderer; apply: (operation: EditorOperation) => string | undefined; report: (message: string) => void; disabled: boolean;
+  targetMode?: boolean;
   operations: boolean; operationsDisabled: boolean; unsaved: boolean; start: (start: PageChangeStart) => void;
 }) {
   const meta = document.meta ?? {}, kind = page?.kind ?? "page", domain = site?.domains[0], path = publicPath(page);
@@ -405,9 +410,9 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
         {image && field("画像の説明", image.alt, (value) => ({ type: "meta", field: "ogImage", value: { src: image.src, alt: value } }), "meta.ogImage.alt")}
         {cover && <img className="e-cover" src={cover} alt="" />}
         {field("ファビコン URL", meta.favicon ?? "", (value) => ({ type: "meta", field: "favicon", value: value || undefined }), "meta.favicon")}
-        <label className="e-check"><input type="checkbox" checked={!!meta.noindex} disabled={disabled} onChange={(event) => run({ type: "meta", field: "noindex", value: event.target.checked })} />検索エンジンに表示しない（noindex）</label>
+        <label className="e-check"><input type="checkbox" checked={!!meta.noindex} disabled={disabled || targetMode} onChange={(event) => run({ type: "meta", field: "noindex", value: event.target.checked })} />検索エンジンに表示しない（noindex）{targetMode && <small className="e-help">共通設定は原文側で編集してください。</small>}</label>
         {(offered.length > 0 || unsupported.length > 0) && <><h4>構造化データ</h4>
-          {offered.map((preset) => <label className="e-check" key={preset.id}><input type="checkbox" checked={selected.includes(preset.id)} disabled={disabled} onChange={(event) => structured(preset.id, event.target.checked)} />
+          {offered.map((preset) => <label className="e-check" key={preset.id}><input type="checkbox" checked={selected.includes(preset.id)} disabled={disabled || targetMode} onChange={(event) => structured(preset.id, event.target.checked)} />
             <span>{preset.label}{preset.description && <small className="e-help">{preset.description}</small>}</span></label>)}
           {unsupported.map((value) => <div className="e-unsupported" key={value}><span>未対応: {value}</span><button type="button" className="e-small" aria-label={`${value} を外す`} disabled={disabled} onClick={() => structured(value, false)}>外す</button></div>)}
           <small className="e-help">中身はサイトのデータからホストが作成します。</small></>}
