@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Component, memo, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PageRenderer } from "./react.js";
 import { parsePageDocument } from "./document.js";
@@ -77,7 +77,7 @@ const asElement = (target: EventTarget | null): HTMLElement | null => target && 
 function Canvas({ document, blocks, width, breakpoint, selection, select, dragItem, drop, editText, resize, reportError, editable, locks, preview }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; select: (path: NodePath | null) => void;
   breakpoint: number | "base";
-  dragItem: RefObject<DragItem | null>; drop: (item: DragItem, place: DropPlace) => void;
+  dragItem: { current: DragItem | null }; drop: (item: DragItem, place: DropPlace) => void;
   editText: (path: NodePath, children: PageNode[]) => string | undefined; resize: (path: NodePath, width: number, height: number) => string | undefined;
   reportError: (message: string) => void; editable: boolean; locks: readonly EditorLock[]; preview: boolean;
 }) {
