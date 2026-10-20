@@ -218,6 +218,40 @@ const imageTypes = ["image/jpeg", "image/png", "image/webp", "image/avif", "imag
 const garden = { id: "garden", name: "庭の緑.png", mimeType: "image/png", bytes: 2048, width: 600, height: 400, alt: "庭の緑", src: "/media/garden.png", thumbnailUrl: "/media/garden.png" };
 function withImage(node = { attrs: { src: "/photo.webp", alt: "古い写真" } }) { const doc = structuredClone(fixture); doc.body[0].children.push({ type: "element", id: "photo", tag: "img", children: [], ...node }); return doc; }
 
+test("failed asset preview resolution can be retried", async () => {
+  const library = createMemoryAssetLibrary({ siteId: "demo", seed: [garden] });
+  let attempts = 0;
+  const assets = { ...library, resolveAssets: async (request, signal) => {
+    attempts++;
+    if (attempts === 1) throw new Error("temporary failure");
+    return library.resolveAssets(request, signal);
+  } };
+  const app = await setup({ document: withImage({ asset: { provider: "uploads", id: "garden" }, attrs: { alt: "庭" } }), assets });
+  try {
+    await settle();
+    assert.equal(attempts, 1);
+    assert.ok(button("素材を再読み込み"));
+    await click("素材を再読み込み");
+    await settle();
+    assert.equal(attempts, 2);
+    assert.equal(button("素材を再読み込み"), undefined);
+    assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/garden.png"));
+  } finally { await app.cleanup(); }
+});
+
+test("changing the asset adapter does not retain the previous session's resolved image", async () => {
+  const first = createMemoryAssetLibrary({ siteId: "demo", seed: [garden] });
+  const second = createMemoryAssetLibrary({ siteId: "demo", seed: [{ ...garden, src: "/media/new-garden.png" }] });
+  const app = await setup({ document: withImage({ asset: { provider: "uploads", id: "garden" }, attrs: { alt: "庭" } }), assets: first });
+  try {
+    await settle();
+    assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/garden.png"));
+    await act(async () => app.root.render(createElement(PageEditor, { adapter: app.adapter, assets: second })));
+    await settle();
+    assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/new-garden.png"));
+  } finally { await app.cleanup(); }
+});
+
 test("staff upload an image, set its alt, replace a page image, save the draft and see it after reload", async () => {
   let app;
   const library = createMemoryAssetLibrary({

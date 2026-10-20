@@ -87,13 +87,14 @@ export function useLocalAssetUsage(document: PageDocument | undefined): Readonly
   }, [document]);
 }
 
-type ResolvedState = { siteId: string; map: ResolvedAssetMap; settled: readonly string[]; failed: boolean };
-const emptyResolved: ResolvedState = { siteId: "", map: {}, settled: [], failed: false };
+type ResolvedState = { adapter: AssetLibraryAdapter | undefined; siteId: string; map: ResolvedAssetMap; settled: readonly string[]; failed: boolean };
+const emptyResolved: ResolvedState = { adapter: undefined, siteId: "", map: {}, settled: [], failed: false };
 const fromKey = (key: string): AssetReference => ({ provider: key.slice(0, key.indexOf(":")), id: key.slice(key.indexOf(":") + 1) });
 /** 文書が参照する素材のうち未取得のものだけを解決し、サイトごとに保持する。返らなかった参照は再要求しない。 */
-export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, siteId: string | undefined, document: PageDocument | undefined): { map: ResolvedAssetMap; failed: boolean } {
+export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, siteId: string | undefined, document: PageDocument | undefined): { map: ResolvedAssetMap; failed: boolean; retry: () => void } {
   const [state, setState] = useState(emptyResolved);
-  const current = siteId && state.siteId === siteId ? state : emptyResolved;
+  const [retryGeneration, setRetryGeneration] = useState(0);
+  const current = adapter && siteId && state.adapter === adapter && state.siteId === siteId ? state : emptyResolved;
   const request = adapter && siteId && document
     ? uniqueAssetReferences(document).map(assetKey).filter((key) => !Object.hasOwn(current.map, key) && !current.settled.includes(key)).join(" ") : "";
   useEffect(() => {
@@ -103,17 +104,18 @@ export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, site
       try {
         const resolved = parseResolvedAssets(await adapter.resolveAssets({ siteId, references: wanted.map(fromKey) }, controller.signal));
         if (controller.signal.aborted) return;
+        if (Object.keys(resolved).some((key) => !wanted.includes(key))) throw new Error("unexpected resolved asset");
         setState((previous) => {
-          const base = previous.siteId === siteId ? previous : { ...emptyResolved, siteId };
+          const base = previous.adapter === adapter && previous.siteId === siteId ? previous : { ...emptyResolved, adapter, siteId };
           const map: Record<string, ResolvedAsset> = { ...base.map }, settled = new Set(base.settled);
           for (const key of wanted) if (Object.hasOwn(resolved, key)) map[key] = resolved[key]!; else settled.add(key);
-          return { siteId, map, settled: [...settled], failed: false };
+          return { adapter, siteId, map, settled: [...settled], failed: false };
         });
-      } catch { if (!controller.signal.aborted) setState((previous) => ({ ...(previous.siteId === siteId ? previous : { ...emptyResolved, siteId }), failed: true })); }
+      } catch { if (!controller.signal.aborted) setState((previous) => ({ ...(previous.adapter === adapter && previous.siteId === siteId ? previous : { ...emptyResolved, adapter, siteId }), failed: true })); }
     })();
     return () => controller.abort();
-  }, [adapter, siteId, request]);
-  return { map: current.map, failed: current.failed };
+  }, [adapter, siteId, request, retryGeneration]);
+  return { map: current.map, failed: current.failed && !!request, retry: () => setRetryGeneration((generation) => generation + 1) };
 }
 
 type ListState = {
