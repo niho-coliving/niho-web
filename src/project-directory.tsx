@@ -1,0 +1,76 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Project } from "./projects.js";
+import { parseProjectDirectoryResult, type ProjectDirectoryAdapter, type ProjectSummary } from "./project-read-model.js";
+import { PublicationBadge, ReadNotice, Timestamp, useProjectRead } from "./project-view-shared.js";
+import { projectViewCss } from "./project-view-style.js";
+
+export { parseProjectDirectoryResult } from "./project-read-model.js";
+export type { ProjectDirectoryAdapter, ProjectDirectoryEntry, ProjectDirectoryResult, ProjectSummary } from "./project-read-model.js";
+export type ProjectDirectoryProps = {
+  adapter: ProjectDirectoryAdapter;
+  onCreateProject: () => void;
+  onOpenDashboard: (project: Project) => void;
+  onOpenEditor: (project: Project) => void;
+  /** 一覧へ戻ったとき、読込後にこのProjectの行へ一度だけfocusを戻す。 */
+  initialFocusProjectId?: string;
+};
+
+function Thumbnail({ thumbnail }: { thumbnail: ProjectSummary["thumbnail"] }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  return <span className="pv-preview">{thumbnail && thumbnail.url !== failedUrl
+    ? <img src={thumbnail.url} alt={thumbnail.alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedUrl(thumbnail.url)} />
+    : <span>プレビューなし</span>}</span>;
+}
+
+/** 日常の入口。作成・参加者管理はホストの既存ProjectManagerへ接続する。 */
+export function ProjectDirectory(props: ProjectDirectoryProps) {
+  const [source, setSource] = useState({ adapter: props.adapter, generation: 0 });
+  if (source.adapter !== props.adapter) { setSource({ adapter: props.adapter, generation: source.generation + 1 }); return null; }
+  return <DirectorySession key={source.generation} {...props} />;
+}
+function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEditor, initialFocusProjectId }: ProjectDirectoryProps) {
+  const reader = useCallback(async (signal: AbortSignal) => parseProjectDirectoryResult(await adapter.loadDirectory(signal), (url) => adapter.isThumbnailUrlAllowed(url)), [adapter]);
+  const { state, reload } = useProjectRead(reader);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("updated");
+  const entries = state.status === "complete" && state.value.status === "ready" ? state.value.entries : null;
+  const list = useRef<HTMLUListElement>(null), focusRestored = useRef(false);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("ja-JP");
+    return (entries ?? []).filter(({ project }) => [project.name, project.site.name, ...project.site.domains].some((value) => value.toLocaleLowerCase("ja-JP").includes(needle))).slice().sort((a, b) => {
+      if (sort === "name") return a.project.name.localeCompare(b.project.name, "ja");
+      const aDate = a.summary.updatedAt, bDate = b.summary.updatedAt;
+      return (bDate === null ? -Infinity : Date.parse(bDate)) - (aDate === null ? -Infinity : Date.parse(aDate)) || a.project.name.localeCompare(b.project.name, "ja");
+    });
+  }, [entries, query, sort]);
+  useEffect(() => {
+    if (!entries || !initialFocusProjectId || focusRestored.current) return;
+    focusRestored.current = true;
+    const row = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button.pv-open") ?? []).find((node) => node.dataset.projectId === initialFocusProjectId);
+    row?.focus(); row?.scrollIntoView?.({ block: "nearest" });
+  }, [entries, initialFocusProjectId]);
+  return <section className="nw-project-view" aria-label="プロジェクト一覧"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
+    <header className="pv-header"><h1 className="pv-heading">プロジェクト一覧</h1><button type="button" className="pv-primary" onClick={onCreateProject}>作成</button></header>
+    {state.status !== "complete" ? <ReadNotice status={state.status} noun="プロジェクト一覧" retry={reload} />
+      : state.value.status === "forbidden" ? <ReadNotice status="forbidden" noun="プロジェクト一覧" retry={reload} />
+      : <><div className="pv-toolbar">
+        <label className="pv-search"><span>名前・ドメイン検索</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="プロジェクト名、サイト名、ドメイン" /></label>
+        <label><span>並び順</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated">更新が新しい順</option><option value="name">名前順</option></select></label>
+        <button type="button" onClick={reload}>再読込</button>
+      </div><p className="pv-muted" role="status">{visible.length}件</p>
+      {entries?.length === 0 ? <div className="pv-notice"><p>参加中のプロジェクトはまだありません。作成するか、管理者に参加を依頼してください。</p></div>
+        : visible.length === 0 ? <div className="pv-notice"><p>条件に一致するプロジェクトがありません。</p><button type="button" onClick={() => setQuery("")}>検索解除</button></div>
+        : <ul className="pv-grid" ref={list}>{visible.map(({ project, summary }) => <li className="pv-card" key={project.id}>
+          <button type="button" className="pv-open" data-project-id={project.id} onClick={() => onOpenDashboard(project)} aria-label={`${project.name}（${project.site.name}）のダッシュボード`}><Thumbnail thumbnail={summary.thumbnail} /><span className="pv-card-title"><strong>{project.name}</strong><span>{project.site.name}</span></span></button>
+          <div className="pv-card-body"><PublicationBadge status={summary.publicationStatus} />
+            <div>{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</div>
+            <p className="pv-muted">参加者 {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>
+            <dl className="pv-meta"><div><dt>最終更新</dt><dd><Timestamp value={summary.updatedAt} /></dd></div><div><dt>最終アクセス</dt><dd><Timestamp value={summary.lastAccessedAt} /></dd></div></dl>
+            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>エディター</button></div>
+          </div>
+        </li>)}</ul>}
+      </>}
+  </section>;
+}

@@ -31,6 +31,9 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |
 | `@niho/web/projects` | 1 Project = 1 Site の検証、純粋操作、atomic CAS契約。React不要 |
 | `@niho/web/project-manager` | 認証済みホストadapterへ接続する `ProjectManager`。React / React DOM が必要 |
+| `@niho/web/project-directory` | 管理フォームと独立した日常の `ProjectDirectory`。名前・ドメイン検索、更新順、サイトプレビュー、Dashboard / Editor導線 |
+| `@niho/web/project-dashboard` | 選択した1 Project・1 Siteに固定した `ProjectDashboard`。公開状況・変更履歴・アクセス解析・設定導線 |
+| `@niho/web/project-read-model` | summary / dashboardの型・読み取りadapter・runtime parser。React不要 |
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
 | `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
@@ -182,7 +185,7 @@ const html = renderPageToHtml(document);
 npm run demo:projects
 ```
 
-この動作例は架空メンバーを持つ2プロジェクトをメモリ内だけで操作し、選択プロジェクトの1サイトに限定した `PageEditor` 接続も表示します。実アカウント、実サイト、本番永続化には接続しません。
+この動作例は架空メンバーを持つ2プロジェクトの日常一覧、選択した1サイトのDashboard、既存ProjectManagerと `PageEditor` の導線を表示します。表示メタデータは `Project` 正本と分けて読み取りadapterから取得し、未接続の解析・未取得の数値・権限喪失・遅延応答を区別します。[一覧・Dashboardのホスト接続契約](docs/project-views-contract.md)を参照してください。日時・画像・解析値も合成値で、実アカウント、実サイト、本番永続化には接続しません。
 
 ```sh
 npm ci

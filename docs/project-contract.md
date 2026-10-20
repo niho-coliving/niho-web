@@ -4,6 +4,8 @@
 
 このパッケージは認証、権限、招待、ID採番、アカウント台帳、管理API、非公開データ、本番永続化を所有しません。Project に role / owner / invitation / email を保存しません。ホストは各adapter呼出しでセッションと対象サイトへの権限を検証してください。
 
+日常の選択画面は独立した `ProjectDirectory`、選択した1サイトの運用画面は `ProjectDashboard` を使用します。公開状態・サムネイル・解析・集計をProject正本へ足さず、別の読み取りadapterで受け取ります。[一覧・Dashboardの接続契約](project-views-contract.md)を参照してください。
+
 ## モデルと入力検証
 
 ```ts
