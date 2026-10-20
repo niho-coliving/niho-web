@@ -3,8 +3,8 @@ import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
 import { findPathConflict, validatePagePath } from "./pages.js";
 import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
-import type { AssetReference, ComponentLibrary, ComponentNode, DesignToken, ElementNode, InstanceNode, NodeStyle, PageDocument, PageMeta, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue, TextStyle } from "./types.js";
-import { textStyleProperties } from "./style-values.js";
+import type { Appear, AssetReference, ComponentLibrary, ComponentNode, DesignToken, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, PageMeta, PageNode, PublicPropValue, StateName, StateProperty, StyleDeclarations, StyleProperty, StyleValue, TextStyle } from "./types.js";
+import { stateNames, textStyleProperties } from "./style-values.js";
 import { isSafeHttpsOrigin } from "./validation-utils.js";
 
 export { nodeAt, walkNodes, type NodePath };
@@ -24,6 +24,12 @@ export type EditorOperation =
   /** 作成・更新。undefined は削除で、利用ノードへ宣言をコピーしてから参照を外す。 */
   | { type: "textStyle"; name: string; style: TextStyle | undefined }
   | { type: "nodeTextStyle"; path: NodePath; name: string | undefined; detach?: boolean }
+  /** 状態スタイル。undefined は削除。also の状態にも同じ値を書く（ホバーとフォーカスをそろえる）。 */
+  | { type: "state"; path: NodePath; state: StateName; values: Partial<Record<StateProperty, StyleValue | undefined>>; also?: readonly StateName[] }
+  /** 登場の演出。undefined で解除。 */
+  | { type: "appear"; path: NodePath; value: Appear | undefined }
+  /** 幅別の非表示。undefined・空配列で解除。 */
+  | { type: "hidden"; path: NodePath; ranges: readonly HiddenRange[] | undefined }
   | { type: "title"; value: string }
   | { type: "add"; parentId: string | null; node: PageNode; index?: number }
   | { type: "replaceChildren"; path: NodePath; children: PageNode[] }
@@ -147,7 +153,7 @@ function preserveRange(original: PageDocument, before: ElementNode | ComponentNo
 }
 const styleName = (name: string) => { if (!/^[a-z][A-Za-z0-9-]*$/.test(name)) throw new Error("名前は英小文字で始まる英数字と - で指定してください。"); };
 function eachDeclarations(document: PageDocument, visit: (declarations: Declarations) => void): void {
-  for (const { node } of walkNodes(document)) if (node.type !== "text" && node.style) [node.style.base, ...(node.style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => values && visit(values as Declarations));
+  for (const { node } of walkNodes(document)) if (node.type !== "text" && node.style) [node.style.base, ...(node.style.responsive ?? []).map((entry) => entry.declarations), ...Object.values(node.style.states ?? {})].forEach((values) => values && visit(values as Declarations));
   for (const style of Object.values(document.textStyles ?? {})) [style.base, ...(style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => visit(values));
 }
 /** 見た目を変えずに文字スタイルを外す。ノードの値が効く幅（同じ段以下）に無いプロパティだけをコピーする。 */
@@ -164,6 +170,7 @@ function detachTextStyle(node: ElementNode | ComponentNode | InstanceNode, style
   }
   delete own.textStyle;
 }
+/** 業務ブロックの styleProperties。"textStyle" "states" "appear" "hidden" はそれぞれの操作の許可。 */
 function assertStyleProperties(node: ElementNode | ComponentNode | InstanceNode, properties: readonly string[], blocks: EditorBlockRegistry): void {
   const allowed = node.type === "component" ? blocks[node.block]?.styleProperties : undefined;
   if (allowed && properties.some((property) => !(allowed as readonly string[]).includes(property))) throw new Error("このブロックでは変更できない見た目です。");
@@ -289,6 +296,23 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       const next = { ...(Object.keys(base).length ? { base } : {}), ...(responsive.length ? { responsive } : {}) };
       if (Object.keys(next).length) slots[operation.slot] = next; else delete slots[operation.slot];
       if (Object.keys(slots).length) node.slots = slots; else delete node.slots;
+    } else if (operation.type === "state") {
+      if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      assertStyleProperties(node, ["states"], blocks);
+      const states = (node.style ??= {}).states ??= {};
+      for (const name of new Set([operation.state, ...(operation.also ?? [])])) {
+        if (!stateNames.includes(name)) throw new Error("状態が不正です。");
+        const values: Declarations = { ...states[name] };
+        for (const [property, value] of Object.entries(operation.values)) if (value === undefined) delete values[property]; else values[property] = structuredClone(value);
+        if (Object.keys(values).length) states[name] = values; else delete states[name];
+      }
+      if (!Object.keys(states).length) delete node.style.states;
+    } else if (operation.type === "appear" || operation.type === "hidden") {
+      if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      assertStyleProperties(node, [operation.type], blocks);
+      const style = node.style ??= {};
+      if (operation.type === "appear") { if (operation.value) style.appear = structuredClone(operation.value); else delete style.appear; }
+      else if (operation.ranges?.length) style.hidden = structuredClone([...operation.ranges]); else delete style.hidden;
     } else if (operation.type === "nodeTextStyle") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
       assertStyleProperties(node, ["textStyle"], blocks);

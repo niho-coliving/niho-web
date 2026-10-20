@@ -5,6 +5,7 @@ import { AlignGrid, Collapse, ColorField, FontField, PercentField, Row, Segmente
 import { walkNodes, type EditorOperation, type NodePath } from "./editor-model.js";
 import type { EditorBlockRegistry } from "./editor-types.js";
 import { declarationsAt, expandBox, fieldState, resolveValue, tierForWidth, tierName, type EditorTier, type FieldState, type TierKey } from "./style-model.js";
+import { MotionFields, type StyleState } from "./editor-style-motion.js";
 import { styleTokenKind, textStyleProperties } from "./style-values.js";
 import type { ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode, StyleProperty, StyleValue } from "./types.js";
 
@@ -36,6 +37,9 @@ export type StyleInspectorProps = {
   tierLocked: boolean;
   reason: (field: string) => string | undefined;
   notify: (message: string) => void;
+  /** 編集中の状態。通常以外では状態に使える見た目だけを表示し、キャンバスに強制表示する。 */
+  styleState?: StyleState;
+  setStyleState?: (state: StyleState) => void;
 };
 
 const textTags = new Set("h1 h2 h3 h4 h5 h6 p span a li strong em small blockquote figcaption time".split(" "));
@@ -74,7 +78,8 @@ export function StyleInspector(props: StyleInspectorProps) {
   const { document, node, path, blocks, tiers, tier, apply, preview, pending, fieldKey, disabled, reason, notify } = props;
   const uid = useId();
   const allowed = node.type === "component" ? blocks[node.block]?.styleProperties : undefined;
-  const can = (property: StyleProperty | "textStyle") => !allowed || allowed.includes(property);
+  const can = (property: StyleProperty | "textStyle" | "states" | "appear" | "hidden") => !allowed || allowed.includes(property);
+  const styleState = props.styleState ?? "normal", normal = styleState === "normal";
   const index = Math.max(0, tiers.findIndex((entry) => entry.key === tier)), current = tiers[index] ?? { key: "base" as const, start: 0, end: null, label: "基本" };
   const tone = index === 0 ? 0 : (index - 1) % 2 + 1, higher = tiers.slice(index + 1), next = higher[0];
   const only = props.range === "only" && !!next, shown = tierForWidth(tiers, props.width);
@@ -155,8 +160,9 @@ export function StyleInspector(props: StyleInspectorProps) {
     : `${span}に適用。${higher.length ? current.key === "base" ? "上の幅で上書きした項目を除きます。" : `${higher.map(tierName).join("・")} で上書きした項目を除きます。` : ""}`;
   const outside = props.width < current.start || only && props.width >= next!.start;
   const target = props.width < current.start ? current.start : current.start === 0 ? Math.min(375, next!.start - 1) : current.start;
+  const motionVisible = (["states", "appear", "hidden", "translate", "rotate", "scale", "transformOrigin", "transitionDuration"] as const).some(can);
   return <div className="e-inspector" data-tone={tone}>
-    <div className="e-tierbar">
+    {normal && <div className="e-tierbar">
       <Segmented label="編集する幅" value={String(tier)} options={tiers.map((entry) => ({ value: String(entry.key), text: tierName(entry) }))} disabled={disabled || props.tierLocked}
         onChange={(value) => chooseTier(value === "base" ? "base" : Number(value))} />
       {next && <Segmented label="反映する範囲" className="e-range" value={only ? "only" : "wide"} disabled={disabled || props.tierLocked} onChange={props.setRange}
@@ -165,9 +171,9 @@ export function StyleInspector(props: StyleInspectorProps) {
       {outside && <p className="e-tier-out" role="status">表示中の {props.width}px にはこの指定は反映されません
         <button type="button" className="e-small" onClick={() => props.setWidth(target)}>{target}px で表示</button></p>}
       {shown.key !== current.key && <button type="button" className="e-small e-follow" disabled={disabled || props.tierLocked} onClick={() => chooseTier(shown.key)}>表示中の幅（{tierName(shown)}）の段を編集</button>}
-    </div>
-    {allowed && <p className="e-help">このブロックで変更できる見た目だけを表示しています。</p>}
-    {textual && (can("textStyle") || textStyleProperties.some(can) || can("color") || can("textAlign")) && <section className="e-sec"><h3>テキスト</h3>
+    </div>}
+    {normal && allowed && <p className="e-help">このブロックで変更できる見た目だけを表示しています。</p>}
+    {normal && textual && (can("textStyle") || textStyleProperties.some(can) || can("color") || can("textAlign")) && <section className="e-sec"><h3>テキスト</h3>
       {can("textStyle") && <Row caption="テキストスタイル" htmlFor={`${uid}-ts`} status={{ unsaved: (saved?.style?.textStyle ?? "") !== (node.style?.textStyle ?? ""), lock: reason("style.textStyle") }}>
         <span className="e-inline"><select id={`${uid}-ts`} aria-label="テキストスタイル" value={node.style?.textStyle ?? ""} disabled={disabled || !!reason("style.textStyle")}
           onChange={(event) => report(apply({ type: "nodeTextStyle", path, name: event.target.value || undefined }))}>
@@ -183,9 +189,9 @@ export function StyleInspector(props: StyleInspectorProps) {
       {segment(["textAlign"], "文字揃え", <Segmented label="文字揃え" value={String(effective("textAlign") ?? "")} options={aligns} disabled={disabled || !!lock("textAlign")} onChange={(value) => report(set({ textAlign: value }))} />)}
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
     </section>}
-    <Layout ui={ui} />
-    {element && <Flow ui={ui} flex={flex} grid={grid} />}
-    {(!!props.appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {normal && <Layout ui={ui} />}
+    {normal && element && <Flow ui={ui} flex={flex} grid={grid} />}
+    {normal && (!!props.appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
       {props.appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
@@ -194,19 +200,24 @@ export function StyleInspector(props: StyleInspectorProps) {
       {can("opacity") && <PercentField key={key("opacity")} caption="不透明度" value={state("opacity").own} apply={(value) => set({ opacity: value })} preview={draft("opacity")} pending={pending} fieldKey={key("opacity")}
         disabled={disabled || !!lock("opacity")} status={status(["opacity"])} placeholder={typeof effective("opacity") === "number" ? String(Math.round(Number(effective("opacity")) * 100)) : "100"} />}
     </section>}
-    {(["position", "top", "right", "bottom", "left", "zIndex", "overflow"] as const).some(can) && <Collapse key={key("position-section")} title="位置">
+    {normal && (["position", "top", "right", "bottom", "left", "zIndex", "overflow"] as const).some(can) && <Collapse key={key("position-section")} title="位置">
       {ui.select("position", "配置の基準", positions)}
       {position !== "static" && <div className="e-grid2">{ui.unit("top", "上から", { keywords: auto })}{ui.unit("right", "右から", { keywords: auto })}{ui.unit("bottom", "下から", { keywords: auto })}{ui.unit("left", "左から", { keywords: auto })}</div>}
       {can("zIndex") && <Stepper key={key("zIndex")} caption="重ね順" value={state("zIndex").own} apply={(value) => set({ zIndex: value })} preview={draft("zIndex")} pending={pending} fieldKey={key("zIndex")}
         disabled={disabled || !!lock("zIndex")} status={status(["zIndex"])} placeholder={text(state("zIndex").inherited?.value)} />}
       {ui.select("overflow", "はみ出し", overflows)}
     </Collapse>}
-    {(["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
+    {normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
       <div className="e-grid2">{ui.unit("flexGrow", "伸びる比率", { units: [""], numberUnit: "" })}{ui.unit("flexShrink", "縮む比率", { units: [""], numberUnit: "" })}</div>
       {ui.unit("flexBasis", "基準サイズ", { keywords: sizes })}
       <div className="e-grid2">{ui.unit("gridColumn", "グリッドの列位置", { units: [] })}{ui.unit("gridRow", "グリッドの行位置", { units: [] })}</div>
       {ui.select("alignSelf", "自身の揃え", selfAligns)}
       {element?.tag === "img" && ui.select("objectFit", "画像の収まり", fits)}
+    </Collapse>}
+    {motionVisible && <Collapse key={`${fieldKey}-motion`} title="演出" initial={!normal}>
+      <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
+        fieldKey={fieldKey} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
+        tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} />
     </Collapse>}
   </div>;
 }

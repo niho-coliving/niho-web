@@ -39,5 +39,8 @@ export const styleEditorCss: string = `
 .nw-editor .e-lib-edit{background:#f7f9f7;border:1px solid var(--e-border);border-radius:8px;padding:10px;margin:2px 0 12px;min-width:0}.nw-editor .e-reach{color:#195640;font-weight:600}
 .nw-editor .e-usage ul{list-style:none;display:flex;flex-wrap:wrap;gap:4px;padding:0;margin:4px 0 10px}.nw-editor .e-usage li{min-width:0;max-width:100%}.nw-editor .e-usage button{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-editor .e-confirm{background:#fff4f2;border:1px solid #e6b8b0;border-radius:6px;padding:8px;margin:8px 0}.nw-editor .e-confirm p{margin:0 0 6px;font-size:12px}
+.nw-editor .e-inspector h4{font-size:12px;font-weight:700;margin:14px 0 6px;color:#355a45}.nw-editor .e-state-note{margin:4px 0 10px}
+.nw-editor .e-widths{border:0;padding:0;margin:14px 0 8px;min-width:0;display:flex;flex-direction:column;gap:2px}.nw-editor .e-widths .e-check{margin:2px 0}
+.nw-editor .e-layer.is-hidden-here{opacity:.55}.nw-editor .e-layer-hidden{margin-left:6px;font-size:11px;color:#7a4a0c}.nw-editor .e-motion-toggle{white-space:nowrap}
 @media(max-width:1000px) and (min-width:761px){.nw-editor .e-grid2{grid-template-columns:minmax(0,1fr)}}
 `;

@@ -118,8 +118,8 @@ export type EditorBlockRegistry = Readonly<Record<string, BlockDefinition & {
   defaultProps?: Record<string, PublicPropValue>;
   /** データ連動値。すべての同種ブロックへ適用し、理由を表示する。 */
   lockedProps?: Readonly<Record<string, string>>;
-  /** 変更を許す見た目（"textStyle" は文字スタイルの適用）。省略時はすべて。props はスタイル操作から変えない。 */
-  styleProperties?: readonly (StyleProperty | "textStyle")[];
+  /** 変更を許す見た目。"textStyle" は文字スタイルの適用、"states" は状態スタイル、"appear" は登場、"hidden" は幅別の非表示。省略時はすべて。props はスタイル操作から変えない。 */
+  styleProperties?: readonly (StyleProperty | "textStyle" | "states" | "appear" | "hidden")[];
 }>>;
 /** 編集する幅の段。minWidth は 320〜3840 の整数・昇順。 */
 export type EditorBreakpoint = { minWidth: number; label: string };

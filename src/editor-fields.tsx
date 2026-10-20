@@ -205,13 +205,13 @@ export function UnitField({ caption, value, units, numberUnit = "px", numberLabe
 }
 
 /** 選択肢から選ぶ値。value は CSS の値か `@名前`、表示名は日本語。継承値はヒントに出す。 */
-export function SelectField({ caption, value, options, apply, disabled = false, status, parse = parseText, extra }: Omit<Common, "fieldKey" | "preview" | "pending"> & {
-  value: string | undefined; options: readonly Choice[]; parse?: (value: string) => StyleValue | undefined;
+export function SelectField({ caption, value, options, apply, disabled = false, status, parse = parseText, extra, empty = "指定なし" }: Omit<Common, "fieldKey" | "preview" | "pending"> & {
+  value: string | undefined; options: readonly Choice[]; parse?: (value: string) => StyleValue | undefined; empty?: string;
 }) {
   const id = useId(), hintId = useId(), [problem, setProblem] = useState("");
   return <Row caption={caption} htmlFor={id} hintId={hintId} status={status} extra={extra}>
     <select id={id} aria-label={caption} aria-describedby={hasHint(status) ? hintId : undefined} value={value ?? ""} disabled={disabled} onChange={(event) => setProblem(apply(event.target.value ? parse(event.target.value) : undefined) ?? "")}>
-      <option value="">指定なし</option>
+      <option value="">{empty}</option>
       {options.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
       {value && !options.some(([name]) => name === value) && <option value={value}>{value}</option>}
     </select>
@@ -266,6 +266,26 @@ export function PercentField({ caption, value, apply, preview, pending = noop, f
       <input type="range" min={0} max={100} step={1} aria-label={`${caption}のスライダー`} disabled={disabled} value={range ?? (typeof value === "number" ? Math.round(value * 100) : Number(placeholder) || 100)}
         onChange={(event) => { const next = Number(event.target.value); setRange(next); preview?.(next / 100); }} onPointerUp={release} onKeyUp={release} onBlur={release} />
     </span>
+    <Problems states={[state]} />
+  </Row>;
+}
+
+/** 表示用の数（秒・度・%）と保存する値を read / write で変換する。範囲外は理由を出して入力を残す。 */
+export function NumberField({ caption, value, suffix, read, write, min, max, apply, preview, pending = noop, fieldKey, disabled = false, status, placeholder, extra }: Common & {
+  value: StyleValue | undefined; suffix: string; read: (value: string | number) => number | undefined; write: (value: number) => StyleValue; min: number; max: number;
+}) {
+  const id = useId(), hintId = useId(), shown = value === undefined || typeof value === "object" ? undefined : read(value);
+  const text = typeof value === "object" ? `@${value.token}` : shown === undefined || !Number.isFinite(shown) ? "" : String(Number(shown.toFixed(2)));
+  const parse = (input: string): StyleValue | undefined | null => {
+    const trimmed = input.trim();
+    if (!trimmed || trimmed.startsWith("@")) return parseText(trimmed);
+    const amount = Number(trimmed);
+    return numeric.test(trimmed) && amount >= min && amount <= max ? write(amount) : null;
+  };
+  const state = useBuffer(text, (input) => { const next = parse(input); return next === null ? `${min}〜${max} の数値で入力してください。` : apply(next); }, pending, fieldKey, disabled,
+    preview && ((input) => { const next = input === null ? null : parse(input); preview(next === null ? null : next); }), true);
+  return <Row caption={caption} htmlFor={id} hintId={hintId} status={status} extra={extra}>
+    <Frame states={[state]} className="e-unit"><input {...inputProps(state, id, disabled, placeholder, hasHint(status) ? hintId : undefined)} inputMode="decimal" /><small aria-hidden="true">{suffix}</small></Frame>
     <Problems states={[state]} />
   </Row>;
 }

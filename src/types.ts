@@ -15,7 +15,10 @@ export type StyleProperty =
   | "position" | "top" | "right" | "bottom" | "left" | "zIndex"
   | "borderWidth" | "borderStyle" | "borderRadius" | "overflow" | "objectFit" | "opacity"
   | "backgroundSize" | "backgroundPosition" | "backgroundRepeat"
-  | "fontStyle" | "textDecorationLine";
+  | "fontStyle" | "textDecorationLine"
+  | "translate" | "rotate" | "scale" | "transformOrigin"
+  | "transitionDuration" | "transitionDelay" | "transitionTimingFunction"
+  | "overflowX" | "scrollSnapType" | "scrollSnapAlign";
 /** 素材ライブラリの参照。URL はホストが描画時に解決し、文書には保存しない。 */
 export type AssetReference = { provider: string; id: string };
 export type BackgroundImageValue = { asset: AssetReference };
@@ -28,19 +31,44 @@ export type TextStyle = {
   base: TextStyleDeclarations;
   responsive?: { minWidth: number; declarations: TextStyleDeclarations }[];
 };
+/** 状態スタイルで変えられる見た目。レイアウトを動かさないものだけ。 */
+export type StateProperty = "color" | "backgroundColor" | "borderColor" | "opacity" | "textDecorationLine" | "translate" | "rotate" | "scale";
+export type StateName = "hover" | "focus" | "active";
+export type StateDeclarations = Partial<Record<StateProperty, StyleValue>>;
+export type MotionEasing = "ease" | "ease-in" | "ease-out" | "ease-in-out" | "linear";
+export type AppearEffect = "fade" | "fade-up" | "fade-down" | "fade-left" | "fade-right" | "zoom";
+/** 登場の演出。動きを減らす設定の利用者と未対応ブラウザでは動かさず、内容はそのまま見える。 */
+export type Appear = {
+  effect: AppearEffect;
+  /** load: ページを開いたとき。view: 画面に入ったとき（スクロール量に合わせて動く）。 */
+  trigger: "load" | "view";
+  /** ms。100〜3000。view では使わない。 */
+  duration: number;
+  /** ms。0〜3000。view では使わない。 */
+  delay: number;
+  easing?: MotionEasing;
+};
+/** この幅の範囲で非表示。minWidth は 0 または 320〜3840、maxWidth は範囲の最後の幅（含む）。 */
+export type HiddenRange = { minWidth: number; maxWidth?: number };
 export type NodeStyle = {
   /** 文書の textStyles のキー。ノード個別の指定が優先する。 */
   textStyle?: string;
   base?: StyleDeclarations;
   /** mobile first。minWidth は昇順・重複不可。 */
   responsive?: { minWidth: number; declarations: StyleDeclarations }[];
+  /** hover は (hover:hover) の中、focus は :focus-visible、active は :active。 */
+  states?: Partial<Record<StateName, StateDeclarations>>;
+  appear?: Appear;
+  /** 昇順・重なりなし・最大 12。 */
+  hidden?: HiddenRange[];
 };
 export type ElementTag =
   | "div" | "section" | "article" | "header" | "footer" | "main" | "nav" | "aside"
   | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "span"
   | "a" | "img" | "picture" | "source" | "ul" | "ol" | "li"
   | "dl" | "dt" | "dd" | "strong" | "em" | "b" | "i" | "small"
-  | "blockquote" | "figure" | "figcaption" | "br" | "hr" | "time";
+  | "blockquote" | "figure" | "figcaption" | "br" | "hr" | "time"
+  | "details" | "summary";
 export type ElementAttributes = Record<string, string | number | boolean>;
 export type TextNode = { type: "text"; text: string };
 export type ElementNode = {

@@ -5,21 +5,23 @@ import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expan
 import { isStyleProperty, parseStyle, parseTextStyles, parseTokens } from "./style-values.js";
 import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
-const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
+const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time details summary".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
 const phrasing = new Set("span a img strong em b i small br time".split(" "));
-const phrasingParents = new Set("p span h1 h2 h3 h4 h5 h6 a strong em b i small time".split(" "));
+const phrasingParents = new Set("p span h1 h2 h3 h4 h5 h6 a strong em b i small time summary".split(" "));
+// 開閉（details / summary）は JS なしで動く。summary の中にリンクや入れ子の開閉は置けない。
+const interactive = new Set(["a", "details", "summary"]);
 const globalAttributes = ["id", "title", "lang", "dir", "role", "hidden", "tabIndex", "aria-label", "aria-labelledby", "aria-describedby", "aria-hidden", "aria-current"];
 const tagAttributes: Partial<Record<ElementTag, string[]>> = {
   a: ["href", "target", "rel", "hrefLang"], img: ["src", "alt", "width", "height", "loading", "decoding"],
-  source: ["srcSet", "type", "media"], ol: ["start", "reversed"], li: ["value"], time: ["dateTime"]
+  source: ["srcSet", "type", "media"], ol: ["start", "reversed"], li: ["value"], time: ["dateTime"], details: ["open"]
 };
 function attributes(value: unknown, tag: ElementTag, path: string, asset = false): ElementAttributes {
   const source = record(value, path), result: ElementAttributes = {};
   keys(source, [...globalAttributes, ...(tagAttributes[tag] ?? [])], path);
   for (const [name, value] of Object.entries(source)) {
     const at = `${path}.${name}`;
-    if (name === "hidden" || name === "reversed") {
+    if (name === "hidden" || name === "reversed" || name === "open") {
       if (typeof value !== "boolean") fail(at, "expected boolean");
     } else if (["width", "height", "start", "value", "tabIndex"].includes(name)) {
       if (typeof value !== "number" || !Number.isSafeInteger(value) || Math.abs(value) > 100000 ||
@@ -167,7 +169,8 @@ function slotStyles(value: unknown, contract: BlockContract, tokens: Record<stri
   for (const [name, raw] of Object.entries(source)) {
     const path = `${at}.slots.${name}`;
     if (!Object.hasOwn(declared, name)) fail(path, "unknown block slot");
-    const style = parseStyle(raw, tokens, path), allowed: readonly string[] = declared[name]!.style ?? [];
+    // 状態・登場・幅別の非表示・文字スタイルは領域では使えない。
+    const style = parseStyle(raw, tokens, path, {}, false), allowed: readonly string[] = declared[name]!.style ?? [];
     for (const declarations of [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations)]) {
       if (Object.keys(declarations).some((property) => !allowed.includes(property))) fail(path, "style not allowed in this slot");
     }
@@ -206,7 +209,7 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
     const component = identifier(node.component, `${at}.component`), shape = context.components?.get(component);
     if (!shape) fail(`${at}.component`, "unknown component");
     // 展開後の root と同じ入れ子規則。内側の規則は展開後の文書で検証する。
-    if (inline && !phrasing.has(shape.tag) || constrainedParent && !constrainedParent.includes(shape.tag) || insideLink && shape.tag === "a") fail(at, "invalid HTML content nesting");
+    if (inline && !phrasing.has(shape.tag) || constrainedParent && !constrainedParent.includes(shape.tag) || insideLink && interactive.has(shape.tag) || shape.tag === "summary" && parent !== "details") fail(at, "invalid HTML content nesting");
     return { type: "instance", id, component, ...instanceProps(node.props, shape, `${at}.props`), ...style };
   }
   if (node.type === "component") {
@@ -226,7 +229,8 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
   }
   if (!isElementTag(node.tag)) fail(`${at}.tag`, "unsupported element");
   const tag = node.tag;
-  if (inline && !phrasing.has(tag) || constrainedParent && !constrainedParent.includes(tag) || insideLink && tag === "a") fail(at, "invalid HTML content nesting");
+  if (inline && !phrasing.has(tag) || constrainedParent && !constrainedParent.includes(tag) || insideLink && interactive.has(tag)) fail(at, "invalid HTML content nesting");
+  if (tag === "summary" && parent !== "details") fail(at, "summary must be the first child of details");
   if (node.asset !== undefined && tag !== "img") fail(`${at}.asset`, "only img can reference an asset");
   const asset = node.asset === undefined ? {} : { asset: parseAssetReference(node.asset, `${at}.asset`) };
   const attrs = node.attrs === undefined ? {} : { attrs: attributes(node.attrs, tag, `${at}.attrs`, !!asset.asset) };
@@ -236,8 +240,12 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
     htmlIds.add(htmlId);
   }
   if (tag === "img" && !attrs.attrs) fail(at, "img requires attributes");
-  const children = parseNodes(node.children, `${at}.children`, context, depth + 1, tag, insideLink || tag === "a", inline || phrasingParents.has(tag));
+  const children = parseNodes(node.children, `${at}.children`, context, depth + 1, tag, insideLink || interactive.has(tag) && tag !== "details", inline || phrasingParents.has(tag));
   if (voidTags.has(tag) && children.length) fail(at, "void element cannot have children");
+  if (tag === "details") {
+    const summaries = children.flatMap((child, index) => (child.type === "element" ? child.tag : child.type === "instance" ? context.components!.get(child.component)!.tag : "") === "summary" ? [index] : []);
+    if (summaries.length > 1 || summaries.length === 1 && summaries[0] !== 0) fail(`${at}.children`, "summary must be the first child of details");
+  }
   if (tag === "picture") {
     const childTags = children.flatMap((child) => child.type === "element" ? [child.tag] : child.type === "instance" ? [context.components!.get(child.component)!.tag] : []);
     if (childTags[childTags.length - 1] !== "img" || childTags.filter((childTag) => childTag === "img").length !== 1) {
