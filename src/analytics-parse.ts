@@ -29,7 +29,6 @@ function timestamp(input: unknown, path: string): string {
 function timezone(input: unknown, path: string): string {
   const value = string(input, path, 80);
   try { new Intl.DateTimeFormat("en", { timeZone: value }); } catch { return fail(path, "invalid IANA timezone"); }
-  if (!value.includes("/")) return fail(path, "expected IANA area timezone");
   return value;
 }
 function range(input: unknown, path: string): LocalRange {

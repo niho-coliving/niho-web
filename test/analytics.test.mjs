@@ -18,6 +18,14 @@ test("parser accepts independent source reports and keeps zero distinct from nul
   assert.equal(parsed.ga4.report.range.timezone, "Asia/Tokyo");
   assert.equal(parsed.searchConsole.report.range.timezone, "America/Los_Angeles");
 });
+test("GA4 accepts UTC while Search Console keeps its Pacific date boundary", () => {
+  const input = fixture();
+  input.ga4.report.range.timezone = "UTC";
+  input.ga4.report.previousRange.timezone = "UTC";
+  assert.equal(parseSiteAnalyticsSnapshot(input, scope).ga4.report.range.timezone, "UTC");
+  input.searchConsole.report.range.timezone = "UTC";
+  assert.throws(() => parseSiteAnalyticsSnapshot(input, scope), AnalyticsValidationError);
+});
 test("scope and period mismatch are rejected before rendering", () => {
   for (const patch of [{ projectId: "project_other" }, { siteId: "site_other" }, { period: "28d" }]) {
     assert.throws(() => parseSiteAnalyticsSnapshot({ ...fixture(), ...patch }, scope), AnalyticsValidationError);
