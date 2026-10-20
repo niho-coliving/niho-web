@@ -70,6 +70,10 @@
     "./analytics": {
       "types": "./dist/analytics.d.ts",
       "import": "./dist/analytics.js"
+    },
+    "./localization": {
+      "types": "./dist/localization.d.ts",
+      "import": "./dist/localization.js"
     }
   },
   "types": "./dist/index.d.ts",
