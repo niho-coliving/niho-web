@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { DocumentValidationError } from "@niho/web/core";
+import { DocumentValidationError, generatePageCss } from "@niho/web/core";
 import { acceptSavedRevision, checkPageChange, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, travelHistory, validatePageChangePlan, validateReleasePlan, walkNodes } from "../dist/editor-model.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
@@ -196,4 +196,132 @@ test("add can insert at a position within the destination", () => {
   assert.equal(editDocument(doc(), { type: "add", parentId: null, index: 0, node: newElement("p", "first") }).body[0].id, "first");
   assert.equal(editDocument(doc(), { type: "add", parentId: "hero", index: 3, node: newElement("p", "last") }).body[0].children[3].id, "last");
   for (const index of [-1, 4, 1.5, Number.NaN]) assert.throws(() => editDocument(doc(), { type: "add", parentId: "hero", index, node: newElement("p", "x") }), /追加先の位置が不正です/);
+});
+const styledDoc = () => {
+  const doc = structuredClone(fixture);
+  doc.tokens.brand = { type: "color", value: "#195640", label: "メイン" };
+  doc.tokens.gap = { type: "length", value: 24 };
+  doc.textStyles = {
+    heading: { label: "見出し", base: { fontSize: 24, fontWeight: 700, lineHeight: 1.3 }, responsive: [{ minWidth: 768, declarations: { fontSize: 32, letterSpacing: { token: "gap" } } }, { minWidth: 1280, declarations: { lineHeight: 1.1 } }] }
+  };
+  doc.body[0].children[0].style = { textStyle: "heading", base: { color: { token: "brand" }, lineHeight: 1.5 }, responsive: [{ minWidth: 1024, declarations: { fontSize: 28 } }] };
+  doc.body[0].children[1].style = { textStyle: "heading" };
+  doc.body[0].style.base.gap = { token: "gap" };
+  return doc;
+};
+test("styles changes several properties as one history entry and keeps the style operation behaviour", () => {
+  const original = doc(); let history = { past: [], present: original, future: [] };
+  const next = editDocument(original, { type: "styles", path: [0], breakpoint: 768, values: { justifyContent: "center", alignItems: "flex-end", maxWidth: undefined } });
+  history = commitHistory(history, next);
+  assert.deepEqual(nodeAt(next, [0]).style.responsive[0].declarations, { margin: "0 auto", justifyContent: "center", alignItems: "flex-end" });
+  assert.equal(history.past.length, 1);
+  assert.equal(fingerprint(travelHistory(history, "undo", {}, []).present), fingerprint(original));
+  const single = editDocument(original, { type: "style", path: [0], breakpoint: 768, property: "maxWidth", value: undefined });
+  assert.deepEqual(single, editDocument(original, { type: "styles", path: [0], breakpoint: 768, values: { maxWidth: undefined } }));
+  const removed = editDocument(single, { type: "styles", path: [0], breakpoint: 768, values: { margin: undefined } });
+  assert.deepEqual(nodeAt(removed, [0]).style.responsive, []);
+  assert.throws(() => editDocument(original, { type: "styles", path: [0], breakpoint: "base", values: { gap: 12, color: "red;}" } }), DocumentValidationError);
+  assert.throws(() => editDocument(original, { type: "styles", path: [0, 0, 0], breakpoint: "base", values: { color: "red" } }), /親要素/);
+});
+test("deleting a token detaches node and text style references into literal values", () => {
+  const original = styledDoc();
+  const created = editDocument(original, { type: "token", name: "accent", token: { type: "color", value: "#ff000080", label: "強調" } });
+  assert.deepEqual(created.tokens.accent, { type: "color", value: "#ff000080", label: "強調" });
+  assert.throws(() => editDocument(original, { type: "token", name: "Bad Name", token: { type: "color", value: "#fff" } }), /名前/);
+  assert.throws(() => editDocument(original, { type: "token", name: "brand", token: { type: "length", value: 4 } }), DocumentValidationError);
+  const before = generatePageCss(original);
+  const next = editDocument(original, { type: "token", name: "gap", token: undefined });
+  assert.equal(next.tokens.gap, undefined);
+  assert.equal(nodeAt(next, [0]).style.base.gap, 24);
+  assert.equal(next.textStyles.heading.responsive[0].declarations.letterSpacing, 24);
+  const brand = editDocument(next, { type: "token", name: "brand", token: undefined });
+  assert.equal(nodeAt(brand, [0, 0]).style.base.color, "#195640");
+  assert.equal(generatePageCss(brand).replace(/--nw-(?:brand|gap):[^;]+;/g, ""), before.replace(/--nw-(?:brand|gap):[^;]+;/g, "").replaceAll("var(--nw-gap)", "24px").replaceAll("var(--nw-brand)", "#195640"));
+  assert.throws(() => editDocument(original, { type: "token", name: "missing", token: undefined }), /見つかりません/);
+  const locked = [{ nodeId: "hero", fields: ["style.base.gap"], reason: "ブランドで管理" }];
+  assert.throws(() => editDocument(original, { type: "token", name: "gap", token: undefined }, {}, locked), /ブランドで管理/);
+});
+test("deleting or detaching a text style copies declarations without changing the computed appearance", () => {
+  const original = styledDoc();
+  const removed = editDocument(original, { type: "textStyle", name: "heading", style: undefined });
+  assert.equal(removed.textStyles, undefined);
+  const heading = nodeAt(removed, [0, 0]).style, lead = nodeAt(removed, [0, 1]).style;
+  assert.equal(heading.textStyle, undefined);
+  // ノード側の lineHeight 1.5（base）は全幅で勝つため、1280px の 1.1 はコピーしない。1024px の 28 は 768px の 32 より後で効くので残る。
+  assert.deepEqual(heading, { base: { color: { token: "brand" }, lineHeight: 1.5, fontSize: 24, fontWeight: 700 }, responsive: [{ minWidth: 768, declarations: { fontSize: 32, letterSpacing: { token: "gap" } } }, { minWidth: 1024, declarations: { fontSize: 28 } }] });
+  assert.deepEqual(lead, { base: { fontSize: 24, fontWeight: 700, lineHeight: 1.3 }, responsive: [{ minWidth: 768, declarations: { fontSize: 32, letterSpacing: { token: "gap" } } }, { minWidth: 1280, declarations: { lineHeight: 1.1 } }] });
+  const detached = editDocument(original, { type: "nodeTextStyle", path: [0, 1], name: undefined, detach: true });
+  assert.deepEqual(nodeAt(detached, [0, 1]).style, lead);
+  assert.ok(detached.textStyles.heading);
+  const cleared = editDocument(original, { type: "nodeTextStyle", path: [0, 1], name: undefined });
+  assert.deepEqual(nodeAt(cleared, [0, 1]).style, {});
+  const applied = editDocument(cleared, { type: "nodeTextStyle", path: [0, 2], name: "heading" });
+  assert.equal(nodeAt(applied, [0, 2]).style.textStyle, "heading");
+  assert.throws(() => editDocument(original, { type: "nodeTextStyle", path: [0, 2], name: "missing" }), DocumentValidationError);
+  assert.throws(() => editDocument(original, { type: "textStyle", name: "body", style: { base: { color: "#fff" } } }), DocumentValidationError);
+  const updated = editDocument(original, { type: "textStyle", name: "body", style: { label: "本文", base: { fontSize: 16 } } });
+  assert.deepEqual(updated.textStyles.body, { label: "本文", base: { fontSize: 16 } });
+  const locked = [{ nodeId: "lead", fields: ["style"], reason: "固定の見た目" }];
+  assert.throws(() => editDocument(original, { type: "textStyle", name: "heading", style: undefined }, {}, locked), /固定の見た目/);
+  assert.throws(() => editDocument(original, { type: "nodeTextStyle", path: [0, 1], name: undefined, detach: true }, {}, locked), /固定の見た目/);
+});
+test("business blocks limit style changes to their declared appearance properties", () => {
+  const blocks = { Notice: { props: { heading: { type: "string" } }, component: () => null, styleProperties: ["marginTop", "backgroundColor"] }, Free: { props: {}, component: () => null } };
+  const original = styledDoc();
+  original.body.push({ type: "component", id: "notice", block: "Notice", props: { heading: "表示" } }, { type: "component", id: "free", block: "Free", props: {} });
+  const next = editDocument(original, { type: "styles", path: [1], breakpoint: "base", values: { marginTop: 24, backgroundColor: { token: "brand" } } }, blocks);
+  assert.deepEqual(nodeAt(next, [1]).style.base, { marginTop: 24, backgroundColor: { token: "brand" } });
+  assert.deepEqual(nodeAt(next, [1]).props, { heading: "表示" });
+  for (const operation of [{ type: "style", path: [1], breakpoint: "base", property: "width", value: 10 }, { type: "styles", path: [1], breakpoint: 768, values: { marginTop: 1, color: "red" } },
+    { type: "nodeTextStyle", path: [1], name: "heading" }]) assert.throws(() => editDocument(original, operation, blocks), /このブロックでは変更できない見た目です。/);
+  assert.equal(nodeAt(editDocument(original, { type: "nodeTextStyle", path: [2], name: "heading" }, blocks), [2]).style.textStyle, "heading");
+  assert.equal(nodeAt(editDocument(original, { type: "style", path: [0], breakpoint: "base", property: "width", value: 10 }, blocks), [0]).style.base.width, 10);
+  const textBlocks = { ...blocks, Notice: { ...blocks.Notice, styleProperties: ["textStyle"] } };
+  assert.equal(nodeAt(editDocument(original, { type: "nodeTextStyle", path: [1], name: "heading" }, textBlocks), [1]).style.textStyle, "heading");
+});
+test("styleRange edits one tier and keeps wider widths by first copying the value they used", () => {
+  const original = styledDoc(); let history = { past: [], present: original, future: [] };
+  const only = (path, breakpoint, until, values, ...rest) => editDocument(original, { type: "styleRange", path, breakpoint, until, values }, ...rest);
+  const next = only([0], "base", 768, { flexDirection: "row" });
+  assert.equal(nodeAt(next, [0]).style.base.flexDirection, "row");
+  assert.deepEqual(nodeAt(next, [0]).style.responsive, [{ minWidth: 768, declarations: { maxWidth: "64rem", margin: "0 auto", flexDirection: "column" } }]);
+  history = commitHistory(history, next); assert.equal(history.past.length, 1);
+  assert.equal(fingerprint(travelHistory(history, "undo", {}, []).present), fingerprint(original));
+  // 文字スタイル由来の値もそのままコピーする（token 参照は参照のまま）。
+  const heading = only([0, 0], "base", 768, { fontSize: 18 });
+  assert.deepEqual(nodeAt(heading, [0, 0]).style.responsive, [{ minWidth: 768, declarations: { fontSize: 32 } }, { minWidth: 1024, declarations: { fontSize: 28 } }]);
+  assert.equal(nodeAt(heading, [0, 0]).style.base.fontSize, 18);
+  const spacing = only([0, 0], 768, 1024, { letterSpacing: 2 });
+  assert.deepEqual(nodeAt(spacing, [0, 0]).style.responsive, [{ minWidth: 768, declarations: { letterSpacing: 2 } }, { minWidth: 1024, declarations: { fontSize: 28, letterSpacing: { token: "gap" } } }]);
+  // 次の段が同じプロパティを持っていればコピーしない。値が無ければ中立値を書く。削除でも広い幅の値を保つ。
+  assert.deepEqual(nodeAt(only([0], "base", 768, { maxWidth: "40rem" }), [0]).style.responsive[0].declarations, { maxWidth: "64rem", margin: "0 auto" });
+  assert.equal(nodeAt(only([0], "base", 768, { width: "50%" }), [0]).style.responsive[0].declarations.width, "auto");
+  const removed = only([0], "base", 768, { gap: undefined });
+  assert.equal(nodeAt(removed, [0]).style.base.gap, undefined); assert.deepEqual(nodeAt(removed, [0]).style.responsive[0].declarations.gap, { token: "gap" });
+  // 余白は shorthand と上下左右を組で扱う。
+  assert.equal(nodeAt(only([0], "base", 768, { marginTop: 8 }), [0]).style.base.marginTop, 8);
+  const split = only([0], "base", 768, { padding: undefined, paddingTop: 4, paddingRight: 4, paddingBottom: 4, paddingLeft: 4 });
+  assert.deepEqual(nodeAt(split, [0]).style.responsive[0].declarations.padding, { token: "space" });
+  for (const [path, values] of [[[0, 1], { color: "#ff0000" }], [[0, 1], { marginTop: 8 }], [[0, 1], { display: "grid" }], [[0, 1], { textAlign: "center" }]]) {
+    assert.throws(() => only(path, "base", 768, values), /広い幅（768px〜）の値が決まっていないため、この幅だけの指定にできません。先に「768px 以上」で値を入れてください。/);
+  }
+  assert.equal(nodeAt(original, [0, 1]).style.base, undefined);
+  assert.throws(() => only([0], 768, 768, { width: 1 }), /範囲/);
+  assert.throws(() => only([0], "base", 768, { width: "1px;}" }), DocumentValidationError);
+  assert.throws(() => only([0], "base", 768, { width: 10 }, {}, [{ nodeId: "hero", fields: ["style.responsive"], reason: "幅別は固定" }]), /幅別は固定/);
+  const blocks = { Notice: { props: {}, component: () => null, styleProperties: ["width"] } };
+  const block = structuredClone(original); block.body.push({ type: "component", id: "notice", block: "Notice", props: {} });
+  assert.equal(nodeAt(editDocument(block, { type: "styleRange", path: [1], breakpoint: "base", until: 768, values: { width: 100 } }, blocks), [1]).style.responsive[0].declarations.width, "auto");
+  assert.throws(() => editDocument(block, { type: "styleRange", path: [1], breakpoint: "base", until: 768, values: { height: 100 } }, blocks), /このブロックでは変更できない見た目です。/);
+});
+test("resize handles keep wider widths when the edit is limited to one tier", () => {
+  const original = doc();
+  const cascade = nodeAt(editDocument(original, { type: "resize", path: [0], breakpoint: "base", width: 320.4, height: 200 }), [0]).style;
+  assert.equal(cascade.base.width, 320); assert.equal(cascade.base.height, 200);
+  const sized = editDocument(original, { type: "style", path: [0], breakpoint: "base", property: "width", value: "64rem" });
+  const only = nodeAt(editDocument(sized, { type: "resize", path: [0], breakpoint: "base", width: 300, height: 120, until: 768 }), [0]).style;
+  assert.equal(only.base.width, 300); assert.equal(only.base.height, 120);
+  const wide = only.responsive.find((entry) => entry.minWidth === 768).declarations;
+  assert.equal(wide.width, "64rem"); assert.equal(wide.height, "auto");
+  assert.throws(() => editDocument(original, { type: "resize", path: [0], breakpoint: "base", width: 0, height: 10 }), /1〜10000px/);
 });
