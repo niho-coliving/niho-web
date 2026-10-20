@@ -17,7 +17,7 @@ export function StaffPageEditor({ adapter, blocks }: {
 }
 ```
 
-React 19 と React DOM 19 を利用側で用意してください。`adapter` と `blocks` は module scope / `useMemo` 等で参照を安定させます。ホストの通常の再描画で作り直すと一覧・文書の再読込が起こるため、同じ編集セッション内では差し替えません。Next.js では adapter や registry の関数を Server Component から props で serialize せず、ホストの Client Component 内で組み立てます。
+React 18.3 または 19 と、同じ版の React DOM を利用側で用意してください。`adapter` と `blocks` は module scope / `useMemo` 等で参照を安定させます。ホストの通常の再描画で作り直すと一覧・文書の再読込が起こるため、同じ編集セッション内では差し替えません。Next.js では adapter や registry の関数を Server Component から props で serialize せず、ホストの Client Component 内で組み立てます。
 
 | adapter メソッド | 役割 |
 | --- | --- |
@@ -57,6 +57,8 @@ HTTP 409 は adapter で `{ status: 'conflict' }` へ変換します。`status: 
 「編集する幅」は共通、375px以上、768px以上、1280px以上と文書内の既存 breakpoint から選べます。「表示幅」は iframe の実 viewport を375/768/1280pxへ変更するため、media query と固定位置のレイアウトを確認できます。キャンバス内のリンクやブロック操作は選択に使い、フォーム送信や遷移を止めます。サーバー描画用と同じ `PageRenderer` と host registry を使います。
 
 iframe は scripts を許可しない sandbox として表示し、公開ページのCSS・fixed要素が編集UIへ重ならないようにします。registry は依然として信頼できるホストコードです。React の effect や親 window からの処理までは隔離できないため、プレビュー用ブロックで課金・予約・データ更新などの副作用を起こさないでください。
+
+`insertableBlocks` を空配列にすると、登録済み業務ブロックの新規追加を隠し、既存ブロックの表示 props 編集だけを残せます。省略時はすべての登録ブロックを追加できます。サイト固有の配置条件は保存 API でも検証してください。
 
 ## データ連動値のロック
 

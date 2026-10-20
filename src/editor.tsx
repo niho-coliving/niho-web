@@ -96,7 +96,7 @@ const styleText = (value: StyleValue | undefined) => value === undefined ? "" : 
 const parseStyleText = (value: string): StyleValue | undefined => value === "" ? undefined : value.startsWith("@") ? { token: value.slice(1) } : /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : value;
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: PageEditorProps) {
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -228,7 +228,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
     let newNode: PageNode;
     if (addType === "text") newNode = { type: "text", text: "新しいテキスト" };
     else if (addType.startsWith("block:")) {
-      const block = addType.slice(6), definition = blocks[block]!;
+      const block = addType.slice(6), definition = blocks[block];
+      if (!definition || insertableBlocks && !insertableBlocks.includes(block)) return;
       const props = { ...definition.defaultProps };
       for (const [name, rule] of Object.entries(definition.props)) if (rule.required && props[name] === undefined) props[name] = rule.type === "boolean" ? false : rule.type === "number" ? Math.min(rule.max ?? Infinity, Math.max(rule.min ?? -Infinity, 0)) : rule.type === "enum" ? rule.values[0] ?? "" : rule.type === "url" ? "/" : "表示テキスト";
       newNode = { type: "component", id, block, props };
@@ -241,8 +242,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
     structural({ type: "move", path: selection, parentId: parent?.type === "element" ? parent.id : null, index: selection.at(-1)! + delta });
   }
   const siblingCount = document && selection ? selection.length === 1 ? document.body.length : (nodeAt(document, selection.slice(0, -1)) as { children: PageNode[] }).children.length : 0;
-  return <div className="nw-editor"><style>{editorCss}</style>
-    <header className="e-toolbar" inert={!!plan || !!navigation}><span className="e-brand">ページ編集</span>
+  return <div className="nw-editor"><style dangerouslySetInnerHTML={{ __html: editorCss }} />
+    <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><span className="e-brand">ページ編集</span>
       <span className="e-status" role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
       <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>
       <button onClick={() => travel("redo")} disabled={!session?.history.future.length || blocked || hasInput}>やり直す</button>
@@ -250,7 +251,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
       <button className="e-primary" onClick={() => void prepare("publish")} disabled={!session || dirty || blocked || hasInput}>公開前の確認</button>
     </header>
     {notice && <div className="e-notice" role="alert">{notice}</div>}
-    <div className="e-body" inert={!!plan || !!navigation}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
+    <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
       <h2>サイト</h2><label className="e-field"><span>編集するサイト</span><select aria-label="編集するサイト" value={siteId} disabled={blocked} onChange={(event) => requestNavigation({ type: "site", id: event.target.value })}>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
       <label className="e-field"><span>ページ</span><select aria-label="ページ" value={session ? `${session.target.pageId}/${session.target.locale}` : ""} disabled={blocked || !pages.length} onChange={(event) => { const page = pages.find((page) => `${page.pageId}/${page.locale}` === event.target.value); if (page) requestNavigation({ type: "page", target: page }); }}>
         {!session && <option value="">選択してください</option>}{pages.map((page) => <option key={`${page.pageId}/${page.locale}`} value={`${page.pageId}/${page.locale}`}>{page.title} · {page.locale}</option>)}
@@ -259,7 +260,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
       <h2>レイヤー</h2><button className="e-layer" aria-pressed={!selection} onClick={() => select(null)} disabled={editBlocked}>ページ全体</button>
       {entries.map(({ node, path }) => <button key={path.join(".")} className="e-layer" style={{ paddingLeft: 8 + (path.length - 1) * 12 }} aria-pressed={selection?.join(".") === path.join(".")} title={label(node, blocks)} onClick={() => select(path)} disabled={editBlocked}>{label(node, blocks)}</button>)}
       <h2>要素の操作</h2><label className="e-field"><span>追加・移動先</span><select aria-label="追加・移動先" value={parentId} disabled={editBlocked || hasInput} onChange={(event) => setParentId(event.target.value)}><option value="">ページ直下</option>{entries.filter(({ node }) => node.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
-      <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{Object.entries(blocks).map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
+      <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{Object.entries(blocks).filter(([key]) => !insertableBlocks || insertableBlocks.includes(key)).map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
       <button onClick={add} disabled={!document || editBlocked || hasInput}>要素を追加</button>
       <div className="e-actions"><button disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "duplicate", path: selection })}>複製</button><button className="e-danger" disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "remove", path: selection })}>削除</button>
         <button disabled={!selection || selection.at(-1) === 0 || editBlocked || hasInput} onClick={() => moveBy(-1)}>上へ</button><button disabled={!selection || selection.at(-1)! >= siblingCount - 1 || editBlocked || hasInput} onClick={() => moveBy(1)}>下へ</button>

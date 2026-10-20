@@ -8,8 +8,15 @@ for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Ele
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
+const { renderToString } = await import("react-dom/server");
 const { PageEditor } = await import("@niho/web/editor");
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
+test("editor CSS remains literal in server-rendered HTML", () => {
+  const html = renderToString(createElement(PageEditor, { adapter: {} }));
+  const stylesheet = html.match(/<style>([^]*?)<\/style>/)?.[1];
+  assert.ok(stylesheet?.includes('"Segoe UI"'));
+  assert.ok(!stylesheet.includes("&quot;"));
+});
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
 const input = (text) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
@@ -39,7 +46,7 @@ async function setup(options = {}) {
     prepareRelease: async (request) => { calls.prepares.push(request); return { ...request, confirmationToken: "reviewed-token", domain: options.domain ?? "https://example.test", changes: [{ path: "見出し", before: "現在の見出し", after: "編集した見出し" }] }; },
     release: async (request) => { calls.releases.push(request); return { status: "released", snapshot: { document: stored, version: "released-v3" } }; }
   };
-  await act(async () => root.render(createElement(PageEditor, { adapter, ...(options.blocks ? { blocks: options.blocks } : {}) }))); await flush();
+  await act(async () => root.render(createElement(PageEditor, { adapter, ...(options.blocks ? { blocks: options.blocks } : {}), ...(options.insertableBlocks ? { insertableBlocks: options.insertableBlocks } : {}) }))); await flush();
   const frame = document.querySelector("iframe"); if (frame) await act(async () => frame.dispatchEvent(new dom.window.Event("load")));
   return { calls, adapter, root, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
@@ -125,6 +132,16 @@ test("data-linked props show a lock reason while display props remain editable",
     await click("Notice · notice"); assert.equal(input("count").disabled, true); assert.ok(document.body.textContent.includes("ロック: 外部データから取得します"));
     await change(input("heading"), "編集後の表示名"); await click("下書き保存");
     assert.deepEqual(app.calls.saves[0].document.body.at(-1).props, { heading: "編集後の表示名", count: 5 });
+  } finally { await app.cleanup(); }
+});
+test("host can hide business block insertion while retaining existing block editing", async () => {
+  const doc = structuredClone(fixture); doc.body.push({ type: "component", id: "notice", block: "Notice", props: { heading: "Before" } });
+  const blocks = { Notice: { props: { heading: { type: "string", required: true } }, component: ({ heading }) => createElement("p", null, heading) } };
+  const app = await setup({ document: doc, blocks, insertableBlocks: [] });
+  try {
+    assert.equal(document.querySelector('select[aria-label="追加する要素"] option[value="block:Notice"]'), null);
+    await click("Notice · notice"); await change(input("heading"), "After"); await click("下書き保存");
+    assert.equal(app.calls.saves[0].document.body.at(-1).props.heading, "After");
   } finally { await app.cleanup(); }
 });
 test("publishing and rollback require the allowed domain, authoritative diff and explicit confirmation", async () => {
