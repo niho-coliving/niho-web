@@ -5,8 +5,8 @@ import fixture from "./page.json";
 import type { ElementNode, PageDocument, PageNode } from "@niho/web/core";
 import { createMemoryAssetLibrary } from "./memory-asset-library.mjs";
 
-/** editor-demo.mjs がサーバーで生成した素材のメタデータ。 */
-declare const DEMO_ASSET_SEED: readonly Record<string, unknown>[];
+/** editor-demo.mjs がサーバーで生成した、出所ごとの素材のメタデータ。 */
+declare const DEMO_ASSET_SEED: Readonly<Record<"uploads" | "experience" | "stock", readonly Record<string, unknown>[]>>;
 
 // 公開可能なインメモリ動作例。認証や本番 API には接続しない。
 const domain = "https://demo.example.test", domains = [domain];
@@ -171,9 +171,19 @@ const adapter: EditorAdapter = {
     return { status: "saved", version: `site-${settingsVersion}` };
   }
 };
+// 出所は3つ。体験写真は CMS 側の正本を参照するだけで、ここでは編集・削除しない。ストックは ?stock=connected のときだけ接続する。
+const stockConnected = new URLSearchParams(location.search).get("stock") === "connected";
+const closed = { upload: false, editMetadata: false, delete: false, folders: false, acquire: false };
+const providers = [
+  { id: "uploads", kind: "upload", label: "サイト", origin: "このサイトにアップロードした素材", status: "available", capabilities: { upload: true, editMetadata: true, delete: true, folders: true, acquire: false }, seed: DEMO_ASSET_SEED.uploads },
+  { id: "experience", kind: "cms", label: "体験写真", origin: "NIHO の体験原稿で公開を許可された写真", terms: "体験の公開中だけ表示されます。写真の差し替え・非公開は体験原稿で行います。", status: "available", capabilities: closed, seed: DEMO_ASSET_SEED.experience },
+  stockConnected
+    ? { id: "stock", kind: "stock", label: "ストック", origin: "ライセンスを確認済みのストック素材", status: "available", capabilities: { ...closed, acquire: true }, seed: DEMO_ASSET_SEED.stock }
+    : { id: "stock", kind: "stock", label: "ストック", origin: "ライセンスを確認済みのストック素材", status: "unavailable", unavailableReason: "ライセンス確認済みのストック素材はまだ接続されていません。", capabilities: closed }
+];
 // 素材の保存・配信だけをデモサーバーに任せ、一覧・使用状況・削除の可否はメモリ内で判定する。
 const assets = createMemoryAssetLibrary({
-  siteId: "demo", seed: DEMO_ASSET_SEED, folders: [{ id: "photos", name: "写真" }, { id: "documents", name: "資料" }], quota: { limitBytes: 1024 ** 3 },
+  siteId: "demo", providers, folders: [{ id: "photos", name: "写真" }, { id: "documents", name: "資料" }], quota: { limitBytes: 1024 ** 3 },
   upload: { accept: ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif", "application/pdf"], maxBytes: 5 * 1024 * 1024 },
   documents: () => [...entries.values()].flatMap((item) => [
     { pageId: item.page.pageId, locale: item.page.locale, title: item.page.title, state: "draft", document: item.draft },

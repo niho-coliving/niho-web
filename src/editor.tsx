@@ -390,7 +390,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const locks = document ? effectiveLocks(document, session?.locks ?? [], blocks) : [];
   const reason = (field: string) => document && selection ? lockReason(document, selection, field, locks) : undefined;
   const pathKey = `${fieldEpoch}-${selection?.join(".") ?? "page"}`;
-  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, document), localUsage = useLocalAssetUsage(document);
+  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, document, fieldEpoch), localUsage = useLocalAssetUsage(document);
   function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: FieldOptions = {}) {
     return <Field key={`${pathKey}-${key}`} name={name} value={value} fieldKey={`${pathKey}-${key}`} pending={pending} disabled={editBlocked}
       apply={(value) => apply(operation(value))} {...options} />;
@@ -537,7 +537,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
           </div>
         </section>
         <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>要素を選び、右側で見た目を編集</p></div><h3>このページのトークン</h3><div className="e-token-list">{Object.entries(document?.tokens ?? {}).map(([name, token]) => <div key={name}><span>{token.type === "color" && <i style={{ background: String(token.value) }} />}{name}</span><small>{String(token.value)}</small></div>)}</div></section>
-        <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} mode={picker ? "pick" : "library"} pickTitle={picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : "画像を選ぶ"} localUsage={localUsage}
+        <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker ? "pick" : "library"} pickTitle={picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : "画像を選ぶ"} localUsage={localUsage}
           actions={{ replace: node?.type === "element" && node.tag === "img", background: node?.type === "component" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag), insert: !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={applyAsset} onClose={() => setPicker(null)} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
           : <><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>

@@ -4,7 +4,8 @@ import { test } from "node:test";
 import { DocumentValidationError, parsePageDocument } from "@niho/web/core";
 import {
   ASSET_LIMITS, INSERTABLE_IMAGE_TYPES, assetErrorReason, assetKey, collectAssetReferences, formatBytes, isInsertableImage, missingAssetReferences,
-  parseAssetDeleteResult, parseAssetListResult, parseAssetUpdateResult, parseAssetUploadResult, parseAssetUsages, parseLibraryAsset, parseResolvedAssets, uniqueAssetReferences
+  parseAssetAcquireResult, parseAssetDeleteResult, parseAssetListResult, parseAssetProviders, parseAssetUpdateResult, parseAssetUploadResult, parseAssetUsages, parseLibraryAsset,
+  parseResolvedAssets, uniqueAssetReferences
 } from "@niho/web/assets";
 import { createMemoryAssetLibrary } from "../examples/memory-asset-library.mjs";
 
@@ -122,4 +123,94 @@ test("the in-memory library enforces the host boundary for sites, uploads, versi
   assert.deepEqual(await library.deleteAsset({ siteId: "demo", reference, expectedVersion: added.asset.version }, signal), { status: "conflict" });
   assert.deepEqual(await library.deleteAsset({ siteId: "demo", reference, expectedVersion: saved.asset.version }, signal), { status: "deleted" });
   assert.deepEqual(await library.resolveAssets({ siteId: "demo", references: [reference] }, signal), {});
+});
+
+const capabilities = (extra = {}) => ({ upload: false, editMetadata: false, delete: false, folders: false, acquire: false, ...extra });
+const source = (extra = {}) => ({ id: "experience", kind: "cms", label: "体験写真", origin: "NIHO の体験原稿で公開を許可された写真", status: "available", capabilities: capabilities(), ...extra });
+test("asset providers require declared kinds, unique ids, bounded text and every capability flag", () => {
+  const input = [source({ terms: "体験の公開中だけ表示されます。" }), source({ id: "stock", kind: "stock", label: "ストック", status: "unavailable", unavailableReason: "未接続です。", capabilities: capabilities({ acquire: true }) })];
+  const result = parseAssetProviders(input);
+  assert.deepEqual(result, input);
+  input[0].capabilities.upload = true; assert.equal(result[0].capabilities.upload, false);
+  assert.deepEqual(parseAssetProviders([]), []);
+  for (const invalid of [null, {}, [source(), source()], [source({ extra: true })], [source({ id: "1x" })], [source({ id: "a:b" })], [source({ kind: "url" })], [source({ status: "offline" })],
+    [source({ capabilities: { upload: true } })], [source({ capabilities: capabilities({ upload: "yes" }) })], [source({ capabilities: capabilities({ share: true }) })], [source({ capabilities: [] })],
+    [source({ label: "" })], [source({ label: "   " })], [source({ label: "a".repeat(41) })], [source({ label: "a\nb" })], [source({ origin: "o".repeat(301) })], [source({ origin: undefined })],
+    [source({ terms: "t".repeat(1001) })], [source({ terms: " " })], [source({ unavailableReason: "r".repeat(301) })], Array.from({ length: ASSET_LIMITS.providers + 1 }, (_, index) => source({ id: `p${index}` }))
+  ]) assert.throws(() => parseAssetProviders(invalid), DocumentValidationError, JSON.stringify(invalid).slice(0, 120));
+});
+
+test("library assets carry a source label and an HTTPS-only license, and acquisition results are validated", () => {
+  const license = { name: "テスト用ライセンス", url: "https://license.example.test/terms", attribution: "見本ストック", terms: "テストの中だけで使えます。" };
+  const licensed = asset({ provider: "stock", sourceLabel: "体験「鎌倉の朝ヨガ」の写真", license });
+  assert.deepEqual(parseLibraryAsset(licensed, "demo"), licensed);
+  assert.deepEqual(parseLibraryAsset(asset({ license: { name: "CC0" } }), "demo").license, { name: "CC0" });
+  for (const invalid of [{ name: "" }, { name: "n".repeat(201) }, { name: "A", url: "/license" }, { name: "A", url: "#terms" }, { name: "A", url: "javascript:alert(1)" }, { name: "A", url: "http://license.example.test" },
+    { name: "A", url: "//license.example.test" }, { name: "A", url: "https://user:pass@license.example.test" }, { name: "A", attribution: "a".repeat(301) }, { name: "A", terms: "t".repeat(1001) }, { name: "A", version: "4.0" }, "CC0"
+  ]) assert.throws(() => parseLibraryAsset(asset({ license: invalid }), "demo"), DocumentValidationError, JSON.stringify(invalid));
+  for (const label of ["", "a".repeat(201), "a\nb"]) assert.throws(() => parseLibraryAsset(asset({ sourceLabel: label }), "demo"), DocumentValidationError);
+  assert.deepEqual(parseAssetAcquireResult({ status: "ready", asset: asset() }, "demo"), { status: "ready", asset: asset() });
+  for (const reason of ["permission", "license", "unavailable"]) assert.deepEqual(parseAssetAcquireResult({ status: "rejected", reason }, "demo"), { status: "rejected", reason });
+  for (const invalid of [{ status: "ready", asset: asset({ siteId: "other" }) }, { status: "ready" }, { status: "ready", asset: asset(), reason: "license" }, { status: "rejected", reason: "quota" }, { status: "acquired", asset: asset() }, null])
+    assert.throws(() => parseAssetAcquireResult(invalid, "demo"), DocumentValidationError, JSON.stringify(invalid));
+});
+
+test("the in-memory library keeps CMS, stock and site uploads apart at the host boundary", async () => {
+  let pages = [];
+  const yoga = { id: "yoga", name: "朝ヨガ.png", mimeType: "image/png", bytes: 300, width: 800, height: 600, alt: "朝ヨガ", sourceLabel: "体験「鎌倉の朝ヨガ」の写真", src: "/cms/yoga.png" };
+  const license = { name: "テスト用ライセンス", attribution: "見本ストック" };
+  const library = createMemoryAssetLibrary({
+    siteId: "demo", upload: { accept: ["image/png"], maxBytes: 1000 }, quota: { limitBytes: 5000 }, documents: () => pages,
+    providers: [
+      { id: "uploads", kind: "upload", label: "サイト", origin: "このサイトにアップロードした素材", status: "available", capabilities: capabilities({ upload: true, editMetadata: true, delete: true, folders: true }),
+        seed: [{ id: "sea", name: "海.png", mimeType: "image/png", bytes: 100, src: "/media/sea.png" }] },
+      { id: "experience", kind: "cms", label: "体験写真", origin: "NIHO の体験原稿で公開を許可された写真", status: "available", capabilities: capabilities(),
+        seed: [yoga, { id: "draft", name: "準備中.png", mimeType: "image/png", bytes: 10, published: false, src: "/cms/draft.png" }] },
+      { id: "stock", kind: "stock", label: "ストック", origin: "ライセンス確認済みのストック素材", status: "available", capabilities: capabilities({ acquire: true }),
+        seed: [{ id: "wave", name: "波.png", mimeType: "image/png", bytes: 200, width: 640, height: 480, alt: "波の模様", license, src: "/stock/wave.png", thumbnailUrl: "/stock/wave.png" },
+          { id: "nolicense", name: "不明.png", mimeType: "image/png", bytes: 10, src: "/stock/unknown.png" }] },
+      { id: "offline", kind: "stock", label: "外部ストック", origin: "未接続のストック", status: "unavailable", capabilities: capabilities({ acquire: true }), seed: [{ id: "far", name: "遠く.png", mimeType: "image/png", bytes: 10, license, src: "/far.png" }] }
+    ]
+  });
+  const ids = async (extra = {}) => parseAssetListResult(await library.listAssets({ siteId: "demo", search: "", kind: "all", folderId: null, limit: 60, ...extra }, signal), "demo").assets.map(assetKey);
+  const providers = parseAssetProviders(await library.listProviders({ siteId: "demo" }, signal));
+  assert.deepEqual(providers.map((item) => `${item.id}:${item.status}`), ["uploads:available", "experience:available", "stock:available", "offline:unavailable"]);
+  await assert.rejects(() => library.listProviders({ siteId: "other" }, signal), (error) => error.status === 403);
+  assert.deepEqual(await ids(), ["uploads:sea", "experience:yoga", "stock:wave", "stock:nolicense"]);
+  assert.deepEqual(await ids({ provider: "experience" }), ["experience:yoga"]);
+  const offline = await library.listAssets({ siteId: "demo", search: "", kind: "all", folderId: null, limit: 60, provider: "offline" }, signal);
+  assert.deepEqual(offline, { assets: [], folders: [] });
+  assert.equal((await library.listAssets({ siteId: "demo", search: "", kind: "all", folderId: null, limit: 60, provider: "experience" }, signal)).upload, undefined);
+  const references = ["uploads:sea", "experience:yoga", "experience:draft", "offline:far"].map((key) => ({ provider: key.split(":")[0], id: key.split(":")[1] }));
+  assert.deepEqual(Object.keys(await library.resolveAssets({ siteId: "demo", references }, signal)), ["uploads:sea", "experience:yoga"]);
+  // CMS 側で非公開にすると、一覧・解決・取得のすべてから消える。
+  library.setPublished({ provider: "experience", id: "yoga" }, false);
+  assert.deepEqual(await ids({ provider: "experience" }), []);
+  assert.deepEqual(await library.resolveAssets({ siteId: "demo", references: [references[1]] }, signal), {});
+  assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: references[1], expectedVersion: "1" }, signal), { status: "rejected", reason: "unavailable" });
+  library.setPublished({ provider: "experience", id: "yoga" }, true);
+  const { src: _src, ...cms } = yoga;
+  assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: references[1], expectedVersion: "1" }, signal),
+    { status: "ready", asset: { provider: "experience", siteId: "demo", kind: "image", status: "ready", version: "1", updatedAt: "2026-10-01T09:00:00.000Z", ...cms, usageCount: 0 } });
+  const upload = (provider) => library.uploadAsset({ siteId: "demo", folderId: null, file: png("a.png", 10), name: "a.png", mimeType: "image/png", bytes: 10, ...(provider ? { provider } : {}) }, signal);
+  for (const provider of ["experience", "stock", "offline", "missing", undefined]) assert.deepEqual(await upload(provider), { status: "rejected", reason: "permission" }, String(provider));
+  assert.equal((await upload("uploads")).asset.provider, "uploads");
+  assert.deepEqual(await library.updateAsset({ siteId: "demo", reference: references[1], expectedVersion: "1", changes: { alt: "変更" } }, signal), { status: "rejected", reason: "permission" });
+  assert.deepEqual(await library.deleteAsset({ siteId: "demo", reference: references[1], expectedVersion: "1" }, signal), { status: "rejected", reason: "permission" });
+  // ストックはサイトの素材へ複製し、ライセンスと寸法・代替テキストを引き継ぐ。
+  const acquired = parseAssetAcquireResult(await library.acquireAsset({ siteId: "demo", reference: { provider: "stock", id: "wave" }, expectedVersion: "1" }, signal), "demo");
+  assert.equal(acquired.status, "ready"); assert.equal(acquired.asset.provider, "uploads"); assert.notEqual(acquired.asset.id, "wave");
+  assert.deepEqual(acquired.asset.license, license); assert.deepEqual([acquired.asset.width, acquired.asset.height, acquired.asset.alt, acquired.asset.bytes], [640, 480, "波の模様", 200]);
+  assert.deepEqual(await library.resolveAssets({ siteId: "demo", references: [acquired.asset] }, signal), { [assetKey(acquired.asset)]: { src: "/stock/wave.png", width: 640, height: 480 } });
+  assert.ok((await ids({ provider: "uploads" })).includes(assetKey(acquired.asset)));
+  assert.equal((await library.acquireAsset({ siteId: "demo", reference: { provider: "stock", id: "wave" }, expectedVersion: "1" }, signal)).asset.id, acquired.asset.id);
+  assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: { provider: "stock", id: "nolicense" }, expectedVersion: "1" }, signal), { status: "rejected", reason: "license" });
+  assert.deepEqual(await library.acquireAsset({ siteId: "demo", reference: { provider: "offline", id: "far" }, expectedVersion: "1" }, signal), { status: "rejected", reason: "unavailable" });
+  await assert.rejects(() => library.acquireAsset({ siteId: "demo", reference: { provider: "stock", id: "wave" }, expectedVersion: "stale" }, signal), (error) => error.status === 409);
+  // 最近使った素材は、文書で参照されている素材だけを参照順に返す。
+  const used = structuredClone(fixture);
+  used.body[0].children.push({ type: "element", id: "a", tag: "img", asset: { provider: "experience", id: "yoga" }, attrs: { alt: "" }, children: [] }, { type: "element", id: "b", tag: "img", asset: { provider: "uploads", id: "sea" }, attrs: { alt: "" }, children: [] });
+  pages = [{ pageId: "home", locale: "ja-JP", title: "ホーム", state: "draft", document: parsePageDocument(used) }];
+  assert.deepEqual(await ids({ recent: true }), ["experience:yoga", "uploads:sea"]);
+  assert.deepEqual(await ids({ recent: true, provider: "uploads" }), ["uploads:sea"]);
 });
