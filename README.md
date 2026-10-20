@@ -28,6 +28,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/core` | 検証・文書型・CSS だけの入口。React の runtime import を含みません |
 | `@niho/web/react` | `PageRenderer` とブロック registry の型 |
 | `@niho/web/server` | Astro の build / server で使える `renderPageToHtml` |
+| `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |
 
 React は optional peer dependency です。API サーバーなど React を入れない利用先では `import { parsePageDocument } from '@niho/web/core'` を使います。root と `/react` は React runtime を import します。
 
@@ -144,6 +145,8 @@ const html = renderPageToHtml(document);
 エラーは `DocumentValidationError` で、`path` に対象位置が入ります。公開 API は描画・CSS 生成時にも入力を検証します。詳細と制約は [文書・描画契約](docs/document-contract.md) を参照してください。
 
 ## 開発
+
+スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。3レールのライブ編集、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
 
 ```sh
 npm ci
