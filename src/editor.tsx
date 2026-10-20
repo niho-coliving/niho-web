@@ -308,7 +308,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     } catch { if (!controller.signal.aborted) setNotice("ページ一覧を読み込めませんでした。"); return false; }
   }
   async function pageApplied(page: EditorPage, change: EditorPageChange) {
-    setPageChange(null); const done = pageChangeNotice(change);
+    setBusy("読込中"); setPageChange(null); const done = pageChangeNotice(change);
     const listed = await reloadPages(), loaded = await load({ siteId: page.siteId, pageId: page.pageId, locale: page.locale });
     setNotice(listed && loaded ? done : `${done}${loaded ? "ページ一覧" : "変更後の文書"}を読み込めませんでした。再読込してください。`);
   }

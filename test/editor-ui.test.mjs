@@ -339,6 +339,31 @@ test("renaming a page validates input, reviews impact, applies the exact plan an
   } finally { await app.cleanup(); }
 });
 
+test("page edits stay disabled while the page list reloads after an applied change", async () => {
+  const host = pageHost(), listPages = host.adapter.listPages;
+  let waitForList = false, releaseList;
+  const listGate = new Promise((resolve) => { releaseList = resolve; });
+  host.adapter.listPages = async (...args) => {
+    if (waitForList) { waitForList = false; await listGate; }
+    return listPages(...args);
+  };
+  const app = await setup({ adapter: host.adapter });
+  try {
+    await press(document.querySelector('[aria-label="私たちについて の操作"]'));
+    await press(button("名前とURLを変更"));
+    await change(inputIn(dialog(), "URL パス"), "/company");
+    await press(buttonIn(dialog(), "影響を確認"));
+    await act(async () => dialog().querySelector('input[type="checkbox"]').click());
+    waitForList = true;
+    await press(buttonIn(dialog(), "変更を反映"));
+    assert.equal(dialog(), null);
+    assert.equal(input("ページタイトル").disabled, true);
+    assert.equal(button("要素を追加").disabled, true);
+    await act(async () => releaseList()); await flush();
+    assert.equal(input("ページタイトル").disabled, false);
+  } finally { releaseList(); await app.cleanup(); }
+});
+
 test("page change conflicts keep inputs and reload the list; unknown results are not retried", async () => {
   let mode = "conflict";
   const host = pageHost({ apply: async () => { if (mode === "throw") throw new Error("offline"); return { status: "conflict" }; } }), app = await setup({ adapter: host.adapter });
