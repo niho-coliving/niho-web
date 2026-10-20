@@ -89,7 +89,7 @@ addSeed("stock", "stock-leaves", "葉の模様.png", "image/png", png(600, 400, 
 addSeed("stock", "stock-dunes", "砂丘.png", "image/png", png(600, 400, scenes.dunes), { alt: "なだらかな砂丘", license });
 
 const output = await build({ entryPoints: [fileURLToPath(new URL("./editor-demo.tsx", import.meta.url))], bundle: true, write: false, format: "esm", jsx: "automatic", define: { "process.env.NODE_ENV": '"development"', DEMO_ASSET_SEED: JSON.stringify(seed) } });
-const script = output.outputFiles[0].text;
+const script = output.outputFiles[0].text, port = Number(process.env.PORT) || 4173;
 const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>niho-web 共通エディター</title></head><body style="margin:0;padding:20px;background:#eef1ed"><p style="font:13px sans-serif">公開用の動作例です。変更と公開はメモリ内だけに反映し、再起動するとリセットします。素材の「ストック」は <a href="/?stock=connected">接続した状態</a> / <a href="/">未接続の状態</a> で確認できます。</p><div id="root"></div><script type="module" src="/app.js"></script></body></html>';
 async function receive(request, response) {
   const type = String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
@@ -116,4 +116,4 @@ createServer((request, response) => {
   if (request.method !== "GET" || !["/", "/app.js"].includes(path)) { response.writeHead(404).end(); return; }
   response.setHeader("Content-Type", path === "/app.js" ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8");
   response.end(path === "/app.js" ? script : html);
-}).listen(4173, "127.0.0.1", () => console.log("Editor demo: http://127.0.0.1:4173"));
+}).listen(port, "127.0.0.1", () => console.log(`Editor demo: http://127.0.0.1:${port}`));

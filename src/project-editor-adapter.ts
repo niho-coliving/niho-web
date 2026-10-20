@@ -103,7 +103,7 @@ function componentsForProject(components: EditorComponentAdapter, site: EditorSi
       if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトには保存できません。");
       const library = structuredClone(request.library);
       assertLibrarySite(library, site);
-      return components.saveLibrary({ siteId: site.id, library, expectedVersion: request.expectedVersion }, signal);
+      return components.saveLibrary({ siteId: site.id, library, expectedVersion: request.expectedVersion, ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}) }, signal);
     },
     async listUsage(siteId, signal) {
       if (siteId !== site.id) throw new Error("プロジェクト外のサイトは参照できません。");
