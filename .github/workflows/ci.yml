@@ -9,6 +9,9 @@ jobs:
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        react: ['18', '19']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,6 +19,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - if: matrix.react == '18'
+        run: npm install --no-save --package-lock=false react@18.3.1 react-dom@18.3.1 @types/react@18.3.27 @types/react-dom@18.3.7
       - run: npm run typecheck
       - run: npm test
       - run: npm pack --dry-run
