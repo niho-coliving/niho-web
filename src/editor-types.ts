@@ -1,7 +1,7 @@
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
-import type { ComponentLibrary, PageDocument, PublicPropValue } from "./types.js";
+import type { ComponentLibrary, PageDocument, PublicPropValue, StyleProperty } from "./types.js";
 export type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 
 export type EditorTarget = { siteId: string; pageId: string; locale: string };
@@ -104,7 +104,11 @@ export type EditorBlockRegistry = Readonly<Record<string, BlockDefinition & {
   defaultProps?: Record<string, PublicPropValue>;
   /** データ連動値。すべての同種ブロックへ適用し、理由を表示する。 */
   lockedProps?: Readonly<Record<string, string>>;
+  /** 変更を許す見た目（"textStyle" は文字スタイルの適用）。省略時はすべて。props はスタイル操作から変えない。 */
+  styleProperties?: readonly (StyleProperty | "textStyle")[];
 }>>;
+/** 編集する幅の段。minWidth は 320〜3840 の整数・昇順。 */
+export type EditorBreakpoint = { minWidth: number; label: string };
 export type PageEditorProps = {
   adapter: EditorAdapter;
   blocks?: EditorBlockRegistry;
@@ -112,4 +116,6 @@ export type PageEditorProps = {
   insertableBlocks?: readonly string[];
   /** サイト別の素材ライブラリ。参照は安定させる。省略時は素材の UI を表示しない。 */
   assets?: AssetLibraryAdapter;
+  /** 編集する幅の段。省略・不正時は タブレット 768px / PC 1280px。 */
+  breakpoints?: readonly EditorBreakpoint[];
 };

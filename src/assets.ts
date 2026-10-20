@@ -17,7 +17,15 @@ export const ASSET_LIMITS = Object.freeze({
   cursorLength: 500,
   updatedAtLength: 40,
   titleLength: 300,
-  dimension: 100000
+  dimension: 100000,
+  providers: 20,
+  providerLabelLength: 40,
+  originLength: 300,
+  termsLength: 1000,
+  unavailableReasonLength: 300,
+  sourceLabelLength: 200,
+  licenseNameLength: 200,
+  attributionLength: 300
 });
 export const INSERTABLE_IMAGE_TYPES = Object.freeze(["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"] as const);
 
@@ -30,23 +38,38 @@ export type AssetPlacement = { reference: AssetReference; nodeId: string; target
 export type AssetKind = "image" | "video" | "pdf" | "other";
 /** processing = ホストの検査・変換中。配置不可。 */
 export type AssetStatus = "ready" | "processing";
+export type AssetLicense = { name: string; url?: string; attribution?: string; terms?: string };
 export type LibraryAsset = {
   provider: string; id: string; siteId: string; kind: AssetKind; status: AssetStatus; name: string; mimeType: string; bytes: number;
   width?: number; height?: number; alt: string; folderId?: string; thumbnailUrl?: string; usageCount?: number; version: string; updatedAt: string;
+  /** 出所での説明（例: 体験「鎌倉の朝ヨガ」の写真）。 */
+  sourceLabel?: string; license?: AssetLicense;
+};
+export type AssetProviderKind = "upload" | "cms" | "stock";
+/** acquire = 配置の前に acquireAsset でホストが利用可能にする（ライセンスの記録・取り込み等）。 */
+export type AssetProviderCapabilities = { upload: boolean; editMetadata: boolean; delete: boolean; folders: boolean; acquire: boolean };
+/** 素材の出所。id は AssetReference.provider と同じ値。 */
+export type AssetProvider = {
+  id: string; kind: AssetProviderKind; label: string; origin: string; terms?: string;
+  status: "available" | "unavailable"; unavailableReason?: string; capabilities: AssetProviderCapabilities;
 };
 export type AssetFolder = { id: string; name: string };
 export type AssetQuota = { usedBytes: number; limitBytes: number };
 /** 無ければアップロード不可。 */
 export type AssetUploadPolicy = { accept: readonly string[]; maxBytes: number };
-export type AssetListQuery = { siteId: string; search: string; kind: AssetKind | "all"; folderId: string | null; cursor?: string; limit: number };
+/** provider 省略 = 利用可能なすべての出所。recent = 最近使った素材。 */
+export type AssetListQuery = { siteId: string; search: string; kind: AssetKind | "all"; folderId: string | null; cursor?: string; limit: number; provider?: string; recent?: boolean };
 export type AssetListResult = { assets: readonly LibraryAsset[]; folders: readonly AssetFolder[]; quota?: AssetQuota; upload?: AssetUploadPolicy; nextCursor?: string };
 export type AssetRejectReason = "permission" | "quota" | "type" | "size" | "scan" | "invalid";
-export type AssetUploadRequest = { siteId: string; folderId: string | null; file: Blob; name: string; mimeType: string; bytes: number };
+/** provider は listProviders がある場合に必ず送る。 */
+export type AssetUploadRequest = { siteId: string; folderId: string | null; file: Blob; name: string; mimeType: string; bytes: number; provider?: string };
 export type AssetUploadResult = { status: "uploaded"; asset: LibraryAsset } | { status: "rejected"; reason: AssetRejectReason };
 export type AssetUpdateRequest = { siteId: string; reference: AssetReference; expectedVersion: string; changes: { name?: string; alt?: string; folderId?: string | null } };
 export type AssetUpdateResult = { status: "saved"; asset: LibraryAsset } | { status: "conflict" } | { status: "rejected"; reason: "permission" | "invalid" };
 export type AssetUsage = { pageId: string; locale: string; title: string; state: "draft" | "published" };
 export type AssetDeleteResult = { status: "deleted" } | { status: "in-use"; usages: readonly AssetUsage[] } | { status: "conflict" } | { status: "rejected"; reason: "permission" };
+/** ready の素材は元と別の出所・ID でもよい（ストックをサイトの素材へ取り込む等）。 */
+export type AssetAcquireResult = { status: "ready"; asset: LibraryAsset } | { status: "rejected"; reason: "permission" | "license" | "unavailable" };
 /** 認証・保存先・ウイルス検査・配信 URL 発行・使用状況の集計は認証済みホストの責務。 */
 export interface AssetLibraryAdapter {
   listAssets(query: AssetListQuery, signal: AbortSignal): Promise<AssetListResult>;
@@ -55,7 +78,11 @@ export interface AssetLibraryAdapter {
   listAssetUsages(request: { siteId: string; reference: AssetReference }, signal: AbortSignal): Promise<readonly AssetUsage[]>;
   deleteAsset(request: { siteId: string; reference: AssetReference; expectedVersion: string }, signal: AbortSignal): Promise<AssetDeleteResult>;
   resolveAssets(request: { siteId: string; references: readonly AssetReference[] }, signal: AbortSignal): Promise<ResolvedAssetMap>;
-  createFolder?(request: { siteId: string; name: string }, signal: AbortSignal): Promise<AssetFolder>;
+  /** listProviders がある場合は選択中の出所を必ず送る。 */
+  createFolder?(request: { siteId: string; name: string; provider?: string }, signal: AbortSignal): Promise<AssetFolder>;
+  /** 実装すると、素材パネルを出所ごとに分け、応答の素材を宣言済みの出所だけに限る。 */
+  listProviders?(request: { siteId: string }, signal: AbortSignal): Promise<readonly AssetProvider[]>;
+  acquireAsset?(request: { siteId: string; reference: AssetReference; expectedVersion: string }, signal: AbortSignal): Promise<AssetAcquireResult>;
 }
 
 /** provider は identifier なので : を含まず、キーは一意になる。 */
@@ -156,7 +183,16 @@ export function assetErrorReason(error: unknown): "permission" | "size" | "type"
   return status === 403 ? "permission" : status === 413 ? "size" : status === 415 ? "type" : status === 507 ? "quota" : status === 409 ? "conflict" : "unknown";
 }
 
-const assetFields = ["provider", "id", "siteId", "kind", "status", "name", "mimeType", "bytes", "width", "height", "alt", "folderId", "thumbnailUrl", "usageCount", "version", "updatedAt"];
+const assetFields = ["provider", "id", "siteId", "kind", "status", "name", "mimeType", "bytes", "width", "height", "alt", "folderId", "thumbnailUrl", "usageCount", "version", "updatedAt", "sourceLabel", "license"];
+const optionalText = (value: unknown, path: string, maximum: number) => value === undefined ? undefined : text(value, path, maximum);
+function parseLicense(input: unknown, path: string): AssetLicense {
+  const value = record(input, path);
+  keys(value, ["name", "url", "attribution", "terms"], path);
+  // 利用条件のページは外部の HTTPS だけ。root relative と fragment は許可しない。
+  if (value.url !== undefined && (!isSafePublicUrl(value.url) || !/^https:\/\//i.test(value.url))) fail(`${path}.url`, "unsafe license URL");
+  const attribution = optionalText(value.attribution, `${path}.attribution`, ASSET_LIMITS.attributionLength), terms = optionalText(value.terms, `${path}.terms`, ASSET_LIMITS.termsLength);
+  return { name: text(value.name, `${path}.name`, ASSET_LIMITS.licenseNameLength), ...(value.url === undefined ? {} : { url: value.url as string }), ...(attribution === undefined ? {} : { attribution }), ...(terms === undefined ? {} : { terms }) };
+}
 /** 要求した siteId 以外の素材は拒否する。 */
 export function parseLibraryAsset(input: unknown, siteId: string, path = "asset"): LibraryAsset {
   const value = record(input, path);
@@ -176,8 +212,33 @@ export function parseLibraryAsset(input: unknown, siteId: string, path = "asset"
     ...(value.folderId === undefined ? {} : { folderId: assetId(value.folderId, `${path}.folderId`) }),
     ...(value.thumbnailUrl === undefined ? {} : { thumbnailUrl: mediaUrl(value.thumbnailUrl, `${path}.thumbnailUrl`) }),
     ...(value.usageCount === undefined ? {} : { usageCount: integer(value.usageCount, `${path}.usageCount`, 0) }),
-    version: text(value.version, `${path}.version`, ASSET_LIMITS.versionLength), updatedAt
+    version: text(value.version, `${path}.version`, ASSET_LIMITS.versionLength), updatedAt,
+    ...(value.sourceLabel === undefined ? {} : { sourceLabel: text(value.sourceLabel, `${path}.sourceLabel`, ASSET_LIMITS.sourceLabelLength) }),
+    ...(value.license === undefined ? {} : { license: parseLicense(value.license, `${path}.license`) })
   };
+}
+const capabilityNames = ["upload", "editMetadata", "delete", "folders", "acquire"] as const;
+export function parseAssetProviders(input: unknown): AssetProvider[] {
+  const seen = new Set<string>();
+  return array(input, "providers", ASSET_LIMITS.providers).map((raw, index) => {
+    const at = `providers[${index}]`, value = record(raw, at);
+    keys(value, ["id", "kind", "label", "origin", "terms", "status", "unavailableReason", "capabilities"], at);
+    const id = identifier(value.id, `${at}.id`);
+    if (seen.has(id)) fail(`${at}.id`, "duplicate provider");
+    seen.add(id);
+    const source = record(value.capabilities, `${at}.capabilities`), capabilities = {} as AssetProviderCapabilities;
+    keys(source, capabilityNames, `${at}.capabilities`);
+    for (const name of capabilityNames) {
+      if (typeof source[name] !== "boolean") fail(`${at}.capabilities.${name}`, "expected a boolean");
+      capabilities[name] = source[name] as boolean;
+    }
+    const terms = optionalText(value.terms, `${at}.terms`, ASSET_LIMITS.termsLength), reason = optionalText(value.unavailableReason, `${at}.unavailableReason`, ASSET_LIMITS.unavailableReasonLength);
+    return {
+      id, kind: choice(value.kind, ["upload", "cms", "stock"] as const, `${at}.kind`), label: text(value.label, `${at}.label`, ASSET_LIMITS.providerLabelLength),
+      origin: text(value.origin, `${at}.origin`, ASSET_LIMITS.originLength), ...(terms === undefined ? {} : { terms }),
+      status: choice(value.status, ["available", "unavailable"] as const, `${at}.status`), ...(reason === undefined ? {} : { unavailableReason: reason }), capabilities
+    };
+  });
 }
 export function parseAssetFolder(input: unknown, path = "folder"): AssetFolder {
   const value = record(input, path);
@@ -245,4 +306,9 @@ export function parseAssetDeleteResult(input: unknown): AssetDeleteResult {
   const value = status(input, "delete", { deleted: [], "in-use": ["usages"], conflict: [], rejected: ["reason"] });
   if (value.status === "deleted" || value.status === "conflict") return { status: value.status };
   return value.status === "in-use" ? { status: "in-use", usages: parseAssetUsages(value.usages, "delete.usages") } : { status: "rejected", reason: choice(value.reason, ["permission"] as const, "delete.reason") };
+}
+export function parseAssetAcquireResult(input: unknown, siteId: string): AssetAcquireResult {
+  const value = status(input, "acquire", { ready: ["asset"], rejected: ["reason"] });
+  return value.status === "ready" ? { status: "ready", asset: parseLibraryAsset(value.asset, siteId, "acquire.asset") }
+    : { status: "rejected", reason: choice(value.reason, ["permission", "license", "unavailable"] as const, "acquire.reason") };
 }

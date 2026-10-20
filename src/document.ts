@@ -1,8 +1,8 @@
 import type {
-  BlockContract, BlockContracts, BlockSlot, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, NodeStyle, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
+  BlockContract, BlockContracts, BlockSlot, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, NodeStyle, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue, TextStyle
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
-import { isStyleProperty, parseStyle, parseTokens } from "./style-values.js";
+import { isStyleProperty, parseStyle, parseTextStyles, parseTokens } from "./style-values.js";
 import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
@@ -115,6 +115,8 @@ export type NodeContext = {
   readonly tokens: Record<string, DesignToken>;
   /** インスタンスの style は部品ライブラリと文書の tokens を重ねて検証する。 */
   readonly instanceTokens: Record<string, DesignToken>;
+  /** 文書の文字スタイル。部品の root では持たない。 */
+  readonly textStyles?: Readonly<Record<string, TextStyle>>;
   readonly components: ReadonlyMap<string, ComponentShape> | undefined;
   readonly ids: Set<string>;
   readonly htmlIds: Set<string>;
@@ -198,7 +200,7 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
   const id = identifier(node.id, `${at}.id`);
   if (ids.has(id)) fail(`${at}.id`, "duplicate node ID");
   ids.add(id);
-  const style = node.style === undefined ? {} : { style: parseStyle(node.style, node.type === "instance" ? context.instanceTokens : tokens, `${at}.style`) };
+  const style = node.style === undefined ? {} : { style: parseStyle(node.style, node.type === "instance" ? context.instanceTokens : tokens, `${at}.style`, context.textStyles) };
   const constrainedParent = parent === "ul" || parent === "ol" ? ["li"] : parent === "dl" ? ["dt", "dd"] : parent === "picture" ? ["source", "img"] : undefined;
   if (node.type === "instance") {
     const component = identifier(node.component, `${at}.component`), shape = context.components?.get(component);
@@ -255,7 +257,7 @@ export type PageParseOptions = {
  */
 export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, options: PageParseOptions = {}): PageDocument {
   const source = record(input, "$"), library = options.components;
-  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "body"], "$");
+  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "textStyles", "body"], "$");
   if (source.schemaVersion !== 1) fail("$.schemaVersion", "unsupported schema version");
   const siteId = identifier(source.siteId, "$.siteId"), pageId = identifier(source.pageId, "$.pageId");
   if (library && library.siteId !== siteId) fail("$.siteId", "component library belongs to another site");
@@ -265,11 +267,12 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, o
   if (!title.trim()) fail("$.title", "title is required");
   const meta = source.meta === undefined ? {} : parsePageMeta(source.meta, "$.meta");
   const tokens = parseTokens(source.tokens, "$.tokens");
+  const textStyles = source.textStyles === undefined ? undefined : parseTextStyles(source.textStyles, tokens, "$.textStyles");
   const context: NodeContext = {
-    blocks, tokens, instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
+    blocks, tokens, ...(textStyles ? { textStyles } : {}), instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
     ids: new Set(), htmlIds: new Set(), usage: { nodes: 0, text: 0 }
   };
-  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: parseNodes(source.body, "$.body", context) };
+  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, ...(textStyles ? { textStyles } : {}), body: parseNodes(source.body, "$.body", context) };
   if (library && instancesOf(document.body).length) {
     try {
       parsePageDocument(expandDocument(document, library).document, blocks);
