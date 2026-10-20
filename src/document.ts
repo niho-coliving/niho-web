@@ -1,9 +1,9 @@
 import type {
-  BlockContracts, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, PageDocument, PageNode, PropRule, PublicPropValue
+  BlockContracts, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
 import { parseStyle, parseTokens } from "./style-values.js";
-import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, parseAssetReference, record, string } from "./validation-utils.js";
+import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
@@ -73,6 +73,38 @@ function prop(value: unknown, rule: PropRule, path: string): PublicPropValue {
     }
     default: return fail(path, "unsupported prop contract");
   }
+}
+
+export const metaLimits = { descriptionLength: 500, altLength: 300, structuredData: 16 } as const;
+/** HTTPS か / から始まる同一サイト内のパス。#id は画像・アイコンに使えない。 */
+function assetUrl(value: unknown, path: string): string {
+  if (!isSafePublicUrl(value) || value.startsWith("#")) fail(path, "unsafe URL");
+  return value;
+}
+export function parsePageImage(input: unknown, path: string): PageImage {
+  const source = record(input, path);
+  keys(source, ["src", "alt"], path);
+  return { src: assetUrl(source.src, `${path}.src`), alt: line(source.alt, `${path}.alt`, metaLimits.altLength, true) };
+}
+/** 公開メタ情報を検証して新しいオブジェクトを返す。false・空配列は保存しない。 */
+export function parsePageMeta(input: unknown, path = "$.meta"): PageMeta {
+  const source = record(input, path), result: PageMeta = {};
+  keys(source, ["description", "ogImage", "favicon", "noindex", "structuredData"], path);
+  if (source.description !== undefined) result.description = line(source.description, `${path}.description`, metaLimits.descriptionLength);
+  if (source.ogImage !== undefined) result.ogImage = parsePageImage(source.ogImage, `${path}.ogImage`);
+  if (source.favicon !== undefined) result.favicon = assetUrl(source.favicon, `${path}.favicon`);
+  if (source.noindex !== undefined) {
+    if (typeof source.noindex !== "boolean") fail(`${path}.noindex`, "expected boolean");
+    if (source.noindex) result.noindex = true;
+  }
+  if (source.structuredData !== undefined) {
+    const at = `${path}.structuredData`;
+    if (!Array.isArray(source.structuredData) || source.structuredData.length > metaLimits.structuredData) fail(at, "expected an ID array within limits");
+    const ids = Array.from(source.structuredData as unknown[], (id, index) => identifier(id, `${at}[${index}]`));
+    if (new Set(ids).size !== ids.length) fail(at, "duplicate ID");
+    if (ids.length) result.structuredData = ids;
+  }
+  return result;
 }
 
 /** @internal インスタンスの検証に使う部品の外形（外枠のタグと公開 props の field）。 */
@@ -195,21 +227,21 @@ export type PageParseOptions = {
  */
 export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, options: PageParseOptions = {}): PageDocument {
   const source = record(input, "$"), library = options.components;
-  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "tokens", "body"], "$");
+  keys(source, ["schemaVersion", "siteId", "pageId", "locale", "revision", "title", "meta", "tokens", "body"], "$");
   if (source.schemaVersion !== 1) fail("$.schemaVersion", "unsupported schema version");
   const siteId = identifier(source.siteId, "$.siteId"), pageId = identifier(source.pageId, "$.pageId");
   if (library && library.siteId !== siteId) fail("$.siteId", "component library belongs to another site");
-  const locale = string(source.locale, "$.locale", 40);
-  if (!/^[a-z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(locale)) fail("$.locale", "invalid locale");
+  const locale = localeCode(source.locale, "$.locale");
   if (typeof source.revision !== "number" || !Number.isSafeInteger(source.revision) || source.revision < 1) fail("$.revision", "expected positive safe integer");
   const title = string(source.title, "$.title", 300);
   if (!title.trim()) fail("$.title", "title is required");
+  const meta = source.meta === undefined ? {} : parsePageMeta(source.meta, "$.meta");
   const tokens = parseTokens(source.tokens, "$.tokens");
   const context: NodeContext = {
     blocks, tokens, instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
     ids: new Set(), htmlIds: new Set(), usage: { nodes: 0, text: 0 }
   };
-  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, tokens, body: parseNodes(source.body, "$.body", context) };
+  const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, body: parseNodes(source.body, "$.body", context) };
   if (library && instancesOf(document.body).length) {
     try {
       parsePageDocument(expandDocument(document, library).document, blocks);

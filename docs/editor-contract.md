@@ -27,6 +27,10 @@ React 18.3 または 19 と、同じ版の React DOM を利用側で用意して
 | `saveDraft({ target, document, expectedVersion }, signal)` | 楽観ロック付き下書き保存。成功時は新しい version とサーバー採番の revision、競合時は `status: 'conflict'` |
 | `prepareRelease(request, signal)` | 公開 / rollback の正確な対象ドメイン、公開内容との差分、確認 token を発行 |
 | `release(plan, signal)` | 確認済みの内容を公開 / rollback。成功時は最新 snapshot、競合時は `status: 'conflict'` |
+| `preparePageChange` / `applyPageChange`（任意） | ページの作成・複製・名前とURLの変更・公開切替。影響の確認と一回限りの確認 token。[ページ管理の契約](page-contract.md) |
+| `readSiteSettings` / `saveSiteSettings`（任意） | サイト共通の公開情報。楽観ロック付き |
+
+`listPages` の各ページに任意で `path`・`kind`（page / template / shared）・`visibility`・`published` を返すと、左のページパネルにフォルダ・種別・公開状態を表示します。任意メソッドを実装しないホストでは、ページ操作とサイト設定の保存を表示しません。
 
 target は `siteId/pageId/locale` の組です。文書の組と一致しない読込結果は受け入れません。ホストは各呼出しで現在のセッションの認証・サイト/ページ権限を確認し、文書を `@niho/web/core` で検証してください。UI の選択値やロック表示をサーバーの認可の代わりにしません。
 

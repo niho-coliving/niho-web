@@ -54,6 +54,20 @@ const find = (nodes, id) => {
   }
 };
 
+test("component instances preserve asset images, backgrounds and page metadata", () => {
+  const asset = { provider: "uploads", id: "sea" };
+  const component = box("asset_box", [{ type: "element", id: "n2", tag: "img", asset, attrs: { alt: "海" }, children: [] }]);
+  component.root.style = { base: { backgroundImage: { asset } } };
+  const components = parseComponentLibrary({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [component] });
+  const document = { ...page([instance("photo", "asset_box")]), meta: { description: "海の紹介" } };
+  const parsed = parsePageDocument(document, {}, { components });
+  assert.deepEqual(parsed.meta, { description: "海の紹介" });
+  const expanded = resolvePageDocument(parsed, components).document;
+  assert.deepEqual(expanded.body[0].children[0].asset, asset);
+  assert.deepEqual(expanded.body[0].style.base.backgroundImage, { asset });
+  assert.deepEqual(expanded.meta, { description: "海の紹介" });
+});
+
 test("component library round trips without retaining mutable input references", () => {
   const input = library(), parsed = parseComponentLibrary(input);
   assert.deepEqual(parsed, input);

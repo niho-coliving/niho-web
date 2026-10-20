@@ -8,7 +8,7 @@
 
 ## 文書の識別と互換性
 
-必須項目は `schemaVersion: 1`、`siteId`、`pageId`、`locale`、`revision`、`title`、`tokens`、`body` です。サイト・ページ・ノード・ブロックの ID は英字で始まる英数字・`_`・`-` で最大 80 文字、locale は `ja` / `ja-JP` 等、revision は 1 以上の safe integer とします。title は空白以外を含む 300 文字以内です。
+必須項目は `schemaVersion: 1`、`siteId`、`pageId`、`locale`、`revision`、`title`、`tokens`、`body` です。サイト・ページ・ノード・ブロックの ID は英字で始まる英数字・`_`・`-` で最大 80 文字、locale は `ja` / `ja-JP` 等、revision は 1 以上の safe integer とします。title は空白以外を含む 300 文字以内です。任意項目 `meta` にページの公開メタ情報（説明文・OG画像・favicon・noindex・構造化データの ID）を持てます。値の規則と描画側の使い方は [ページ管理・公開情報の契約](page-contract.md) を正とします。`meta` は本文と同じ revision に属し、内容を変えたら revision を増やします。
 
 文書契約の非互換変更は `schemaVersion` を上げ、移行処理を明示してから導入します。未知版の暗黙変換は行いません。既存の鎌倉サイトの文書を直接受け入れる形式ではありません。移行時には現行の HTML / CSS を新しい許可リストに対応付ける adapter と視覚確認が必要です。
 
