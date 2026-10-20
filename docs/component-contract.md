@@ -119,7 +119,7 @@ type InstanceNode = {
 ```ts
 interface EditorComponentAdapter {
   readLibrary(siteId: string, signal: AbortSignal): Promise<{ library: unknown; version: string }>;
-  saveLibrary(request: { siteId: string; library: ComponentLibrary; expectedVersion: string }, signal: AbortSignal): Promise<EditorSaveResult>;
+  saveLibrary(request: { siteId: string; library: ComponentLibrary; expectedVersion: string; trigger?: "autosave" }, signal: AbortSignal): Promise<EditorSaveResult>;
   listUsage(siteId: string, signal: AbortSignal): Promise<readonly ComponentUsageEntry[]>;
 }
 type ComponentUsageEntry = {
@@ -135,9 +135,8 @@ type ComponentUsageEntry = {
 ```
 
 - `readLibrary` は opaque な楽観ロック値 `version` と検証前のライブラリを返します。ライブラリがまだないサイトでは `revision: 1`、`components: []` の空ライブラリを返してください。
-- `saveLibrary` はページの下書き保存と同じく、`expectedVersion` の比較・revision の採番・409 の `{ status: "conflict" }` 変換をホストが原子的に行います。ホストは保存前に `parseComponentLibrary` で検証し、削除された部品をどの文書（下書き・公開版）も参照していないこと、各部品の version が減っていないことを確認してください。
+- `saveLibrary` はページの下書き保存と同じく（自動保存のときは `trigger: "autosave"`）、`expectedVersion` の比較・revision の採番・409 の `{ status: "conflict" }` 変換をホストが原子的に行います。ホストは保存前に `parseComponentLibrary` で検証し、削除された部品をどの文書（下書き・公開版）も参照していないこと、各部品の version が減っていないことを確認してください。
 - `listUsage` は保存済みの下書きを対象にした使用状況です。ホストは各文書へ `componentUsage(document, library)` を使って集計できます。
-- 部品の中の素材（`img` の `asset`・背景画像）と内部リンクは、ページの文書ではなくライブラリにあります。ホストは素材の使用状況・削除の可否と、ページのパス変更による内部リンクへの影響を計算するとき、ライブラリも対象に含めてください。
 - インスタンスを含む下書きの保存（`saveDraft`）では、ホストはライブラリを渡して `parsePageDocument` で検証してください。
 - 公開確認の要求（`EditorReleaseRequest`）の `componentsVersion` は、確認時に表示していたライブラリの version です。ホストは差分を展開済みの文書で計算し、確認 token をページの version とライブラリの version の両方に結び付け、`release` 時にどちらかが変わっていれば 409 を返します。plan は要求と同じ `componentsVersion` を返してください。公開版には展開済みの文書を新しい revision で保存します。
 - 部品とページを続けて保存する場合は部品 → ページの順にします。部品の保存だけが成功しても、未使用の部品が増えるだけで文書は壊れません。
