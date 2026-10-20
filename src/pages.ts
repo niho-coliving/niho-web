@@ -120,8 +120,8 @@ export function pageUrl(domain: string, path: string): string {
 }
 
 const trimSlash = (path: string): string => path.length > 1 ? path.replace(/\/+$/, "") || "/" : path;
-/** 同じサイトを指すリンクのパスと、残りの query / fragment。 */
-function linkTarget(href: string, domains: readonly string[]): { path: string; rest: string } | undefined {
+/** @internal 同じサイトを指すリンクのパスと、残りの query / fragment。 */
+export function linkTarget(href: string, domains: readonly string[]): { path: string; rest: string } | undefined {
   if (href.startsWith("/")) {
     if (href.startsWith("//")) return undefined;
     const index = href.search(/[?#]/);

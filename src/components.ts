@@ -3,6 +3,8 @@ import type {
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf, ownElements, type ResolvedOrigin } from "./component-expand.js";
 import { isElementTag, parseNode, parsePageDocument, reservedPropNames, type ComponentShape, type NodeContext } from "./document.js";
+import { collectAssetReferences, type AssetPlacement } from "./assets.js";
+import { findInternalLinks, linkTarget, rewriteInternalLinks, validatePagePath } from "./pages.js";
 import { parseTokens } from "./style-values.js";
 import { DocumentValidationError, fail, identifier, keys, record } from "./validation-utils.js";
 
@@ -157,5 +159,61 @@ export function componentIssues(document: PageDocument, library: ComponentLibrar
     const props = definitions.get(instance.component)?.props ?? {};
     const staleProps = Object.keys(instance.props ?? {}).filter((name) => !Object.hasOwn(props, name));
     return staleProps.length ? [{ nodeId: instance.id, component: instance.component, staleProps }] : [];
+  });
+}
+
+/** 部品が公開した href の props の名前。 */
+const hrefProps = (library: ComponentLibrary): Map<string, string[]> =>
+  new Map(library.components.map((component) => [component.id, Object.entries(component.props ?? {}).flatMap(([name, prop]) => prop.field === "href" ? [name] : [])]));
+/** ページごとのリンク先（href の公開 props）で path を指すインスタンスの ID。 */
+function instanceLinks(nodes: readonly PageNode[], library: ComponentLibrary, path: string, domains: readonly string[]): string[] {
+  const names = hrefProps(library), wanted = path.length > 1 ? path.replace(/\/+$/, "") || "/" : path;
+  return instancesOf(nodes).flatMap((instance) => (names.get(instance.component) ?? []).some((name) => {
+    const value = instance.props?.[name];
+    return typeof value === "string" && linkTarget(value, domains)?.path === wanted;
+  }) ? [instance.id] : []);
+}
+function rewriteInstances<T extends { body: PageNode[] }>(container: T, library: ComponentLibrary, from: string, to: string, domains: readonly string[]): T {
+  const copy = structuredClone(container), names = hrefProps(library), wanted = from.length > 1 ? from.replace(/\/+$/, "") || "/" : from;
+  for (const instance of instancesOf(copy.body)) for (const name of names.get(instance.component) ?? []) {
+    const value = instance.props?.[name], target = typeof value === "string" ? linkTarget(value, domains) : undefined;
+    if (instance.props && target?.path === wanted) instance.props[name] = `${to}${target.rest}`;
+  }
+  return copy;
+}
+
+/**
+ * ページのパス変更の影響に含める、部品の中で path を指すリンク。部品の root のリンクと、
+ * 部品の中に置いた別部品のページごとのリンク先（href の公開 props）を返す。
+ */
+export function findComponentLinks(library: ComponentLibrary, path: string, domains: readonly string[]): { componentId: string; nodeIds: string[] }[] {
+  return library.components.flatMap((component) => {
+    const body = [component.root], nodeIds = [...findInternalLinks({ body }, path, domains), ...instanceLinks(body, library, path, domains)];
+    return nodeIds.length ? [{ componentId: component.id, nodeIds }] : [];
+  });
+}
+/** 部品の中の from を指すリンクを to へ置き換えたライブラリ。変わった部品だけ version を上げる。revision はホストが保存時に採番する。 */
+export function rewriteComponentLinks(library: ComponentLibrary, from: string, to: string, domains: readonly string[]): ComponentLibrary {
+  if (validatePagePath(to) !== null) fail("$.to", "invalid page path");
+  return { ...structuredClone(library), components: library.components.map((component) => {
+    const linked = rewriteInternalLinks({ body: [component.root as PageNode] }, from, to, domains), body = rewriteInstances(linked, library, from, to, domains).body;
+    const root = body[0] as ElementNode, changed = JSON.stringify(root) !== JSON.stringify(component.root);
+    return { ...structuredClone(component), root, version: changed ? component.version + 1 : component.version };
+  }) };
+}
+/** 文書に置いたインスタンスのページごとのリンク先（href の公開 props）で path を指すもの。 */
+export function findInstanceLinks(document: PageDocument, library: ComponentLibrary, path: string, domains: readonly string[]): string[] {
+  return instanceLinks(document.body, library, path, domains);
+}
+/** インスタンスのページごとのリンク先を置き換えた文書。部品の中のリンクは rewriteComponentLinks、要素のリンクは rewriteInternalLinks で置き換える。 */
+export function rewriteInstanceLinks(document: PageDocument, library: ComponentLibrary, from: string, to: string, domains: readonly string[]): PageDocument {
+  if (validatePagePath(to) !== null) fail("$.to", "invalid page path");
+  return rewriteInstances(document, library, from, to, domains);
+}
+/** 部品の中の素材参照。ホストは素材の使用状況・削除の可否にライブラリも含める。 */
+export function componentAssetReferences(library: ComponentLibrary): { componentId: string; placements: AssetPlacement[] }[] {
+  return library.components.flatMap((component) => {
+    const placements = collectAssetReferences({ schemaVersion: 1, siteId: library.siteId, pageId: "component", locale: "ja", revision: library.revision, title: component.name, tokens: library.tokens, body: [component.root] });
+    return placements.length ? [{ componentId: component.id, placements }] : [];
   });
 }
