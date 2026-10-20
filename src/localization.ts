@@ -367,8 +367,10 @@ function normalizeNumber(value: string): string {
 function protectedTextReferences(value: string): ProtectedTextReferences {
   const urls = sortedMatches(value, /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/giu, trimUrlPunctuation);
   const emails = sortedMatches(value, /\b[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b/giu);
-  const numericIds = sortedMatches(value, /(?<!\p{N})\d+(?:[-/]\d+)+(?!\p{N})/gu);
-  const numbers = sortedMatches(value,
+  // Japanese source copy may use full-width digits and separators. Compare their numeric value with ASCII output.
+  const numericText = value.replace(/[\uFF0B-\uFF0F\uFF10-\uFF19]/gu, (character) => character.normalize("NFKC"));
+  const numericIds = sortedMatches(numericText, /(?<!\p{N})\d+(?:[-/]\d+)+(?!\p{N})/gu);
+  const numbers = sortedMatches(numericText,
     /(?<!\p{N})[+-]?(?:\d{1,3}(?:[ '_’\u00a0\u202f,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)*)(?!\p{N})/gu,
     normalizeNumber);
   if (urls.length + emails.length + numericIds.length + numbers.length > MAX_PROTECTED_REFERENCES) {
@@ -395,10 +397,12 @@ function valueForUnit(input: unknown, unit: LocalizationUnit, path: string, gene
   }
   if (unit.kind === "rich-text") {
     const source = unit.sourceValue as LocalizedRichText, translated = value as LocalizedRichText;
-    if (generated && !richTextContent(translated.children).trim()) fail(path, "generated translation cannot be blank");
+    const translatedText = richTextContent(translated.children);
+    if (generated && !translatedText.trim()) fail(path, "generated translation cannot be blank");
+    if (!unit.allowEmpty && !translatedText.trim()) fail(path, "localized text cannot be blank");
     const expected = richSignature(source.children), actual = richSignature(translated.children);
     if (new Set(actual).size !== actual.length || canonical(expected) !== canonical(actual)) fail(path, "protected rich text identities or marks changed");
-    if (generated) assertGeneratedReferences(richTextContent(source.children), richTextContent(translated.children), path);
+    if (generated) assertGeneratedReferences(richTextContent(source.children), translatedText, path);
   }
   return value;
 }

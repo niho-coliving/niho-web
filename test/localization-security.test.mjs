@@ -113,6 +113,23 @@ test("generated plain and rich candidates preserve URLs, email addresses and num
   }));
 });
 
+test("generated numbers preserve Japanese full-width values and numeric IDs", async () => {
+  const source = page();
+  source.title = "料金１２，０００円、注文１２３－４５";
+  const collection = await collectLocalizationUnits(config(), source, "en"), overlay = createLocalizationOverlay(collection);
+  assert.doesNotThrow(() => acceptTranslationResult(overlay, collection, result(overlay, collection, [["page.title", "Price 12,000 JPY, order 123-45"]])));
+  assert.throws(() => acceptTranslationResult(overlay, collection, result(overlay, collection, [["page.title", "Price 12,001 JPY, order 123-45"]])), /protected URL, email, or numeric reference/);
+  assert.throws(() => acceptTranslationResult(overlay, collection, result(overlay, collection, [["page.title", "Price 12,000 JPY, order 123-46"]])), /protected URL, email, or numeric reference/);
+});
+
+test("manual rich text cannot replace visible copy with only protected empty marks", async () => {
+  const collection = await collectLocalizationUnits(config(), page(), "en"), overlay = createLocalizationOverlay(collection);
+  const value = { kind: "rich-text", children: [{ type: "element", id: "link", tag: "a", children: [{ type: "text", text: "  " }] }] };
+  assert.throws(() => editLocalizedValue(overlay, collection, {
+    unitId: "page.node.lead.richText", value, expectedVersion: overlay.version
+  }), /localized text cannot be blank/);
+});
+
 test("translated rich text rejects excessive depth and anchors nested through marks", async () => {
   const collection = await collectLocalizationUnits(config(), page(), "en"), overlay = createLocalizationOverlay(collection);
   const richId = "page.node.lead.richText";
