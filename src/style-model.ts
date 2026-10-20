@@ -1,6 +1,6 @@
 import { inheritedStyle, walkNodes, type InheritedStyle, type NodePath } from "./editor-model.js";
 import type { EditorBreakpoint } from "./editor-types.js";
-import type { ComponentNode, ElementNode, InstanceNode, NodeStyle, PageDocument, StyleDeclarations, StyleProperty, StyleValue, TextStyleProperty } from "./types.js";
+import type { ComponentNode, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, StateName, StyleDeclarations, StyleProperty, StyleValue, TextStyleProperty } from "./types.js";
 
 /** 編集 UI の段の計算・使用状況・表示用の整形。React を使わない純粋関数。 */
 export type TierKey = "base" | number;
@@ -49,7 +49,7 @@ export function fieldState(document: PageDocument, node: ElementNode | Component
     overriddenAt: responsive.filter((entry) => entry.minWidth > start && entry.declarations[property] !== undefined).map((entry) => entry.minWidth) };
 }
 export function tokenUsage(document: PageDocument, name: string): {
-  nodes: { nodeId: string; path: NodePath; property: StyleProperty; breakpoint: TierKey }[];
+  nodes: { nodeId: string; path: NodePath; property: StyleProperty; breakpoint: TierKey; state?: StateName }[];
   textStyles: { name: string; property: TextStyleProperty; breakpoint: TierKey }[];
 } {
   const uses = (values: StyleDeclarations | undefined) => Object.entries(values ?? {}).flatMap(([property, value]) => typeof value === "object" && "token" in value && value.token === name ? [property] : []);
@@ -58,6 +58,7 @@ export function tokenUsage(document: PageDocument, name: string): {
     if (node.type === "text") continue;
     for (const property of uses(node.style?.base)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: "base" });
     for (const entry of node.style?.responsive ?? []) for (const property of uses(entry.declarations)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: entry.minWidth });
+    for (const [state, values] of Object.entries(node.style?.states ?? {})) for (const property of uses(values)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: "base", state: state as StateName });
   }
   for (const [style, value] of Object.entries(document.textStyles ?? {})) {
     for (const property of uses(value.base)) textStyles.push({ name: style, property: property as TextStyleProperty, breakpoint: "base" });
@@ -65,6 +66,24 @@ export function tokenUsage(document: PageDocument, name: string): {
   }
   return { nodes, textStyles };
 }
+/** 範囲全体が非表示の段。 */
+export function hiddenTiers(node: { style?: NodeStyle | undefined }, tiers: readonly EditorTier[]): TierKey[] {
+  const ranges = node.style?.hidden ?? [];
+  return tiers.filter((tier) => ranges.some((range) => range.minWidth <= tier.start && (range.maxWidth === undefined || tier.end !== null && range.maxWidth >= tier.end))).map((tier) => tier.key);
+}
+/** 非表示にする段から範囲を作る。隣り合う段は 1 つの範囲にまとめる。 */
+export function rangesForTiers(tiers: readonly EditorTier[], hiddenKeys: readonly TierKey[]): HiddenRange[] {
+  const result: HiddenRange[] = [];
+  let current: HiddenRange | undefined;
+  for (const tier of tiers) {
+    if (!hiddenKeys.includes(tier.key)) { current = undefined; continue; }
+    if (!current) { current = { minWidth: tier.start }; result.push(current); }
+    if (tier.end === null) delete current.maxWidth; else current.maxWidth = tier.end;
+  }
+  return result;
+}
+/** 表示幅 width でこのノードが非表示か。 */
+export const hiddenAt = (node: { style?: NodeStyle | undefined }, width: number) => (node.style?.hidden ?? []).some((range) => range.minWidth <= width && (range.maxWidth === undefined || width <= range.maxWidth));
 export function textStyleUsage(document: PageDocument, name: string): { nodeId: string; path: NodePath }[] {
   return walkNodes(document).flatMap(({ node, path }) => node.type !== "text" && node.style?.textStyle === name ? [{ nodeId: node.id, path }] : []);
 }

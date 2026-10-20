@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 // 部品の編集操作。すべて検証済みの新しいライブラリ・文書を返す。ページでの使用状況の確認は呼び出し側が行う。
-const declarationSets = (style: NodeStyle | undefined): StyleDeclarations[] => style ? [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations)] : [];
+const declarationSets = (style: NodeStyle | undefined): StyleDeclarations[] => style ? [style.base ?? {}, ...(style.responsive ?? []).map((entry) => entry.declarations), ...Object.values(style.states ?? {})] : [];
 /** ノードの style と、業務ブロックなら表示領域（slots）の style のすべての宣言。 */
 const nodeDeclarations = (node: Exclude<PageNode, { type: "text" }>): StyleDeclarations[] =>
   [...declarationSets(node.style), ...(node.type === "component" ? Object.values(node.slots ?? {}).flatMap(declarationSets) : [])];

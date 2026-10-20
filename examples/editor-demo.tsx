@@ -38,6 +38,11 @@ home.textStyles = {
 const [heading, lead] = (home.body[0] as ElementNode).children as ElementNode[];
 heading!.style = { textStyle: "heading", base: { color: { token: "brand" } } };
 lead!.style = { textStyle: "body" };
+// 演出の例: ボタン風のリンクのホバー・フォーカス・押下中と、セクションの登場（動きを減らす設定では動かない）。
+const cta = (home.body[0] as ElementNode).children[2] as ElementNode;
+cta.style = { base: { display: "inline-block", padding: "10px 18px", borderRadius: 999, backgroundColor: { token: "brand" }, color: "#ffffff", transitionDuration: 200, transitionTimingFunction: "ease-out" },
+  states: { hover: { backgroundColor: "#0f3d2c", translate: "0 -2px" }, focus: { backgroundColor: "#0f3d2c", translate: "0 -2px" }, active: { scale: 0.98 } } };
+(home.body[0] as ElementNode).style!.appear = { effect: "fade-up", trigger: "load", duration: 700, delay: 0, easing: "ease-out" };
 const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" }, home],
   [{ siteId: "demo", pageId: "about", locale: "ja-JP", title: "私たちについて", path: "/about" }, pageDocument("about", "私たちについて", [

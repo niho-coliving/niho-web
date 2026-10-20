@@ -27,7 +27,7 @@ token の `label`、`textStyles`、node style の `textStyle`、文字の見た�
 
 element / component / instance の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
 
-タグは `src/types.ts` の `ElementTag`、属性は `src/document.ts` の許可リストを正とします。`img` は安全な `src` か素材参照 `asset: { provider, id }` のどちらか一方と、`alt` が必須です。空の alt は装飾画像として許可します。素材参照の URL は描画時にホストの解決済み map から決め、解決できない画像は描画しません（[素材ライブラリ契約](asset-contract.md)）。`a[target=_blank]` には `noopener noreferrer` を描画時に補います。`source.srcSet` は単一 URL のみを許可します。複数候補の srcset、SVG、iframe、form、script、style は v1 の対象外です。
+タグは `src/types.ts` の `ElementTag`、属性は `src/document.ts` の許可リストを正とします。`img` は安全な `src` か素材参照 `asset: { provider, id }` のどちらか一方と、`alt` が必須です。空の alt は装飾画像として許可します。素材参照の URL は描画時にホストの解決済み map から決め、解決できない画像は描画しません（[素材ライブラリ契約](asset-contract.md)）。`a[target=_blank]` には `noopener noreferrer` を描画時に補います。`source.srcSet` は単一 URL のみを許可します。開閉の `details` / `summary` は JS なしで動く部品として許可し、`summary` は `details` の最初の子だけに置けます（1 つまで。中にリンクや入れ子の開閉は置けません）。`details` の `open` は真偽値です。複数候補の srcset、SVG、iframe、form、script、style、イベント属性は v1 の対象外です。
 
 `p` や見出しなどの phrasing content の中への block element、入れ子のリンク、void element の子、不正な list / picture の子を拒否し、初期 HTML をブラウザが組み替えて hydration と食い違うことを防ぎます。ブロックは `<div data-nw-node="…" data-nw-block="…">` に包むため、flow content の中だけで利用できます。ブロック自身が返す HTML の妥当性は利用側で保証します。
 
@@ -35,7 +35,7 @@ element / component / instance の `id` は文書全体で一意です。element
 
 tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。任意の `label` は編集画面の表示名で、前後の空白を除いて 1 文字以上・60 文字以内、制御文字を含みません。CSS には出力しません。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
 
-`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、擬似クラス・擬似要素、アニメーションは v1 に含めません。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
+`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、任意の selector・擬似クラス・擬似要素、任意のアニメーション・`transform` 文字列は v1 に含めません。状態（hover・focus・active）、変形、遷移、登場、幅別の非表示は下の「演出」の範囲だけを許可します。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
 
 表示を壊す過大値は拒否します。長さの上限は px が 10,000、rem / em / ch が 1,000、% / vh / vw / vmin / vmax が 1,000 です（負値は絶対値で判定）。数値だけの指定（px として扱うプロパティ）と length token も同じ上限です。`zIndex` は `auto` か絶対値 9,999 以下の整数です。
 
@@ -64,6 +64,25 @@ node の `style` は `base` と `responsive` の宣言を持ちます。base を
 
 element と component の `style.textStyle` には存在する textStyles のキーだけを指定できます。CSS は token 変数 → box-sizing → 文字スタイル → ノード個別の順に出力します。文字スタイルは使われているものだけ、利用ノードの selector をカンマで束ねて base → `@media` 昇順で出力し、未使用のスタイルは出力しません。selector はノード規則と同じ `[data-nw-scope] [data-nw-owner][data-nw-node]` で詳細度が等しいため、後に出るノード個別の指定が全幅で文字スタイルより優先します。HTML の出力（data 属性）は変わりません。
 
+## 演出（状態・変形・遷移・登場・幅別の表示）
+
+公開 HTML は JS なしで内容と操作がすべて見える・使える状態で返し、初期表示で内容を隠しません。動きはすべて `@media (prefers-reduced-motion:no-preference)` の中だけ、hover は `@media (hover:hover)` の中だけに出力します。
+
+| 項目 | 文書 | 値 |
+| --- | --- | --- |
+| 変形 | `translate` / `rotate` / `scale` / `transformOrigin`（base・responsive） | 移動は長さ 1〜2 個（px は ±1000、rem/em は ±64、% と vw/vh は ±100。数値は px）、回転は ±360deg（数値は deg）、拡大は 0〜5 の数 1〜2 個、原点は `left top` … `right bottom` と `center` の 9 値 |
+| 遷移 | `transitionDuration` / `transitionDelay` / `transitionTimingFunction` | 0〜5s（`ms` 可、数値は ms）と `ease` `ease-in` `ease-out` `ease-in-out` `linear` |
+| 状態 | `style.states.hover` / `focus` / `active` | `color` `backgroundColor` `borderColor` `opacity` `textDecorationLine` `translate` `rotate` `scale` だけ（token 参照可） |
+| 登場 | `style.appear` | `effect`（`fade` `fade-up` `fade-down` `fade-left` `fade-right` `zoom`）、`trigger`（`load` / `view`）、`duration` 100〜3000ms、`delay` 0〜3000ms、任意の `easing` |
+| 幅別の非表示 | `style.hidden` | `{ minWidth, maxWidth? }` の配列。minWidth は 0 か 320〜3840、maxWidth はその範囲の最後の幅（含む）で minWidth より大きい整数。昇順・重なりなし・最大 12 |
+| 横スクロール | `overflowX` / `scrollSnapType` / `scrollSnapAlign` | `visible` `hidden` `auto` `scroll` / `none` `x mandatory` `x proximity` / `none` `start` `center` `end` |
+
+CSS はノード規則の後に、状態 → 遷移 → 登場 → 幅別の非表示の順で出力します。hover は `@media (hover:hover){<sel>:hover{…}}`、focus はキーボード操作で必ず見える `<sel>:focus-visible{…}`、active は `<sel>:active{…}` です。`transition-property` は文書に持たせず、そのノードの状態で使うプロパティ（`color` `background-color` `border-color` `opacity` `translate` `rotate` `scale` `text-decoration-color`）から生成します。状態スタイルの無いノードの遷移の指定は出力しません。
+
+登場の keyframes は文書 scope 付きの固定名（`<scope>-fade-up` 等）で、使われた効果だけを出力します。内容は動き始めの opacity と translate / scale だけで、レイアウトはずれません。`load` は `animation:<name> <duration>ms <easing> <delay>ms both`、`view` はさらに `@supports (animation-timeline: view())` の中で `animation-timeline:view(); animation-range:entry 0% entry 60%`（時間は auto、遅れは使わない）です。動きを減らす設定の利用者と未対応のブラウザでは animation 自体を適用しないため、内容はそのまま見えます。
+
+幅別の非表示は全ノード規則の最後に `@media (min-width:Apx) and (max-width:B.98px){<sel>{display:none}}`（minWidth 0 は min を省く、maxWidth が無ければ max を省く）として出力し、表示用の display を戻す規則は持ちません。業務ブロックの表示領域（`slots`）の style では `states` / `appear` / `hidden` / `textStyle` を受け付けません。共通部品のインスタンスの style では同じキーを使え、root の指定に重ねます（状態はプロパティ単位、登場と非表示は丸ごと置き換え）。
+
 scope はページ間の CSS selector の衝突を避けるもので、Shadow DOM のような完全な隔離ではありません。ホストサイトの global CSS、継承、登録ブロックの CSS は描画に影響します。外側のサイトで必要な reset と視覚確認を行ってください。同じ文書の重複表示は同じ style が複数出ることがあります。
 
 ## 動的ブロック
@@ -78,10 +97,10 @@ renderer は同期の React ツリーを返します。データ取得は呼び�
 
 無効入力は `DocumentValidationError` で止め、`path` に原因の位置を返します。実際の入力値はエラー文へ埋め込みません。描画 API と CSS API は毎回検証し、無効文書の途中までを公開しません。登録コンポーネント自身が投げる例外は呼び出し側へ伝わります。ページ配信時のエラーページ・直前の公開 revision の利用はアプリ側で決めます。
 
-上限は 5,000 ノード、深さ 48 段、単一 text 100,000 文字、本文 text 合計 1,000,000 文字、属性 2,048 文字、URL 2,048 文字、CSS 値 256 文字、レスポンシブ指定 12 個、token 128 件、文字スタイル 64 件です。これらはパース済みオブジェクトの上限です。HTTP リクエスト・ファイルのバイト上限と JSON parse は受け取り側で管理します。
+上限は 5,000 ノード、深さ 48 段、単一 text 100,000 文字、本文 text 合計 1,000,000 文字、属性 2,048 文字、URL 2,048 文字、CSS 値 256 文字、レスポンシブ指定 12 個、幅別の非表示 12 個、token 128 件、文字スタイル 64 件です。これらはパース済みオブジェクトの上限です。HTTP リクエスト・ファイルのバイト上限と JSON parse は受け取り側で管理します。
 
 ## 検証範囲
 
-対象限定テストで文書契約、入力拒否、文書のコピー、scoped CSS、許可されたレイアウト、文字スタイルの CSS の順序と束ね方、過大値の上限、旧文書の出力が変わらないこと、registry の props 検証、登録ブロックが初期 HTML に含まれること、React `renderToString` と共通 HTML helper の一致を確認します。
+対象限定テストで文書契約、入力拒否、文書のコピー、scoped CSS、許可されたレイアウト、文字スタイルの CSS の順序と束ね方、過大値の上限、演出の値の境界と CSS の出力位置（hover・focus-visible・reduced-motion・`@supports`・非表示が最後）、開閉の入れ子、旧文書の出力が変わらないこと、registry の props 検証、登録ブロックが初期 HTML に含まれること、React `renderToString` と共通 HTML helper の一致を確認します。
 
 実際の Next.js / Astro アプリでの bundling・hydration・CSP・サイト全体 CSS の視覚確認は利用側の導入時に行います。nonce を必須とする CSP を使うサイトでは、現在のインライン style の配信方法を導入前に調整する必要があります。

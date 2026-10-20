@@ -26,12 +26,19 @@ export function ownElements(root: ElementNode): Map<string, ElementNode> {
   visit(root);
   return result;
 }
-/** @internal インスタンスの style を部品の root の style へプロパティ単位で重ねる。空の指定は残さない。 */
+/** @internal インスタンスの style を部品の root の style へプロパティ単位で重ねる。登場・幅別の非表示は丸ごと置き換える。空の指定は残さない。 */
 export function mergeStyle(base: NodeStyle | undefined, overlay: NodeStyle): NodeStyle | undefined {
   const declarations: StyleDeclarations = { ...base?.base, ...overlay.base }, widths = new Map<number, StyleDeclarations>();
   for (const entry of [...(base?.responsive ?? []), ...(overlay.responsive ?? [])]) widths.set(entry.minWidth, { ...widths.get(entry.minWidth), ...entry.declarations });
   const responsive = [...widths].sort(([a], [b]) => a - b).filter(([, values]) => Object.keys(values).length).map(([minWidth, values]) => ({ minWidth, declarations: values }));
-  const result: NodeStyle = { ...(Object.keys(declarations).length ? { base: declarations } : {}), ...(responsive.length ? { responsive } : {}) };
+  const states: NonNullable<NodeStyle["states"]> = {};
+  for (const name of ["hover", "focus", "active"] as const) {
+    const values = { ...base?.states?.[name], ...overlay.states?.[name] };
+    if (Object.keys(values).length) states[name] = values;
+  }
+  const appear = overlay.appear ?? base?.appear, hidden = overlay.hidden ?? base?.hidden, textStyle = overlay.textStyle ?? base?.textStyle;
+  const result: NodeStyle = { ...(textStyle ? { textStyle } : {}), ...(Object.keys(declarations).length ? { base: declarations } : {}), ...(responsive.length ? { responsive } : {}),
+    ...(Object.keys(states).length ? { states } : {}), ...(appear ? { appear } : {}), ...(hidden?.length ? { hidden } : {}) };
   return Object.keys(result).length ? structuredClone(result) : undefined;
 }
 /** @internal 公開 props と外枠の style を適用した部品 root の複製。ID は部品の中のまま。 */

@@ -4,7 +4,7 @@ import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNo
 import { createPortal } from "react-dom";
 import { PageRenderer } from "./react.js";
 import { parsePageDocument } from "./document.js";
-import { pageScope } from "./css.js";
+import { canvasCss, pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
 import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
 import { editorCss, historyCss, pagesCss } from "./editor-style.js";
@@ -12,7 +12,9 @@ import { styleEditorCss } from "./editor-style-css.js";
 import { Field } from "./editor-fields.js";
 import { StyleInspector, type StyleRange } from "./editor-style-inspector.js";
 import { StyleLibrary } from "./editor-style-library.js";
-import { editorTiers, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
+import type { StyleState } from "./editor-style-motion.js";
+import { carouselPreset, togglePreset } from "./interaction-presets.js";
+import { editorTiers, hiddenAt, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
 import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
 import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
@@ -48,13 +50,15 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, breakpoint, selection, select, dragItem, drop, pending, editText, resize, reportError, editable, locks, preview, assets }: {
+function Canvas({ document, blocks, width, breakpoint, selection, select, dragItem, drop, pending, editText, resize, reportError, editable, locks, preview, assets, motionCss, replay }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; select: (path: NodePath | null) => void;
   breakpoint: number | "base";
   dragItem: { current: DragItem | null }; drop: (item: DragItem, place: DropPlace) => void;
   pending: (key: string, value: boolean) => void;
   editText: (path: NodePath, children: PageNode[]) => string | undefined; resize: (path: NodePath, width: number, height: number) => string | undefined;
   reportError: (message: string) => void; editable: boolean; locks: readonly EditorLock[]; preview: boolean; assets: ResolvedAssetMap;
+  /** 状態の強制表示と動きの停止。replay が変わると描画を作り直し、登場をもう一度見せる。 */
+  motionCss: string; replay: string;
 }) {
   const [body, setBody] = useState<HTMLElement | null>(null), frame = useRef<HTMLIFrameElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null), [dropPlace, setDropPlace] = useState<DropPlace | null>(null);
@@ -196,7 +200,8 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#34a66d;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#34a66d22;outline:2px dashed #198558;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#258858;box-shadow:0 0 0 1px #245b3f;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
       <style>{canvasAssetCss}</style>
-      <PreviewBoundary document={document}><StablePageRenderer document={document} blocks={blocks} assets={assets} missingAssets="placeholder" /></PreviewBoundary>
+      <PreviewBoundary document={document}><StablePageRenderer key={replay} document={document} blocks={blocks} assets={assets} missingAssets="placeholder" /></PreviewBoundary>
+      <style>{motionCss}</style>
       {dropPlace && <div aria-hidden className={`nw-drop-marker${dropPlace.marker.inside ? " inside" : ""}`} style={{ left: dropPlace.marker.left, top: dropPlace.marker.top, width: dropPlace.marker.width, height: dropPlace.marker.height }} />}
       {canResize && handleRect && resizePath && <button type="button" className="nw-resize-handle" aria-label="ドラッグして要素のサイズを変更" title={`${Math.round(handleRect.width)} × ${Math.round(handleRect.height)} px`} style={{ left: handleRect.left + handleRect.width - 7, top: handleRect.top + handleRect.height - 7 }}
         onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); const element = body.querySelector<HTMLElement>(`[data-nw-node="${selectedId.id}"]`); if (!element) return; const bounds = element.getBoundingClientRect(), computed = body.ownerDocument.defaultView?.getComputedStyle(element); resizing.current = { element, path: resizePath, x: event.clientX, y: event.clientY, width: Number.parseFloat(computed?.width ?? "") || bounds.width, height: Number.parseFloat(computed?.height ?? "") || bounds.height, inlineWidth: element.style.width, inlineHeight: element.style.height }; event.currentTarget.setPointerCapture(event.pointerId); }}
@@ -224,6 +229,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const [breakpoint, setBreakpoint] = useState<number | "base">("base"), [notice, setNotice] = useState("");
   // 入力中のライブプレビュー。基準の文書が変わった（確定・undo/redo・保存・移動）時点で無効になる。
   const [draft, setDraft] = useState<{ base: PageDocument; document: PageDocument } | null>(null), [range, setRange] = useState<StyleRange>("wide");
+  // 編集中の状態（ホバー等）はキャンバスへ強制表示する。動きは初期は止め、選択枠がずれないようにする。
+  const [styleState, setStyleState] = useState<StyleState>("normal"), [motion, setMotion] = useState(false), [replay, setReplay] = useState(0);
   const breakpoints = normalizeBreakpoints(hostBreakpoints);
   const [busy, setBusy] = useState(""), [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [navigation, setNavigation] = useState<Navigation | null>(null), [plan, setPlan] = useState<EditorReleasePlan | null>(null), [confirmed, setConfirmed] = useState(false);
@@ -316,7 +323,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     else if (sessionRef.current) void load(sessionRef.current.target);
   }
   function requestNavigation(next: Navigation) { if (blocked || next.type === "site" && siteSettings.busy) return; if (dirty || hasInput || next.type === "site" && siteSettings.dirty) setNavigation(next); else navigate(next); }
-  function select(path: NodePath | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setInspector(path ? "element" : "page"); setDraft(null); } }
+  function select(path: NodePath | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setInspector(path ? "element" : "page"); setDraft(null); setStyleState("normal"); } }
   function apply(operation: EditorOperation): string | undefined {
     const current = sessionRef.current; if (!current || editBlocked) return "処理が完了してから編集してください。";
     try {
@@ -455,6 +462,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     const current = sessionRef.current?.history.present; if (!current) return undefined;
     const used = new Set(walkNodes(current).flatMap(({ node }) => node.type === "text" ? [] : [node.id])); let counter = 1; while (used.has(`node_${counter}`)) counter++;
     const id = `node_${counter}`;
+    if (type === "carousel" || type === "toggle") {
+      const next = () => { while (used.has(`node_${counter}`)) counter++; used.add(`node_${counter}`); return `node_${counter}`; };
+      return type === "carousel" ? carouselPreset(next) : togglePreset(next);
+    }
     if (type === "text") return newElement("p", id);
     if (type === "richtext") return { type: "element", id, tag: "div", attrs: { role: "group", "aria-label": "リッチテキスト" }, children: [newElement("p", `edit_${crypto.randomUUID().replaceAll("-", "")}`)] };
     if (type === "box") return { type: "element", id, tag: "div", children: [] };
@@ -534,7 +545,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     { type: "section", name: "セクション", glyph: "▤", group: "構造" }, { type: "box", name: "ボックス", glyph: "□", group: "構造" },
     { type: "text", name: "テキスト", glyph: "T", group: "文字" }, { type: "h2", name: "見出し", glyph: "H", group: "文字" },
     { type: "richtext", name: "リッチテキスト", glyph: "¶", group: "文字" }, { type: "a", name: "リンク", glyph: "↗", group: "文字" },
-    { type: "img", name: "画像", glyph: "▧", group: "メディア" }
+    { type: "img", name: "画像", glyph: "▧", group: "メディア" },
+    { type: "carousel", name: "カルーセル", glyph: "⇆", group: "インタラクション" }, { type: "toggle", name: "トグル（開閉）", glyph: "▾", group: "インタラクション" }
   ];
   const availableBlocks = Object.entries(blocks).filter(([key]) => !insertableBlocks || insertableBlocks.includes(key));
   const startDrag = (event: React.DragEvent<HTMLElement>, item: DragItem) => {
@@ -568,7 +580,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       ] as const).map(([key, name, glyph]) => <button key={key} type="button" aria-pressed={visiblePanel === key} title={name} onClick={() => { setPicker(null); setPanel(key); }}><span aria-hidden="true">{glyph}</span><small>{name}</small></button>)}</nav>
       <div className="e-panel">
         <section hidden={visiblePanel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
-          {["構造", "文字", "メディア"].map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.type} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.type })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.type)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">{item.glyph}</span>{item.name}</button>)}</div></div>)}
+          {["構造", "文字", "メディア", "インタラクション"].map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.type} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.type })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.type)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">{item.glyph}</span>{item.name}</button>)}</div></div>)}
           <details><summary>挿入先と詳細</summary><label className="e-field"><span>追加・移動先</span><select aria-label="追加・移動先" value={parentId} disabled={editBlocked || hasInput} onChange={(event) => setParentId(event.target.value)}><option value="">ページ直下</option>{entries.filter(({ node }) => node.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
             <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="box">ボックス</option><option value="richtext">リッチテキスト</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{availableBlocks.map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
             <button onClick={() => add()} disabled={!document || editBlocked || hasInput}>要素を追加</button></details>
@@ -582,10 +594,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         </section>
         <section hidden={visiblePanel !== "layers"} aria-label="レイヤー一覧"><div className="e-panel-head"><h2>レイヤー</h2><p>ドラッグで並べ替え、中央にも配置できます</p></div>
           <button className="e-layer" aria-pressed={!selection} onClick={() => select(null)} disabled={editBlocked}>ページ全体</button>
-          <div className="e-layer-list">{entries.map(({ node, path }) => <button key={path.join(".")} type="button" className={`e-layer${layerDrop?.id === (node.type === "text" ? "" : node.id) ? ` drop-${layerDrop.position}` : ""}`} style={{ paddingLeft: 12 + (path.length - 1) * 13 }} aria-pressed={selection?.join(".") === path.join(".")} title={label(node, blocks)} onClick={() => select(path)} disabled={editBlocked} draggable={node.type !== "text" && !editBlocked && !hasInput}
+          <div className="e-layer-list">{entries.map(({ node, path }) => <button key={path.join(".")} type="button" className={`e-layer${layerDrop?.id === (node.type === "text" ? "" : node.id) ? ` drop-${layerDrop.position}` : ""}${node.type !== "text" && hiddenAt(node, width) ? " is-hidden-here" : ""}`} style={{ paddingLeft: 12 + (path.length - 1) * 13 }} aria-pressed={selection?.join(".") === path.join(".")} title={label(node, blocks)} onClick={() => select(path)} disabled={editBlocked} draggable={node.type !== "text" && !editBlocked && !hasInput}
             onDragStart={(event) => { if (node.type !== "text") startDrag(event, { kind: "node", id: node.id }); }} onDragEnd={() => { dragItem.current = null; setLayerDrop(null); }}
             onDragOver={(event) => { if (!dragItem.current || node.type === "text") return; const place = layerPlace(event, node.id); if (!place) return; event.preventDefault(); event.dataTransfer.dropEffect = dragItem.current.kind === "node" ? "move" : "copy"; setLayerDrop({ id: node.id, position: place.position }); }}
-            onDrop={(event) => { if (!dragItem.current || node.type === "text") return; const place = layerPlace(event, node.id); if (place) { event.preventDefault(); dropAt(dragItem.current, place); } dragItem.current = null; setLayerDrop(null); }}>{label(node, blocks)}</button>)}</div>
+            onDrop={(event) => { if (!dragItem.current || node.type === "text") return; const place = layerPlace(event, node.id); if (place) { event.preventDefault(); dropAt(dragItem.current, place); } dragItem.current = null; setLayerDrop(null); }}>{label(node, blocks)}{node.type !== "text" && hiddenAt(node, width) && <small className="e-layer-hidden">この幅で非表示</small>}</button>)}</div>
           <label className="e-field"><span>移動先</span><select aria-label="移動先" value={parentId} disabled={editBlocked || hasInput} onChange={(event) => setParentId(event.target.value)}><option value="">ページ直下</option>{entries.filter(({ node }) => node.type === "element" && ["div", "section", "article", "header", "footer", "main", "nav", "aside", "li", "figure", "blockquote"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
           <div className="e-actions"><button disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "duplicate", path: selection })}>複製</button><button className="e-danger" disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "remove", path: selection })}>削除</button>
             <button disabled={!selection || selection.at(-1) === 0 || editBlocked || hasInput} onClick={() => moveBy(-1)}>上へ</button><button disabled={!selection || selection.at(-1)! >= siblingCount - 1 || editBlocked || hasInput} onClick={() => moveBy(1)}>下へ</button>
@@ -601,12 +613,14 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small></details>
       </div>
     </aside>
-    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}</div>
+    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}{document && <button type="button" className="e-small e-motion-toggle" aria-pressed={motion || preview} disabled={preview} title={preview ? "プレビュー中は動きを再生します" : "登場や状態の変化の動きを再生します"}
+        onClick={() => { setMotion((value) => !value); if (!motion) setReplay((value) => value + 1); }}>動きを再生</button>}</div>
       {recoveryState.offer && session && <RecoveryBanner offer={recoveryState.offer} stale={recoveryStale} disabled={historyMode || (blocked && busy !== "保存中")} compare={() => setRecoveryCompare(true)}
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} rollbackHint={dirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
         rollback={viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && canvasDocument ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={versions.viewing?.document ?? canvasDocument} blocks={blocks} width={width} breakpoint={tier} selection={historyMode ? null : selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
+{document && canvasDocument ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={versions.viewing?.document ?? canvasDocument} blocks={blocks} width={width} breakpoint={tier} selection={historyMode ? null : selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+        motionCss={canvasCss(versions.viewing?.document ?? canvasDocument, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ">{versions.open ? <VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /> : <><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
       {inspector === "site" && <section className="e-inspector-content"><SiteSettingsPanel site={site} state={siteSettings} /></section>}
       {inspector === "page" && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked}
@@ -624,7 +638,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         return field(name, String(value ?? ""), (input) => ({ type: "prop", path: selection, name, value: input === "" && !rule.required ? undefined : rule.type === "number" ? Number(input) : input }), `prop.${name}`, { reason: locked });
       })}</>}
       {node && node.type !== "text" && selection && document && <StyleInspector key={pathKey} document={document} saved={session?.saved} node={node} path={selection} blocks={blocks} tiers={tiers} tier={tier} setTier={setBreakpoint} range={range} setRange={setRange}
-        width={width} setWidth={setWidth} apply={apply} preview={previewOperation} pending={pending} fieldKey={pathKey} disabled={editBlocked} tierLocked={hasInput} reason={reason} notify={setNotice}
+        width={width} setWidth={setWidth} apply={apply} preview={previewOperation} pending={pending} fieldKey={pathKey} disabled={editBlocked} tierLocked={hasInput} reason={reason} notify={setNotice} styleState={styleState} setStyleState={setStyleState}
         appearanceExtra={assets && (node.type !== "element" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${tier}-background`} declarations={tier === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === tier)?.declarations} assets={resolvedAssets.map}
           lock={(property) => reason(tier === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint: tier })}
           onClear={() => { const error = apply({ type: "background", path: selection, breakpoint: tier, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint: tier, property, value }); if (error) setNotice(error); }} />} />}
