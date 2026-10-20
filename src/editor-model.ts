@@ -26,6 +26,8 @@ export type EditorOperation =
   | { type: "instanceProp"; path: NodePath; name: string; value: string | undefined }
   /** インスタンスを展開した element に置き換え、以後は部品の更新を受けない。 */
   | { type: "detach"; path: NodePath }
+  /** 業務ブロックの表示領域の見た目。registry が許可したプロパティだけを通す。 */
+  | { type: "slotStyle"; path: NodePath; slot: string; breakpoint: number | "base"; property: StyleProperty; value: StyleValue | undefined }
   | MetaOperation;
 /** undefined・空文字・false・空配列はその項目を削除する。 */
 export type MetaOperation = { [K in keyof PageMeta]-?: { type: "meta"; field: K; value: PageMeta[K] | undefined } }[keyof PageMeta];
@@ -133,6 +135,23 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     } else if (operation.type === "detach") {
       if (!components) throw new Error("部品ライブラリを読み込めていません。");
       draft.body = detachInstance(draft, operation.path, components, blocks).body;
+    } else if (operation.type === "slotStyle") {
+      if (node.type !== "component") throw new Error("ブロックを選択してください。");
+      if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(operation.slot)) throw new Error("表示領域が見つかりません。");
+      // 空になった指定は残さない。許可されたプロパティかどうかは最後の文書検証で確かめる。
+      const slots = structuredClone(node.slots ?? {}), current = slots[operation.slot] ?? {}, base = { ...current.base };
+      const widths = (current.responsive ?? []).map((entry) => ({ minWidth: entry.minWidth, declarations: { ...entry.declarations } }));
+      let declarations = base;
+      if (operation.breakpoint !== "base") {
+        let entry = widths.find((entry) => entry.minWidth === operation.breakpoint);
+        if (!entry) { entry = { minWidth: operation.breakpoint, declarations: {} }; widths.push(entry); widths.sort((a, b) => a.minWidth - b.minWidth); }
+        declarations = entry.declarations;
+      }
+      if (operation.value === undefined) delete declarations[operation.property]; else declarations[operation.property] = operation.value;
+      const responsive = widths.filter((entry) => Object.keys(entry.declarations).length);
+      const next = { ...(Object.keys(base).length ? { base } : {}), ...(responsive.length ? { responsive } : {}) };
+      if (Object.keys(next).length) slots[operation.slot] = next; else delete slots[operation.slot];
+      if (Object.keys(slots).length) node.slots = slots; else delete node.slots;
     } else if (operation.type === "style" || operation.type === "resize") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
       const declarations = declarationsAt(node, operation.breakpoint);
