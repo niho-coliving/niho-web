@@ -89,6 +89,51 @@ test("translated save validation allows only current declared values and rejects
   }
 });
 
+test("URL・素材・OG画像を同じ安定IDで両方向に差し替え、src/srcSetを原子的に扱う", async () => {
+  for (const [sourceLocale, targetLocale, documentLocale] of [["ja", "en", "ja-JP"], ["en", "ja", "en"]]) {
+    const source = page(documentLocale);
+    source.body[0].children.push({ type: "element", id: "urlPhoto", tag: "img", attrs: { src: "/media/source.webp", srcSet: "/media/source@2x.webp", alt: "URL画像", width: 640, height: 360 }, style: { base: { objectFit: "cover" } }, children: [] });
+    const collection = await collectLocalizationUnits(config(sourceLocale), source, targetLocale, options());
+    assert.deepEqual(byId(collection, "page.node.urlPhoto.asset").sourceValue, { kind: "image-url", src: "/media/source.webp", srcset: "/media/source@2x.webp" });
+    assert.equal(byId(collection, "page.node.photo.asset").unitId, "page.node.photo.asset");
+    assert.equal(byId(collection, "page.meta.ogImage.src").required, false);
+    let overlay = createLocalizationOverlay(collection);
+    overlay = editLocalizedValue(overlay, collection, { unitId: "page.node.photo.asset", value: { kind: "image-url", src: "/media/asset-to-url.webp", srcset: "/media/asset-to-url@2x.webp" }, expectedVersion: overlay.version });
+    overlay = editLocalizedValue(overlay, collection, { unitId: "page.node.urlPhoto.asset", value: { kind: "asset", asset: { provider: "uploads", id: "url-to-asset" } }, expectedVersion: overlay.version });
+    overlay = editLocalizedValue(overlay, collection, { unitId: "page.meta.ogImage.src", value: { kind: "image-url", src: "https://cdn.example.test/og-target.webp" }, expectedVersion: overlay.version });
+    const materialized = await materializeLocalizedPage(config(sourceLocale), source, collection, overlay, options());
+    const assetToUrl = materialized.document.body[0].children.find((node) => node.id === "photo");
+    const urlToAsset = materialized.document.body[0].children.find((node) => node.id === "urlPhoto");
+    assert.equal(assetToUrl.asset, undefined); assert.equal(assetToUrl.attrs.src, "/media/asset-to-url.webp"); assert.equal(assetToUrl.attrs.srcSet, "/media/asset-to-url@2x.webp");
+    assert.deepEqual(urlToAsset.asset, { provider: "uploads", id: "url-to-asset" }); assert.equal(urlToAsset.attrs.src, undefined); assert.equal(urlToAsset.attrs.srcSet, undefined);
+    assert.equal(urlToAsset.attrs.width, 640); assert.equal(urlToAsset.attrs.height, 360); assert.deepEqual(urlToAsset.style, source.body[0].children.at(-1).style);
+    assert.equal(materialized.document.meta.ogImage.src, "https://cdn.example.test/og-target.webp");
+    assert.equal(source.body[0].children.find((node) => node.id === "urlPhoto").attrs.src, "/media/source.webp");
+  }
+});
+
+test("画像URL検証、review reset、source保持とlayout/href境界を閉じる", async () => {
+  const source = page();
+  source.body[0].children.push({ type: "element", id: "urlPhoto", tag: "img", attrs: { src: "/source.webp", srcSet: "/source-2x.webp", alt: "写真", width: 320 }, children: [] });
+  const first = await collectLocalizationUnits(config(), source, "en", options()); let overlay = createLocalizationOverlay(first);
+  for (const value of [
+    { kind: "image-url", src: "javascript:alert(1)" }, { kind: "image-url", src: "data:image/png;base64,AA" },
+    { kind: "image-url", src: "//evil.test/a.webp" }, { kind: "image-url", src: "https://user:pass@example.test/a.webp" },
+    { kind: "image-url", src: "/ok.webp", srcset: "/one.webp, /two.webp" }, { kind: "image-url", src: "/ok.webp", srcset: "/bad path.webp" }
+  ]) assert.throws(() => editLocalizedValue(overlay, first, { unitId: "page.node.urlPhoto.asset", value, expectedVersion: overlay.version }), /unsafe image URL|srcSet/);
+  overlay = editLocalizedValue(overlay, first, { unitId: "page.node.urlPhoto.asset", value: { kind: "image-url", src: "/target.webp" }, expectedVersion: overlay.version });
+  overlay = reviewLocalizedValue(overlay, first, { unitId: "page.node.urlPhoto.asset", expectedVersion: overlay.version });
+  const changedSource = structuredClone(source); changedSource.body[0].children.at(-1).attrs.src = "/new-source.webp";
+  const changed = await collectLocalizationUnits(config(), changedSource, "en", options());
+  assert.equal(localizationStatus(overlay, changed).details.find((entry) => entry.unitId === "page.node.urlPhoto.asset").state, "review-needed");
+  const retained = await materializeLocalizedPage(config(), changedSource, changed, overlay, options());
+  assert.equal(retained.document.body[0].children.at(-1).attrs.src, "/target.webp"); assert.equal(retained.document.body[0].children.at(-1).attrs.srcSet, undefined);
+  const target = retained.document; target.body[0].children.at(-1).attrs.width = 999;
+  await assert.rejects(() => validateLocalizedDocumentSave(config(), changedSource, target, options()), /common structure/);
+  assert.throws(() => editLocalizedValue(overlay, changed, { unitId: "page.meta.ogImage.src", value: { kind: "asset", asset: { provider: "uploads", id: "og" } }, expectedVersion: overlay.version }), /requires a URL/);
+  assert.throws(() => editLocalizedValue(overlay, changed, { unitId: "page.meta.ogImage.src", value: { kind: "image-url", src: "/og.webp", srcset: "/ignored.webp" }, expectedVersion: overlay.version }), /does not support srcset/);
+});
+
 test("a source layout change rematerializes the target while only changed content units require review", async () => {
   const source = page(), initial = await collectLocalizationUnits(config(), source, "en", options()); let overlay = createLocalizationOverlay(initial);
   for (const unit of initial.units.filter((entry) => entry.required)) {

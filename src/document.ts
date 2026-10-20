@@ -3,7 +3,7 @@ import type {
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
 import { isStyleProperty, parseStyle, parseTextStyles, parseTokens } from "./style-values.js";
-import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
+import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, publicImageSrcSet, publicImageUrl, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time details summary".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
@@ -13,7 +13,7 @@ const phrasingParents = new Set("p span h1 h2 h3 h4 h5 h6 a strong em b i small 
 const interactive = new Set(["a", "details", "summary"]);
 const globalAttributes = ["id", "title", "lang", "dir", "role", "hidden", "tabIndex", "aria-label", "aria-labelledby", "aria-describedby", "aria-hidden", "aria-current"];
 const tagAttributes: Partial<Record<ElementTag, string[]>> = {
-  a: ["href", "target", "rel", "hrefLang"], img: ["src", "alt", "width", "height", "loading", "decoding"],
+  a: ["href", "target", "rel", "hrefLang"], img: ["src", "srcSet", "alt", "width", "height", "loading", "decoding"],
   source: ["srcSet", "type", "media"], ol: ["start", "reversed"], li: ["value"], time: ["dateTime"], details: ["open"]
 };
 function attributes(value: unknown, tag: ElementTag, path: string, asset = false): ElementAttributes {
@@ -28,11 +28,9 @@ function attributes(value: unknown, tag: ElementTag, path: string, asset = false
           (["width", "height"].includes(name) && value <= 0) || (name === "tabIndex" && ![-1, 0].includes(value))) fail(at, "invalid integer attribute");
     } else {
       const text = string(value, at, 2048);
-      if (["href", "src"].includes(name) && !isSafePublicUrl(text)) fail(at, "unsafe URL");
-      if (name === "srcSet") {
-        // 一つの HTTPS / root relative URL のみ。候補文字列の独自パーサーは持たない。
-        if (!isSafePublicUrl(text) || /[,\s]/.test(text)) fail(at, "srcSet supports one URL only");
-      }
+      if (name === "href" && !isSafePublicUrl(text)) fail(at, "unsafe URL");
+      if (name === "src") publicImageUrl(text, at);
+      if (name === "srcSet") publicImageSrcSet(text, at);
       if (name === "media" && !/^\((?:min|max)-width: [1-9]\d{1,3}px\)$/.test(text)) fail(at, "unsupported media condition");
       if (name === "type" && !["image/avif", "image/webp", "image/png", "image/jpeg"].includes(text)) fail(at, "unsupported image type");
       if (name === "id") identifier(text, at);
@@ -80,8 +78,7 @@ function prop(value: unknown, rule: PropRule, path: string): PublicPropValue {
 export const metaLimits = { descriptionLength: 500, altLength: 300, structuredData: 16 } as const;
 /** HTTPS か / から始まる同一サイト内のパス。#id は画像・アイコンに使えない。 */
 function assetUrl(value: unknown, path: string): string {
-  if (!isSafePublicUrl(value) || value.startsWith("#")) fail(path, "unsafe URL");
-  return value;
+  return publicImageUrl(value, path);
 }
 export function parsePageImage(input: unknown, path: string): PageImage {
   const source = record(input, path);

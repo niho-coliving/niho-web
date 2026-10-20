@@ -18,7 +18,7 @@ export type LocalizedRichTextNode =
   | { type: "text"; text: string }
   | { type: "element"; id: string; tag: "a" | "strong" | "em" | "b" | "i" | "small" | "span" | "br"; children: LocalizedRichTextNode[] };
 export type LocalizedRichText = { kind: "rich-text"; children: LocalizedRichTextNode[] };
-export type LocalizedAsset = { kind: "asset"; asset: AssetReference };
+export type LocalizedAsset = { kind: "asset"; asset: AssetReference } | { kind: "image-url"; src: string; srcset?: string };
 export type LocalizationValue = string | LocalizedRichText | LocalizedAsset;
 export type LocalizationValueKind = "text" | "rich-text" | "asset";
 

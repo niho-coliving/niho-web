@@ -74,14 +74,18 @@ const checked = await validateLocalizedDocumentSave(
 
 原文は従来の全デザイン機能を使えます。訳文では、現在のcollectionが宣言した次だけを編集できます。
 
-- ページtitle、description、OG画像alt
+- ページtitle、description、OG画像のURLとalt
 - ID付きtext / rich text、`alt` / `aria-label` / `title`
 - schemaで許可したcomponent instance / blockの表示文言
-- 言語別画像のasset reference
+- 言語別画像のasset referenceまたは安全なURL source
 
 訳文キャンバスのリッチテキスト編集は、既存のinline ID・mark・リンク先を保持した文字編集です。raw JSONは表示しません。構造、スタイル、href、追加・複製・削除・移動・resize・detach・共通設定・構造を変え得る履歴復元は「共通デザインは原文側で編集してください」と停止します。入力途中または未保存の文書がある言語切り替えは、既存の未保存変更dialogを通ります。
 
-画像は原文assetを既定で共有し、訳文で選択したときだけasset referenceをoverlayへ保存します。altは空文字も意図した値として扱えます。URL文字列を言語別画像として保存することはできません。
+画像は原文のsourceを既定で共有し、訳文で手動変更した箇所だけoverlayへ保存します。`AssetReference`形式と`img.attrs.src`形式のどちらも、安定IDは同じ`node.<id>.asset`です。保存値は`{ kind: "asset", asset }`または`{ kind: "image-url", src, srcset? }`で、原文の保存形式を移行しても別の翻訳単位へ移りません。assetを選ぶと`src/srcSet`を削除し、URLを選ぶとassetを削除します。URL overrideは`src`と任意の`srcset`を一組で所有するため、原文の古い`srcSet`だけが残ることはありません。
+
+URLと`srcset`は既存文書validatorと同じ制約です。各値は1〜2,048文字のHTTPS URLまたは`/`から始まるroot-relative URLで、空白・制御文字・引用符・`< >`・backslash、`http:`、`data:`、`javascript:`、protocol-relative、資格情報付きURL、fragment-onlyを拒否します。現行`srcset`は候補列ではなく**単一URLだけ**を許可し、commaや空白を含めません。width / height / style / href / ID / token / event / 業務propsは原文共通のままです。URLもasset参照も翻訳providerへ送りません。
+
+OG画像は`page.meta.ogImage.src`の任意・手動専用URL unitと、従来の`page.meta.ogImage.alt` text unitに分かれます。画像の手動変更は未確認draftとなり、現在のsource fingerprintに対して確認するまで言語版を完成扱いにしません。原文画像が変わっても手動draftは保持し、`review-needed`へ戻します。素材の権利・出所・公開可否、immutable referenceの発行は引き続きホストの責務であり、このライブラリのURL検証は素材認可ではありません。
 
 共通部品のunitは定義ID＋定義内node IDで一度だけ表示します。通常文字・空alt・rich text・asset referenceの手修正、候補採用、確認は`command`でoverlayへ保存します。ホストはshared-component unitをサイト＋target localeの共有値として永続化し、同じ定義を使う全ページの`readPage`で同じ値・確認状態を返してください。ページごとのoverlay表現を採る場合も、1ページでの`set-value`／採用／確認を同一transactionまたは整合する更新処理で全利用ページへ反映し、ページ移動で値を巻き戻してはいけません。正本`ComponentLibrary`自体は変更しません。
 
@@ -93,7 +97,7 @@ const checked = await validateLocalizedDocumentSave(
 npm run demo:localization
 ```
 
-`http://127.0.0.1:4176` に、NIHOkamakura（日本語→英語）とNIHO experience（英語→日本語）、各2ページを表示します。実際の`ComponentLibrary` instanceとして共有するヘッダー／フッター、ページ本文、画像を持ち、静的辞書による候補生成、手編集、採用、確認、原文更新後の再materialize、遅延、失敗、409をインメモリで試せます。本番AI・実サイト・認証情報・永続化には接続しません。
+`http://127.0.0.1:4176` に、NIHOkamakura（日本語→英語）とNIHO experience（英語→日本語）、各2ページを表示します。実際の`ComponentLibrary` instanceとして共有するヘッダー／フッター、ページ本文、AssetReference画像、URL画像、OG画像を持ち、静的辞書による候補生成、手編集、採用、確認、原文更新後の再materialize、遅延、失敗、409をインメモリで試せます。Experienceの「旅の準備」は英語原文を読み取り専用で示し、既存業務編集画面への合成routeと編集可能な日本語派生を確認できます。本番AI・実サイト・認証情報・永続化には接続しません。
 
 ## 言語全体の公開
 

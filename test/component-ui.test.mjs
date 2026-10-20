@@ -101,7 +101,7 @@ async function setup(options = {}) {
       calls.order.push("listPages");
       return [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }, { siteId: "demo", pageId: "other", locale: "ja-JP", title: "別ページ" }, { siteId: "demo", pageId: "chrome", locale: "ja-JP", title: "サイトの共通枠", kind: "shared" }];
     },
-    readDocument: async (request) => { calls.order.push("readDocument"); calls.reads.push(structuredClone(request)); return { document: { ...structuredClone(stored), pageId: request.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }] }; },
+    readDocument: async (request) => { calls.order.push("readDocument"); calls.reads.push(structuredClone(request)); return { document: { ...structuredClone(stored), pageId: request.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.readOnly ? { readOnly: options.readOnly } : {}) }; },
     saveDraft: async (request) => {
       calls.order.push("saveDraft"); calls.saves.push(structuredClone(request));
       const custom = options.saveDraft && await options.saveDraft(request);
@@ -229,6 +229,21 @@ test("master edits reach the page instance, history and banner, and bump the sav
     await canvasEvent("top_nav--n3", "click"); assert.ok(document.querySelector(".e-inspector-content h2").textContent.includes("サイトヘッダー"));
     await canvasEvent("top_nav--n3", "dblclick"); await loadCanvas();
     assert.ok(document.querySelector(".e-part-banner")); assert.equal(document.querySelector(".e-inspector-content h2").textContent, "a · n3");
+  } finally { await app.cleanup(); }
+});
+
+test("a read-only source document keeps the canonical shared-component editor writable", async () => {
+  const app = await setup({ readOnly: { reason: "原文は業務編集画面が正本です。", editUrl: "/staff/business/public-text/home" } });
+  try {
+    assert.equal(input("ページタイトル").disabled, true);
+    await openPanel();
+    assert.equal(button("配置", card("予備の帯")).disabled, true, "page insertion remains blocked");
+    await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click("a · n2");
+    assert.equal(input("テキスト").disabled, false, "the separate component master keeps its own authority");
+    await change(input("テキスト"), "共通トップ"); await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.saves.length, 0);
+    assert.equal(app.calls.librarySaves[0].library.components.find((component) => component.id === "site_header").root.children[0].children[0].text, "共通トップ");
   } finally { await app.cleanup(); }
 });
 

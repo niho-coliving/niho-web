@@ -35,6 +35,28 @@ React 18.3 または 19 と、同じ版の React DOM を利用側で用意して
 
 target は `siteId/pageId/locale` の組です。文書の組と一致しない読込結果は受け入れません。ホストは各呼出しで現在のセッションの認証・サイト/ページ権限を確認し、文書を `@niho/web/core` で検証してください。UI の選択値やロック表示をサーバーの認可の代わりにしません。
 
+## 読み取り専用の原文
+
+既存の業務原稿を仮想ページとして確認する場合、`readDocument`の現在snapshotに`readOnly`を返せます。省略した既存hostは従来どおり編集可能です。
+
+```ts
+{
+  document,
+  version,
+  readOnly: {
+    reason: "この公開テキストは業務編集画面が正本です。",
+    editUrl: "/staff/business/public-text/experience",
+    editLabel: "業務原稿を編集"
+  }
+}
+```
+
+`reason`は必須の1〜500文字、`editLabel`は任意の1〜80文字です。`editUrl`はホストが決めた1〜2,048文字のNIHO-app内root-relative routeまたは資格情報を含まないHTTPS URLだけを許可し、`http:`、`javascript:`、`data:`、protocol-relative、fragment-only、制御文字を拒否します。URLを表示文言から組み立てません。外部HTTPSの場合は新しいtabを`noopener noreferrer`で開きます。
+
+エディターは理由と正本へのリンクを明示し、該当documentのtitle / meta / text / image / style / structure、追加・複製・削除、undo/redo、下書き保存、公開・rollback、履歴復元、snapshot作成、端末recovery、page操作を入口で止めます。プレビュー、要素選択、サイト・ページ・locale移動、履歴の閲覧は可能です。ポリシーは現在snapshotからsessionへだけ保持し、履歴文書や端末recoveryから復元しません。遅れて届いた別targetのsnapshotを採用しません。
+
+これはdocument-levelの表示ポリシーで、認可機構ではありません。ホストは`saveDraft`、公開、page操作等の各書込APIで現在の正本ポリシーを再読込し、read-only targetへの直接要求も403等で拒否してください。原文snapshotのポリシーを派生言語へコピーせず、その派生snapshotに`readOnly`が無ければ編集できます。別の共通部品master編集、site設定、素材libraryの権限もこの値から推測しません。
+
 `AbortSignal` は読込の切替と unmount 時に abort します。公開処理は signal が abort されてもサーバーで成立する可能性があるため、ホスト側で結果の照会と重複実行の防止を実装します。例外の生メッセージ・token・秘密を UI に表示しません。
 
 ## 楽観ロックと編集の保持

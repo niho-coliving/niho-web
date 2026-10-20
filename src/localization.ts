@@ -1,9 +1,9 @@
 import { parseComponentLibrary } from "./components.js";
 import { parsePageDocument } from "./document.js";
 import type {
-  AssetReference, BlockContracts, ComponentDefinition, ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode
+  BlockContracts, ComponentDefinition, ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode
 } from "./types.js";
-import { fail, identifier, keys, line, localeCode, parseAssetReference, record, string } from "./validation-utils.js";
+import { fail, identifier, keys, line, localeCode, parseAssetReference, publicImageSrcSet, publicImageUrl, record, string } from "./validation-utils.js";
 import type {
   BlockLocalizationSchema, LocalizationCollection, LocalizationDraftEntry, LocalizationExtractionOptions, LocalizationIssue, LocalizationLocale,
   LocalizationOverlay, LocalizationStatus, LocalizationUnit, LocalizationUnitScope, LocalizationValue, LocalizationValueKind, LocalizedRichText,
@@ -155,9 +155,10 @@ function collectAttributes(node: ElementNode, scope: LocalizationUnitScope, owne
     addUnit(state, { unitId: `${prefix}.node.${node.id}.attr.${name}`, scope, ownerId, field: `node.${node.id}.attr.${name}`,
       kind: "text", translatable: true, required: true, sourceValue: raw, context: `${node.tag} ${name}`, maxLength: 2048, allowEmpty: name === "alt" });
   }
-  if (node.tag === "img" && node.asset) {
+  if (node.tag === "img" && (node.asset || typeof node.attrs?.src === "string")) {
     addUnit(state, { unitId: `${prefix}.node.${node.id}.asset`, scope, ownerId, field: `node.${node.id}.asset`, kind: "asset", translatable: false, required: false,
-      sourceValue: { kind: "asset", asset: detached(node.asset) }, context: "image asset override" });
+      sourceValue: node.asset ? { kind: "asset", asset: detached(node.asset) } : { kind: "image-url", src: node.attrs!.src as string,
+        ...(typeof node.attrs?.srcSet === "string" ? { srcset: node.attrs.srcSet } : {}) }, context: "image source override" });
   }
 }
 
@@ -270,6 +271,9 @@ export async function collectLocalizationUnits(configInput: unknown, documentInp
     field: "meta.description", kind: "text", translatable: true, required: true, sourceValue: document.meta.description, context: "page description", maxLength: 500, singleLine: true });
   if (document.meta?.ogImage) addUnit(state, { unitId: "page.meta.ogImage.alt", scope: "page", ownerId: document.pageId,
     field: "meta.ogImage.alt", kind: "text", translatable: true, required: true, sourceValue: document.meta.ogImage.alt, context: "Open Graph image alt", maxLength: 300, allowEmpty: true, singleLine: true });
+  if (document.meta?.ogImage) addUnit(state, { unitId: "page.meta.ogImage.src", scope: "page", ownerId: document.pageId,
+    field: "meta.ogImage.src", kind: "asset", translatable: false, required: false,
+    sourceValue: { kind: "image-url", src: document.meta.ogImage.src }, context: "Open Graph image source override" });
   collectNodes(document.body, "page", document.pageId, definitions, allowlist, state);
   for (const component of components?.components ?? []) collectNodes([component.root], "shared-component", component.id, definitions, allowlist, state);
   const units = await Promise.all(state.units.map(async (pending): Promise<LocalizationUnit> => {
@@ -307,9 +311,14 @@ function parseValue(input: unknown, kind: LocalizationValueKind, path: string): 
   if (kind === "text") return string(input, path, MAX_VALUE_TEXT);
   const source = record(input, path);
   if (kind === "asset") {
-    keys(source, ["kind", "asset"], path);
-    if (source.kind !== "asset") fail(`${path}.kind`, "expected asset value");
-    return { kind: "asset", asset: parseAssetReference(source.asset, `${path}.asset`) };
+    if (source.kind === "asset") {
+      keys(source, ["kind", "asset"], path);
+      return { kind: "asset", asset: parseAssetReference(source.asset, `${path}.asset`) };
+    }
+    keys(source, ["kind", "src", "srcset"], path);
+    if (source.kind !== "image-url") fail(`${path}.kind`, "expected image source value");
+    return { kind: "image-url", src: publicImageUrl(source.src, `${path}.src`),
+      ...(source.srcset === undefined ? {} : { srcset: publicImageSrcSet(source.srcset, `${path}.srcset`) }) };
   }
   keys(source, ["kind", "children"], path);
   if (source.kind !== "rich-text" || !Array.isArray(source.children)) fail(path, "expected rich-text value");
@@ -388,6 +397,8 @@ function assertGeneratedReferences(source: string, translated: string, path: str
 function valueForUnit(input: unknown, unit: LocalizationUnit, path: string, generated = false): LocalizationValue {
   if (generated && !unit.translatable) fail(path, "manual-only unit cannot accept generated output");
   const value = parseValue(input, unit.kind, path);
+  if (unit.field === "meta.ogImage.src" && (typeof value === "string" || value.kind !== "image-url")) fail(path, "Open Graph image requires a URL source");
+  if (unit.field === "meta.ogImage.src" && typeof value !== "string" && value.kind === "image-url" && value.srcset !== undefined) fail(path, "Open Graph image does not support srcset");
   if (typeof value === "string") {
     if (unit.maxLength !== undefined && value.length > unit.maxLength) fail(path, "localized text exceeds field limit");
     if (unit.singleLine && /[\u0000-\u001f\u007f]/u.test(value)) fail(path, "localized text must be one line");
@@ -668,6 +679,10 @@ function valueFromPageUnit(document: PageDocument, unit: LocalizationUnit): Loca
     if (!document.meta?.ogImage) fail("$target.meta.ogImage", "localized field is missing");
     return document.meta.ogImage.alt;
   }
+  if (unit.field === "meta.ogImage.src") {
+    if (!document.meta?.ogImage) fail("$target.meta.ogImage", "localized field is missing");
+    return { kind: "image-url", src: document.meta.ogImage.src };
+  }
   const parts = unit.field.split("."), node = findNode(document.body, parts[1]!);
   if (!node) fail("$target.body", "localization node no longer exists");
   if (parts[0] === "node") {
@@ -681,7 +696,9 @@ function valueFromPageUnit(document: PageDocument, unit: LocalizationUnit): Loca
       if (children.some((child) => child === undefined)) fail("$target.body", "localized rich text structure changed");
       return { kind: "rich-text", children: children as LocalizedRichTextNode[] };
     }
-    if (parts[2] === "asset") return node.asset ? { kind: "asset", asset: detached(node.asset) } : detached(unit.sourceValue);
+    if (parts[2] === "asset") return node.asset ? { kind: "asset", asset: detached(node.asset) }
+      : typeof node.attrs?.src === "string" ? { kind: "image-url", src: node.attrs.src, ...(typeof node.attrs.srcSet === "string" ? { srcset: node.attrs.srcSet } : {}) }
+        : detached(unit.sourceValue);
     if (parts[2] === "attr") {
       const value = node.attrs?.[parts[3]!];
       if (typeof value !== "string") fail("$target.body", "localized attribute is missing");
@@ -717,6 +734,10 @@ function applyPageUnit(document: PageDocument, unit: LocalizationUnit, value: Lo
   if (unit.field === "title") { document.title = value as string; return; }
   if (unit.field === "meta.description") { if (!document.meta) document.meta = {}; document.meta.description = value as string; return; }
   if (unit.field === "meta.ogImage.alt") { if (!document.meta?.ogImage) fail("$overlay", "Open Graph image source changed"); document.meta.ogImage.alt = value as string; return; }
+  if (unit.field === "meta.ogImage.src") {
+    if (!document.meta?.ogImage || typeof value === "string" || value.kind !== "image-url") fail("$overlay", "Open Graph image source changed");
+    document.meta.ogImage.src = value.src; return;
+  }
   applyNodeField(document.body, unit, value);
 }
 
@@ -727,7 +748,12 @@ function applyNodeField(nodes: PageNode[], unit: LocalizationUnit, value: Locali
     if (!node || node.type !== "element") fail("$overlay", "localization node no longer exists");
     if (parts[2] === "text") node.children = [{ type: "text", text: value as string }];
     else if (parts[2] === "richText") node.children = materializeRich(value as LocalizedRichText, node);
-    else if (parts[2] === "asset") node.asset = detached((value as { kind: "asset"; asset: AssetReference }).asset);
+    else if (parts[2] === "asset") {
+      if (typeof value === "string" || value.kind === "rich-text") fail("$overlay", "invalid image source override");
+      node.attrs ??= {};
+      if (value.kind === "asset") { node.asset = detached(value.asset); delete node.attrs.src; delete node.attrs.srcSet; }
+      else { node.attrs.src = value.src; if (value.srcset === undefined) delete node.attrs.srcSet; else node.attrs.srcSet = value.srcset; delete node.asset; }
+    }
     else if (parts[2] === "attr") node.attrs = { ...node.attrs, [parts[3]!]: value as string };
     return;
   }

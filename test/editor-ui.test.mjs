@@ -42,7 +42,7 @@ async function setup(options = {}) {
   const adapter = {
     listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }],
     listPages: async () => [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }, { siteId: "demo", pageId: "other", locale: "ja-JP", title: "別ページ" }],
-    readDocument: async (target) => { calls.reads.push(structuredClone(target)); return { document: { ...structuredClone(stored), pageId: target.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.locks ? { locks: options.locks } : {}) }; },
+    readDocument: async (target) => { calls.reads.push(structuredClone(target)); return { document: { ...structuredClone(stored), pageId: target.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.locks ? { locks: options.locks } : {}), ...(options.readOnly ? { readOnly: options.readOnly } : {}) }; },
     saveDraft: async (request) => {
       calls.saves.push(structuredClone(request));
       if (options.save) return options.save(request);
@@ -86,6 +86,29 @@ test("host adapters receive only the documented editor target fields", async () 
     await click("公開前の確認"); assert.deepEqual(app.calls.prepares[0].target, target);
     await act(async () => document.querySelector('[role="dialog"] input[type="checkbox"]').click());
     await click("この内容を公開"); assert.deepEqual(app.calls.releases[0].target, target);
+  } finally { await app.cleanup(); }
+});
+test("read-only documents stay selectable and navigable but block every document write path", async () => {
+  const recoveryCalls = { read: 0, write: 0, remove: 0 }, recovery = {
+    read: async () => { recoveryCalls.read++; return null; }, write: async () => { recoveryCalls.write++; }, remove: async () => { recoveryCalls.remove++; }
+  };
+  const revision = { id: "rev-one", revision: 1, kind: "draft", createdAt: "2026-10-21T00:00:00.000Z" };
+  const readOnly = { reason: "公開テキストの原文は業務編集画面が正本です。", editUrl: "/staff/business/public-text/home", editLabel: "業務原稿を編集" };
+  const app = await setup({ readOnly, props: { recovery }, adapter: {
+    preparePageChange: async () => { throw new Error("must not prepare"); }, applyPageChange: async () => { throw new Error("must not apply"); },
+    listRevisions: async () => ({ entries: [revision] }), readRevision: async () => ({ document: structuredClone(fixture) }),
+    createSnapshot: async () => { throw new Error("must not snapshot"); }
+  } });
+  try {
+    assert.ok(document.body.textContent.includes("原文（読み取り専用）")); assert.ok(document.body.textContent.includes(readOnly.reason));
+    const canonical = [...document.querySelectorAll("a")].find((node) => node.textContent === "業務原稿を編集"); assert.equal(canonical?.getAttribute("href"), readOnly.editUrl);
+    assert.equal(input("ページタイトル").disabled, true); assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, true);
+    const openTool = async (name) => { const target = [...document.querySelectorAll(".e-tools button")].find((node) => node.querySelector("small")?.textContent === name); assert.ok(target); await act(async () => target.click()); await flush(); };
+    await openTool("レイヤー"); const heading = button("h1 · heading"); assert.equal(heading.disabled, false); await act(async () => heading.click()); await flush(); assert.equal(input("テキスト").disabled, true);
+    await openTool("ページ"); assert.equal(document.querySelector('button[aria-label="ページを追加"]').disabled, true); assert.equal(document.querySelector('button[aria-label="ホーム の操作"]').disabled, true);
+    await click("履歴"); await act(async () => [...document.querySelectorAll("button")].find((node) => node.textContent.includes("2026/10/21"))?.click()); await flush();
+    assert.equal(button("この版を復元").disabled, true); assert.ok(document.body.textContent.includes(readOnly.reason));
+    assert.deepEqual(recoveryCalls, { read: 0, write: 0, remove: 0 }); assert.equal(app.calls.saves.length, 0); assert.equal(app.calls.prepares.length, 0);
   } finally { await app.cleanup(); }
 });
 test("invalid URL buffers stay visible, block saving, and can be cancelled", async () => {

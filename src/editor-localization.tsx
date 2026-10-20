@@ -15,6 +15,7 @@ import {
   type LocalizationLocale, type LocalizationOverlay, type LocalizationUnit, type LocalizationValue, type SiteLocalizationConfig
 } from "./localization.js";
 import type { ComponentLibrary, ElementNode, PageDocument, PageNode } from "./types.js";
+import { publicImageSrcSet, publicImageUrl } from "./validation-utils.js";
 
 export type EditorLocalizationSite = {
   config: SiteLocalizationConfig;
@@ -176,7 +177,10 @@ export function localizedOperationProblem(document: PageDocument, operation: Edi
   if (operation.type === "title") return unitForField(collection, "title") ? undefined : denied;
   if (operation.type === "meta") {
     if (operation.field === "description") return unitForField(collection, "meta.description") ? undefined : denied;
-    if (operation.field === "ogImage" && operation.value && document.meta?.ogImage && operation.value.src === document.meta.ogImage.src && unitForField(collection, "meta.ogImage.alt")) return undefined;
+    if (operation.field === "ogImage" && operation.value && document.meta?.ogImage) {
+      const source = document.meta.ogImage, srcChanged = operation.value.src !== source.src, altChanged = operation.value.alt !== source.alt;
+      if ((!srcChanged || unitForField(collection, "meta.ogImage.src")) && (!altChanged || unitForField(collection, "meta.ogImage.alt"))) return undefined;
+    }
     return denied;
   }
   if (!("path" in operation)) return denied;
@@ -191,7 +195,7 @@ export function localizedOperationProblem(document: PageDocument, operation: Edi
   if (node.type === "text") return denied;
   if (operation.type === "attribute") return unitForField(collection, `node.${node.id}.attr.${operation.name}`) ? undefined : denied;
   if (operation.type === "image") {
-    if (!("asset" in operation.source) || !unitForField(collection, `node.${node.id}.asset`)) return denied;
+    if (!unitForField(collection, `node.${node.id}.asset`)) return denied;
     if (operation.alt !== undefined && !unitForField(collection, `node.${node.id}.attr.alt`)) return denied;
     return undefined;
   }
@@ -201,13 +205,16 @@ export function localizedOperationProblem(document: PageDocument, operation: Edi
 }
 
 export const localizationStateLabel = (state: string) => ({ source: "原文", missing: "未翻訳", translating: "翻訳中", draft: "下書き", "review-needed": "更新あり", reviewed: "確認済み", failed: "失敗" }[state] ?? state);
-const textOf = (value: LocalizationValue | undefined): string => value === undefined ? "（なし）" : typeof value === "string" ? value : value.kind === "asset" ? `${value.asset.provider} / ${value.asset.id}` : value.children.map(function flatten(node): string { return node.type === "text" ? node.text : node.children.map(flatten).join(""); }).join("");
+const textOf = (value: LocalizationValue | undefined): string => value === undefined ? "（なし）" : typeof value === "string" ? value : value.kind === "asset" ? `${value.asset.provider} / ${value.asset.id}`
+  : value.kind === "image-url" ? `${value.src}${value.srcset ? ` / ${value.srcset}` : ""}`
+    : value.children.map(function flatten(node): string { return node.type === "text" ? node.text : node.children.map(flatten).join(""); }).join("");
 const sameValue = (left: LocalizationValue, right: LocalizationValue): boolean => JSON.stringify(left) === JSON.stringify(right);
 function unitLabel(unit: LocalizationUnit, context: EditorLocalizationContext): string {
   const owner = unit.scope === "page" ? "このページ" : `共通部品「${(context.options.components as ComponentLibrary | undefined)?.components.find((component) => component.id === unit.ownerId)?.name ?? unit.ownerId}」`;
   if (unit.field === "title") return "ページタイトル";
   if (unit.field === "meta.description") return "ページの説明文";
   if (unit.field === "meta.ogImage.alt") return "ソーシャル画像の説明";
+  if (unit.field === "meta.ogImage.src") return "ソーシャル画像";
   const parts = unit.field.split("."), detail = parts[2] === "text" ? "テキスト" : parts[2] === "richText" ? "リッチテキスト" : parts[2] === "asset" ? "画像" : parts[2] === "attr"
     ? ({ alt: "画像の説明", "aria-label": "読み上げ用ラベル", title: "補足タイトル" } as Record<string, string>)[parts[3]!] ?? parts[3]! : parts[0] === "instance" ? `配置別の ${parts[3]}` : parts[0] === "block" ? `ブロックの ${parts[3]}` : unit.context;
   const source = unit.kind === "asset" ? "" : textOf(unit.sourceValue).replace(/\s+/gu, " ").trim();
@@ -268,7 +275,22 @@ function ManualValueEditor({ unit, value, accepted, disabled, pending, invalid, 
   unit: LocalizationUnit; value: LocalizationValue; accepted: LocalizationValue; disabled: boolean; pending: boolean; invalid: boolean;
   save: (value: LocalizationValue) => Promise<EditorLocalizationCommandOutcome>; change: (value: LocalizationValue, invalid?: boolean) => void; cancel: () => void; pickAsset?: () => void;
 }) {
-  if (unit.kind === "asset") return <div className="e-localization-manual"><small className="e-help">現在の素材: {textOf(value)}</small><button type="button" className="e-small" disabled={disabled || !pickAsset} onClick={pickAsset}>素材を選ぶ</button></div>;
+  if (unit.kind === "asset") {
+    const image = typeof value !== "string" && value.kind === "image-url" ? value : { kind: "image-url" as const, src: "" };
+    let urlInvalid = pending && !image.src;
+    if (image.src) try { publicImageUrl(image.src, "$image.src"); if (image.srcset) publicImageSrcSet(image.srcset, "$image.srcset"); } catch { urlInvalid = true; }
+    const setUrl = (src: string, srcset?: string) => change({ kind: "image-url", src, ...(srcset ? { srcset } : {}) }, (() => {
+      try { publicImageUrl(src, "$image.src"); if (srcset) publicImageSrcSet(srcset, "$image.srcset"); return false; } catch { return true; }
+    })());
+    return <div className="e-localization-manual"><small className="e-help">現在の画像: {textOf(value)}</small>
+      <label className="e-field"><span>言語別の画像 URL</span><input value={image.src} disabled={disabled} placeholder="https://… または /images/photo.webp" onChange={(event) => setUrl(event.target.value, image.srcset)} /></label>
+      {unit.field !== "meta.ogImage.src" && <label className="e-field"><span>言語別のレスポンシブ画像 URL（任意）</span><input value={image.srcset ?? ""} disabled={disabled || !image.src} onChange={(event) => setUrl(image.src, event.target.value || undefined)} /></label>}
+      {(invalid || urlInvalid) && <small className="e-help e-problem" role="alert">URL は https:// か / から始まる単一の画像 URL で入力してください。</small>}
+      {pending && <small className="e-help" role="status">未保存の手修正があります。保存するか入力を取り消してください。</small>}
+      <div className="e-actions">{pickAsset && <button type="button" className="e-small" disabled={disabled} onClick={pickAsset}>素材を選ぶ</button>}
+        <button type="button" className="e-small" disabled={disabled || invalid || urlInvalid || !pending} onClick={() => void save(image)}>URLを保存</button>
+        <button type="button" className="e-small" disabled={disabled || !pending} onClick={cancel}>入力を取り消す</button></div></div>;
+  }
   if (unit.kind === "rich-text" && typeof value !== "string" && value.kind === "rich-text" && typeof accepted !== "string" && accepted.kind === "rich-text") {
     return <RichManualEditor value={value} accepted={accepted} disabled={disabled} pending={pending} invalid={invalid} save={save} change={change} cancel={cancel} />;
   }
@@ -336,7 +358,8 @@ export function LocalizationPanel({ context, document, disabled, selectedUnit, r
         {entry?.candidate && <div><dt>{currentCandidate ? "新しい翻訳案" : "以前の原文への翻訳案"}</dt><dd>{textOf(entry.candidate.value)}</dd></div>}</dl>
       <ManualValueEditor unit={unit} value={displayedValue} accepted={currentValue} disabled={disabled || manualPending && !buffer?.pending} pending={!!buffer?.pending} invalid={!!buffer?.invalid}
         change={(value, invalid = false) => setManualBuffer(!invalid && sameValue(value, currentValue) ? null : { target: { ...context.target }, unitId: unit.unitId, value, pending: true, ...(invalid ? { invalid: true } : {}) })}
-        cancel={() => setManualBuffer(null)} save={(value) => manual(unit, entry, value)} {...(unit.kind === "asset" && pickAsset ? { pickAsset: () => pickAsset(unit) } : {})} />
+        cancel={() => setManualBuffer(null)} save={(value) => manual(unit, entry, value)}
+        {...(unit.kind === "asset" && unit.field.endsWith(".asset") && pickAsset ? { pickAsset: () => pickAsset(unit) } : {})} />
       <div className="e-actions">{entry?.candidate && currentCandidate && <button type="button" disabled={disabled || manualPending} onClick={() => void command("adopt-candidate", unit, entry)}>翻訳案を採用</button>}
         {entry?.draftValue !== undefined && <button type="button" disabled={disabled || manualPending} onClick={() => void command("review-current", unit, entry)}>現在の訳を確認済みにする</button>}</div>
     </section>;

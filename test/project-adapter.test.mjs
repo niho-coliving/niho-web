@@ -82,6 +82,20 @@ test("registered block documents pass through the site wrapper without requiring
   assert.equal(result.document.body.at(-1).block, "HostOwned");
 });
 
+test("read-only snapshot policy is scoped, detached and rejects unsafe canonical editor links", async () => {
+  const target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
+  const policy = { reason: "公開原稿は業務側が正本です。", editUrl: "/staff/business/public-text", editLabel: "業務原稿を編集" };
+  const { wrapped } = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", readOnly: policy }) });
+  const snapshot = await wrapped.readDocument(target, signal());
+  assert.deepEqual(snapshot.readOnly, policy); policy.reason = "mutated"; assert.equal(snapshot.readOnly.reason, "公開原稿は業務側が正本です。");
+  for (const editUrl of ["javascript:alert(1)", "//evil.test/edit", "https://user:pass@example.test/edit", "#edit", "http://example.test/edit"]) {
+    const invalid = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", readOnly: { reason: "readonly", editUrl } }) }).wrapped;
+    await assert.rejects(() => invalid.readDocument(target, signal()), /編集先|unsafe|URL/);
+  }
+  const legacy = await setup().wrapped.readDocument(target, signal());
+  assert.equal(legacy.readOnly, undefined);
+});
+
 const pageHostMethods = (calls, overrides = {}) => ({
   preparePageChange: async (change) => { calls.pageChanges.push(structuredClone(change)); return { change, confirmationToken: "page-token", domain: "https://example.test", impact: { after: "https://example.test/new", linkedFrom: [], navigation: [], notes: [] } }; },
   applyPageChange: async (plan) => { calls.applies.push(structuredClone(plan)); return { status: "applied", page: { siteId: "demo", pageId: "new", locale: "ja-JP", title: "新規", path: "/new", hidden: "x" } }; },
