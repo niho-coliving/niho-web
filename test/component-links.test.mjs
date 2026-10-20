@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { rewriteInternalLinks } from "@niho/web/pages";
 import {
   DocumentValidationError, componentAssetReferences, findComponentLinks, findInstanceLinks, parseComponentLibrary, parsePageDocument, rewriteComponentLinks, rewriteInstanceLinks
 } from "@niho/web/core";
@@ -64,4 +65,15 @@ test("asset references inside components are listed for usage and deletion check
     { reference: { provider: "library", id: "texture" }, nodeId: "n1", target: "background", breakpoint: "base" },
     { reference: { provider: "library", id: "hero" }, nodeId: "n2", target: "image", breakpoint: "base" }
   ] }]);
+});
+
+test("rewrites that would exceed the URL limit are rejected instead of returning unsavable data", () => {
+  const components = library(), long = `/about?q=${"x".repeat(2030)}`, to = "/company/history/2026";
+  assert.equal(long.length <= 2048 && `${to}${long.slice(6)}`.length > 2048, true);
+  const document = parsePageDocument(page([{ type: "instance", id: "cta", component: "button", props: { href: long } }]), {}, { components });
+  assert.throws(() => rewriteInstanceLinks(document, components, "/about", to, domains), /\.props\.href: rewritten link is not a safe URL$/);
+  const linked = parseComponentLibrary({ ...structuredClone(components), components: [{ ...structuredClone(components.components[0]),
+    root: { type: "element", id: "n1", tag: "p", children: [link("n2", long, "長いリンク")] } }] });
+  assert.throws(() => rewriteComponentLinks(linked, "/about", to, domains), /\.attrs\.href: rewritten link is not a safe URL$/);
+  assert.throws(() => rewriteInternalLinks(page([link("n1", long, "長いリンク")]), "/about", to, domains), /\$\.body\.n1\.attrs\.href: rewritten link is not a safe URL$/);
 });

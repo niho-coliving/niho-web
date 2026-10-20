@@ -150,7 +150,13 @@ export function findInternalLinks(document: Pick<PageDocument, "body">, path: st
 export function rewriteInternalLinks<T extends Pick<PageDocument, "body">>(document: T, from: string, to: string, domains: readonly string[]): T {
   if (validatePagePath(to) !== null) fail("$.to", "invalid page path");
   const copy = structuredClone(document), wanted = trimSlash(from);
-  eachLink(copy.body, (node, target) => { if (target.path === wanted && node.attrs) node.attrs.href = `${to}${target.rest}`; }, domains);
+  eachLink(copy.body, (node, target) => {
+    if (target.path !== wanted || !node.attrs) return;
+    // query・fragment を残すと長さの上限を超えることがあるため、保存できない文書を返さない。
+    const href = `${to}${target.rest}`;
+    if (!isSafePublicUrl(href)) fail(`$.body.${node.id}.attrs.href`, "rewritten link is not a safe URL");
+    node.attrs.href = href;
+  }, domains);
   return copy;
 }
 
