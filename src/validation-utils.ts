@@ -1,3 +1,5 @@
+import type { AssetReference } from "./types.js";
+
 export class DocumentValidationError extends Error {
   constructor(public readonly path: string, reason: string) {
     super(`${path}: ${reason}`);
@@ -23,6 +25,17 @@ export function identifier(value: unknown, path: string): string {
   const result = string(value, path, 80);
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(result)) fail(path, "invalid identifier");
   return result;
+}
+/** 素材 ID。URL・パス区切り・空白を含まない。 */
+export function assetId(value: unknown, path: string): string {
+  const result = string(value, path, 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(result)) fail(path, "invalid asset ID");
+  return result;
+}
+export function parseAssetReference(value: unknown, path: string): AssetReference {
+  const source = record(value, path);
+  keys(source, ["provider", "id"], path);
+  return { provider: identifier(source.provider, `${path}.provider`), id: assetId(source.id, `${path}.id`) };
 }
 /** HTTP、data、javascript、protocol relative、資格情報付き URL は許可しない。 */
 export function isSafePublicUrl(value: unknown): value is string {

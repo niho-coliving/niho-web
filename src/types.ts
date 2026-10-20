@@ -13,8 +13,12 @@ export type StyleProperty =
   | "flexGrow" | "flexShrink" | "flexBasis" | "gap" | "rowGap" | "columnGap"
   | "gridTemplateColumns" | "gridTemplateRows" | "gridColumn" | "gridRow"
   | "position" | "top" | "right" | "bottom" | "left" | "zIndex"
-  | "borderWidth" | "borderStyle" | "borderRadius" | "overflow" | "objectFit" | "opacity";
-export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>>;
+  | "borderWidth" | "borderStyle" | "borderRadius" | "overflow" | "objectFit" | "opacity"
+  | "backgroundSize" | "backgroundPosition" | "backgroundRepeat";
+/** 素材ライブラリの参照。URL はホストが描画時に解決し、文書には保存しない。 */
+export type AssetReference = { provider: string; id: string };
+export type BackgroundImageValue = { asset: AssetReference };
+export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>> & { backgroundImage?: BackgroundImageValue };
 export type NodeStyle = {
   base?: StyleDeclarations;
   /** mobile first。minWidth は昇順・重複不可。 */
@@ -32,6 +36,8 @@ export type ElementNode = {
   type: "element";
   id: string;
   tag: ElementTag;
+  /** img だけが持てる。持つ場合 attrs.src は持たない。 */
+  asset?: AssetReference;
   attrs?: ElementAttributes;
   style?: NodeStyle;
   children: PageNode[];

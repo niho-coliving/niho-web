@@ -12,6 +12,9 @@ import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js"
 import { isSafePublicUrl } from "./validation-utils.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ElementTag, PageDocument, PageNode, StyleProperty, StyleValue } from "./types.js";
+import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
+import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
+import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
@@ -74,13 +77,13 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, breakpoint, selection, select, dragItem, drop, pending, editText, resize, reportError, editable, locks, preview }: {
+function Canvas({ document, blocks, width, breakpoint, selection, select, dragItem, drop, pending, editText, resize, reportError, editable, locks, preview, assets }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; select: (path: NodePath | null) => void;
   breakpoint: number | "base";
   dragItem: { current: DragItem | null }; drop: (item: DragItem, place: DropPlace) => void;
   pending: (key: string, value: boolean) => void;
   editText: (path: NodePath, children: PageNode[]) => string | undefined; resize: (path: NodePath, width: number, height: number) => string | undefined;
-  reportError: (message: string) => void; editable: boolean; locks: readonly EditorLock[]; preview: boolean;
+  reportError: (message: string) => void; editable: boolean; locks: readonly EditorLock[]; preview: boolean; assets: ResolvedAssetMap;
 }) {
   const [body, setBody] = useState<HTMLElement | null>(null), frame = useRef<HTMLIFrameElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null), [dropPlace, setDropPlace] = useState<DropPlace | null>(null);
@@ -221,7 +224,8 @@ function Canvas({ document, blocks, width, breakpoint, selection, select, dragIt
       <style>{`body{font-family:sans-serif;position:relative;}[data-nw-node]{cursor:pointer;}[data-nw-owner][data-nw-node]:is(section,div):empty{min-height:48px;outline:1px dashed #a4b9aa;}[contenteditable=true]{cursor:text!important;outline:2px solid #2d7356!important;outline-offset:3px;} ${selectedId && selectedId.type !== "text" ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"]{outline:2px solid #198558!important;outline-offset:2px;}` : ""}
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#34a66d;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#34a66d22;outline:2px dashed #198558;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#258858;box-shadow:0 0 0 1px #245b3f;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
-      <PreviewBoundary document={document}><StablePageRenderer document={document} blocks={blocks} /></PreviewBoundary>
+      <style>{canvasAssetCss}</style>
+      <PreviewBoundary document={document}><StablePageRenderer document={document} blocks={blocks} assets={assets} missingAssets="placeholder" /></PreviewBoundary>
       {dropPlace && <div aria-hidden className={`nw-drop-marker${dropPlace.marker.inside ? " inside" : ""}`} style={{ left: dropPlace.marker.left, top: dropPlace.marker.top, width: dropPlace.marker.width, height: dropPlace.marker.height }} />}
       {canResize && handleRect && resizePath && <button type="button" className="nw-resize-handle" aria-label="ドラッグして要素のサイズを変更" title={`${Math.round(handleRect.width)} × ${Math.round(handleRect.height)} px`} style={{ left: handleRect.left + handleRect.width - 7, top: handleRect.top + handleRect.height - 7 }}
         onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); const element = body.querySelector<HTMLElement>(`[data-nw-node="${selectedId.id}"]`); if (!element) return; const bounds = element.getBoundingClientRect(), computed = body.ownerDocument.defaultView?.getComputedStyle(element); resizing.current = { element, path: resizePath, x: event.clientX, y: event.clientY, width: Number.parseFloat(computed?.width ?? "") || bounds.width, height: Number.parseFloat(computed?.height ?? "") || bounds.height, inlineWidth: element.style.width, inlineHeight: element.style.height }; event.currentTarget.setPointerCapture(event.pointerId); }}
@@ -249,7 +253,7 @@ const styleText = (value: StyleValue | undefined) => value === undefined ? "" : 
 const parseStyleText = (value: string): StyleValue | undefined => value === "" ? undefined : value.startsWith("@") ? { token: value.slice(1) } : /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : value;
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets }: PageEditorProps) {
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -263,6 +267,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
   const [inspector, setInspector] = useState<"element" | "page" | "site">("page"), [preview, setPreview] = useState(false), [pageFilter, setPageFilter] = useState("");
   const [layerDrop, setLayerDrop] = useState<{ id: string; position: "before" | "inside" | "after" } | null>(null);
   const dragItem = useRef<DragItem | null>(null);
+  const [picker, setPicker] = useState<AssetPicker | null>(null), visiblePanel = picker ? "assets" : panel;
+  useEffect(() => { setPicker(null); }, [selection]);
   const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null);
   const pending = useCallback((key: string, value: boolean) => setPendingFields((previous) => {
     if (!!previous[key] === value) return previous;
@@ -307,6 +313,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
 
   function navigate(next: Navigation) {
     setNavigation(null); setSelection(null); setInspector("page"); setFieldEpoch((value) => value + 1); setPendingFields({});
+    setPicker(null);
     if (next.type === "site") { replace(null); setSiteId(next.id); }
     else if (next.type === "page") void load(next.target);
     else if (sessionRef.current) void load(sessionRef.current.target);
@@ -365,6 +372,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
       if (controller.signal.aborted) return;
       if (result.status === "conflict") { setNotice("公開が競合しました（409）。編集内容を保持しています。最新状態を確認してからやり直してください。"); setPlan(null); return; }
       replace(sessionFrom(result.snapshot, current.target, blocks)); setSelection(null); setFieldEpoch((value) => value + 1); setPlan(null); setNotice(plan.action === "rollback" ? "指定した版に戻しました。" : "公開しました。");
+      setPicker(null);
     } catch { if (!controller.signal.aborted) { setNotice("反映結果を確認できませんでした。再試行前に公開状態をホスト側で確認してください。編集内容は保持しています。"); setPlan(null); } }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
   }
@@ -374,6 +382,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
   const locks = document ? effectiveLocks(document, session?.locks ?? [], blocks) : [];
   const reason = (field: string) => document && selection ? lockReason(document, selection, field, locks) : undefined;
   const pathKey = `${fieldEpoch}-${selection?.join(".") ?? "page"}`;
+  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, document), localUsage = useLocalAssetUsage(document);
   function field(name: string, value: string, operation: (value: string) => EditorOperation, key: string, options: { reason?: string | undefined; multiline?: boolean; placeholder?: string } = {}) {
     return <Field key={`${pathKey}-${key}`} name={name} value={value} fieldKey={`${pathKey}-${key}`} pending={pending} disabled={editBlocked}
       apply={(value) => apply(operation(value))} {...options} />;
@@ -447,6 +456,20 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     if (current.type !== "text") selectId(current.id);
     else { const next = sessionRef.current?.history.present; const parent = parentId && next ? walkNodes(next).find(({ node }) => node.type !== "text" && node.id === parentId) : undefined; select([...(parent?.path ?? []), index]); }
   }
+  function applyAsset(asset: LibraryAsset, action: AssetAction): string | undefined {
+    const current = sessionRef.current;
+    if (!current || editBlocked) return "処理が完了してから配置してください。";
+    if (hasInput) return "入力を確定するか取り消してから配置してください。";
+    const target = action === "pick" ? picker : action === "insert" ? { purpose: "insert" as const, selection } : selection && (action === "replace" ? { purpose: "image" as const, path: selection } : { purpose: "background" as const, path: selection, breakpoint });
+    if (!target) return "配置先の要素を選択してください。";
+    try {
+      const placement = assetPlacement(current.history.present, asset, target), error = apply(placement.operation);
+      if (error) return error;
+      setPicker(null); if (placement.notice) setNotice(placement.notice);
+      if (placement.select) { setSelection(placement.select); setInspector("element"); setBreakpoint("base"); }
+      return undefined;
+    } catch (error) { return message(error); }
+  }
   const siblingCount = document && selection ? selection.length === 1 ? document.body.length : (nodeAt(document, selection.slice(0, -1)) as { children: PageNode[] }).children.length : 0;
   const palette = [
     { type: "section", name: "セクション", glyph: "▤", group: "構造" }, { type: "box", name: "ボックス", glyph: "□", group: "構造" },
@@ -461,6 +484,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     event.dataTransfer.setData("text/plain", item.kind === "palette" ? item.type : item.id);
   };
   return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss }} />
+    {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
     <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {pages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       <span className={`e-status${dirty ? " is-dirty" : ""}`} role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
       <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>
@@ -473,15 +497,15 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
       <nav className="e-tools" aria-label="編集ツール">{([
         ["add", "追加", "＋"], ["pages", "ページ", "▤"], ["layers", "レイヤー", "▦"], ["styles", "スタイル", "◐"], ["assets", "素材", "▧"], ["components", "部品", "◇"]
-      ] as const).map(([key, name, glyph]) => <button key={key} type="button" aria-pressed={panel === key} title={name} onClick={() => setPanel(key)}><span aria-hidden="true">{glyph}</span><small>{name}</small></button>)}</nav>
+      ] as const).map(([key, name, glyph]) => <button key={key} type="button" aria-pressed={visiblePanel === key} title={name} onClick={() => { setPicker(null); setPanel(key); }}><span aria-hidden="true">{glyph}</span><small>{name}</small></button>)}</nav>
       <div className="e-panel">
-        <section hidden={panel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
+        <section hidden={visiblePanel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
           {["構造", "文字", "メディア"].map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.type} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.type })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.type)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">{item.glyph}</span>{item.name}</button>)}</div></div>)}
           <details><summary>挿入先と詳細</summary><label className="e-field"><span>追加・移動先</span><select aria-label="追加・移動先" value={parentId} disabled={editBlocked || hasInput} onChange={(event) => setParentId(event.target.value)}><option value="">ページ直下</option>{entries.filter(({ node }) => node.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
             <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="box">ボックス</option><option value="richtext">リッチテキスト</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{availableBlocks.map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
             <button onClick={() => add()} disabled={!document || editBlocked || hasInput}>要素を追加</button></details>
         </section>
-        <section hidden={panel !== "pages"} aria-label="ページ一覧"><div className="e-panel-head"><h2>ページ</h2><p>編集するページを選択</p></div>
+        <section hidden={visiblePanel !== "pages"} aria-label="ページ一覧"><div className="e-panel-head"><h2>ページ</h2><p>編集するページを選択</p></div>
           <label className="e-field"><span>編集するサイト</span><select aria-label="編集するサイト" value={siteId} disabled={blocked} onChange={(event) => requestNavigation({ type: "site", id: event.target.value })}>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
           <label className="e-field"><span>ページ</span><select aria-label="ページ" value={session ? `${session.target.pageId}/${session.target.locale}` : ""} disabled={blocked || !pages.length} onChange={(event) => { const page = pages.find((page) => `${page.pageId}/${page.locale}` === event.target.value); if (page) requestNavigation({ type: "page", target: page }); }}>
             {!session && <option value="">選択してください</option>}{pages.map((page) => <option key={`${page.pageId}/${page.locale}`} value={`${page.pageId}/${page.locale}`}>{page.title} · {page.locale}</option>)}
@@ -490,7 +514,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
           <div className="e-page-list">{pages.filter((page) => `${page.title} ${page.pageId}`.toLowerCase().includes(pageFilter.toLowerCase())).map((page) => <button key={`${page.pageId}/${page.locale}`} type="button" aria-current={session?.target.pageId === page.pageId ? "page" : undefined} onClick={() => requestNavigation({ type: "page", target: page })} disabled={blocked}><span aria-hidden="true">▤</span><span>{page.title}<small>/{page.pageId}</small></span></button>)}</div>
           <button className="e-small" onClick={() => requestNavigation({ type: "reload" })} disabled={!session || blocked}>最新の文書を再読込</button>
         </section>
-        <section hidden={panel !== "layers"} aria-label="レイヤー一覧"><div className="e-panel-head"><h2>レイヤー</h2><p>ドラッグで並べ替え、中央にも配置できます</p></div>
+        <section hidden={visiblePanel !== "layers"} aria-label="レイヤー一覧"><div className="e-panel-head"><h2>レイヤー</h2><p>ドラッグで並べ替え、中央にも配置できます</p></div>
           <button className="e-layer" aria-pressed={!selection} onClick={() => select(null)} disabled={editBlocked}>ページ全体</button>
           <div className="e-layer-list">{entries.map(({ node, path }) => <button key={path.join(".")} type="button" className={`e-layer${layerDrop?.id === (node.type === "text" ? "" : node.id) ? ` drop-${layerDrop.position}` : ""}`} style={{ paddingLeft: 12 + (path.length - 1) * 13 }} aria-pressed={selection?.join(".") === path.join(".")} title={label(node, blocks)} onClick={() => select(path)} disabled={editBlocked} draggable={node.type !== "text" && !editBlocked && !hasInput}
             onDragStart={(event) => { if (node.type !== "text") startDrag(event, { kind: "node", id: node.id }); }} onDragEnd={() => { dragItem.current = null; setLayerDrop(null); }}
@@ -502,20 +526,25 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
             <button disabled={!selection || editBlocked || hasInput} onClick={moveToEnd}>指定先の末尾へ</button>
           </div>
         </section>
-        <section hidden={panel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>要素を選び、右側で見た目を編集</p></div><h3>このページのトークン</h3><div className="e-token-list">{Object.entries(document?.tokens ?? {}).map(([name, token]) => <div key={name}><span>{token.type === "color" && <i style={{ background: String(token.value) }} />}{name}</span><small>{String(token.value)}</small></div>)}</div></section>
-        <section hidden={panel !== "assets"} aria-label="素材"><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></section>
-        <section hidden={panel !== "components"} aria-label="部品"><div className="e-panel-head"><h2>部品</h2><p>サイトで利用できる部品</p></div>{availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">このサイトの部品はまだ登録されていません。</p>}</section>
+        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>要素を選び、右側で見た目を編集</p></div><h3>このページのトークン</h3><div className="e-token-list">{Object.entries(document?.tokens ?? {}).map(([name, token]) => <div key={name}><span>{token.type === "color" && <i style={{ background: String(token.value) }} />}{name}</span><small>{String(token.value)}</small></div>)}</div></section>
+        <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} mode={picker ? "pick" : "library"} pickTitle={picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : "画像を選ぶ"} localUsage={localUsage}
+          actions={{ replace: node?.type === "element" && node.tag === "img", background: node?.type === "component" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag), insert: !!document }}
+          disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={applyAsset} onClose={() => setPicker(null)} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
+          : <><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>
+        <section hidden={visiblePanel !== "components"} aria-label="部品"><div className="e-panel-head"><h2>部品</h2><p>サイトで利用できる部品</p></div>{availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">このサイトの部品はまだ登録されていません。</p>}</section>
         <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || dirty || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">未保存の変更がある間は実行できません。</small></details>
       </div>
     </aside>
-    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div><label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
+    <section className="e-canvas" aria-label="ライブプレビュー"><div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{preview ? "プレビュー" : "キャンバス"}</strong><small>{preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}><option value="375">モバイル · 375px</option><option value="768">タブレット · 768px</option><option value="1280">デスクトップ · 1280px</option></select></label></div><div className="e-stage">{document ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}`} document={document} blocks={blocks} width={width} breakpoint={breakpoint} selection={selection} select={select} dragItem={dragItem} drop={dropAt} pending={pending} editText={(path, children) => { const problem = apply({ type: "replaceChildren", path, children }); if (problem) setNotice(problem); return problem; }} resize={(path, width, height) => apply({ type: "resize", path, breakpoint, width, height })} reportError={setNotice} editable={!editBlocked && !hasInput} locks={locks} preview={preview} assets={resolvedAssets.map} /> : <p className="e-empty">サイトとページを選ぶと、ここにプレビューを表示します。</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ"><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => setInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => setInspector("page")}>ページ</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => setInspector("site")}>サイト</button></div>
       {inspector === "site" && <section className="e-inspector-content"><h2>サイト情報</h2><p className="e-help">{sites.find((site) => site.id === siteId)?.name ?? "サイトを選択してください"}</p>{sites.find((site) => site.id === siteId)?.domains.map((domain) => <p className="e-domain-small" key={domain}>{domain}</p>)}</section>}
       {inspector === "page" && <section className="e-inspector-content"><h2>ページ設定</h2>{document && field("ページタイトル", document.title, (value) => ({ type: "title", value }), "title")}</section>}
       {inspector === "element" && <section className="e-inspector-content"><h2>{node ? label(node, blocks) : "要素を選択してください"}</h2>
       {node?.type === "text" && selection && field("テキスト", node.text, (value) => ({ type: "text", path: selection, value }), "text", { multiline: true, reason: document ? lockReason(document, selection, "text", locks) : undefined })}
       {node?.type === "element" && selection && <>{["p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(node.tag) && <label className="e-field"><span>文字の種類</span><select aria-label="文字の種類" value={node.tag} disabled={editBlocked || !!reason("tag")} onChange={(event) => { const problem = apply({ type: "tag", path: selection, value: event.target.value as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" }); if (problem) setNotice(problem); }}><option value="p">段落</option><option value="h1">見出し 1</option><option value="h2">見出し 2</option><option value="h3">見出し 3</option><option value="h4">見出し 4</option><option value="h5">見出し 5</option><option value="h6">見出し 6</option></select></label>}{node.children.length === 1 && node.children[0]?.type === "text" && field("テキスト", node.children[0].text, (value) => ({ type: "text", path: [...selection, 0], value }), "child-text", { multiline: true, reason: document ? lockReason(document, [...selection, 0], "text", locks) : undefined })}
-        {[...(node.tag === "a" ? [["href", "リンク先 URL"]] : []), ...(node.tag === "img" ? [["src", "画像 URL"], ["alt", "画像の説明"]] : [])].map(([name, caption]) => field(caption!, String(node.attrs?.[name!] ?? ""), (value) => ({ type: "attribute", path: selection, name: name!, value }), `attrs.${name}`, { reason: reason(`attrs.${name}`) }))}</>}
+        {assets && node.tag === "img" && <ImageSourceField node={node} assets={resolvedAssets.map} failed={resolvedAssets.failed} lock={reason("attrs.src") ?? reason("asset")} disabled={editBlocked} onPick={() => setPicker({ purpose: "image", path: selection })}>
+          {field("画像 URL", node.asset ? "" : String(node.attrs?.src ?? ""), (value) => ({ type: "image", path: selection, source: { src: value } }), "attrs.src", { reason: reason("attrs.src") })}</ImageSourceField>}
+        {[...(node.tag === "a" ? [["href", "リンク先 URL"]] : []), ...(node.tag === "img" ? [...(assets ? [] : [["src", "画像 URL"]]), ["alt", "画像の説明"]] : [])].map(([name, caption]) => field(caption!, String(node.attrs?.[name!] ?? ""), (value) => ({ type: "attribute", path: selection, name: name!, value }), `attrs.${name}`, { reason: reason(`attrs.${name}`) }))}</>}
       {node?.type === "component" && selection && <><p className="e-help">表示用 props のみ編集できます。データ連動値はホストが管理します。</p>{Object.entries(blocks[node.block]!.props).map(([name, rule]) => {
         const locked = reason(`props.${name}`), value = node.props[name];
         if (rule.type === "boolean") return <label className="e-check" key={`${pathKey}-prop-${name}`}><input type="checkbox" checked={value === true} disabled={editBlocked || !!locked} onChange={(event) => { const error = apply({ type: "prop", path: selection, name, value: event.target.checked }); if (error) setNotice(error); }} />{name}{locked && <small className="e-help">ロック: {locked}</small>}</label>;
@@ -523,6 +552,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
         return field(name, String(value ?? ""), (input) => ({ type: "prop", path: selection, name, value: input === "" && !rule.required ? undefined : rule.type === "number" ? Number(input) : input }), `prop.${name}`, { reason: locked });
       })}</>}
       {node && node.type !== "text" && selection && <><label className="e-field"><span>編集する幅</span><select aria-label="編集する幅" value={breakpoint} disabled={editBlocked || hasInput} onChange={(event) => setBreakpoint(event.target.value === "base" ? "base" : Number(event.target.value))}><option value="base">共通</option>{[...new Set([375, 768, 1280, ...(node.style?.responsive?.map((entry) => entry.minWidth) ?? [])])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{value}px 以上</option>)}</select></label><small className="e-help">空欄にするとこの幅の指定を解除します。数値のサイズは px、トークンは @名前 で指定できます。</small>
+        {assets && (node.type === "component" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${breakpoint}-background`} declarations={breakpoint === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations} assets={resolvedAssets.map}
+          lock={(property) => reason(breakpoint === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint })}
+          onClear={() => { const error = apply({ type: "background", path: selection, breakpoint, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint, property, value }); if (error) setNotice(error); }} />}
         {styleGroups.map(([group, properties]) => <details key={group} open={group === "色・文字"}><summary>{group}</summary>{properties.map(([property, caption, choices]) => {
           const values = breakpoint === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations;
           const value = styleText(values?.[property]), lock = reason(breakpoint === "base" ? `style.base.${property}` : "style.responsive");

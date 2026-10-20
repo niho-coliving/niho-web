@@ -1,17 +1,23 @@
 import type { BlockContracts, PageDocument, PageNode, StyleDeclarations, StyleProperty } from "./types.js";
 import { parsePageDocument } from "./document.js";
 import { declarationCss, tokenCssValue } from "./style-values.js";
+import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
 
 /** 長さを付けて区切るため、異なる ID の組み合わせが同じ scope にならない。 */
 export function pageScope(document: Pick<PageDocument, "siteId" | "pageId" | "locale" | "revision">): string {
   return "nw-" + [document.siteId, document.pageId, document.locale, String(document.revision)]
     .map((value) => `${value.length}-${value}`).join("-");
 }
-function declarations(values: StyleDeclarations): string {
-  return (Object.keys(values) as StyleProperty[]).sort().map((property) => declarationCss(property, values[property]!)).join("");
+function declarations(values: StyleDeclarations, assets: ResolvedAssetMap): string {
+  return (Object.keys(values) as (StyleProperty | "backgroundImage")[]).sort().map((property) => {
+    if (property !== "backgroundImage") return declarationCss(property, values[property]!);
+    // src は parseResolvedAssets で引用符・空白・<> を拒否済み。解決できない宣言だけ省く。
+    const resolved = resolvedAsset(assets, values.backgroundImage!.asset);
+    return resolved ? `background-image:url("${resolved.src}");` : "";
+  }).join("");
 }
-/** @internal 検証済み文書だけで利用。公開 API は必ず再検証する。 */
-export function cssForDocument(document: PageDocument): string {
+/** @internal 検証済み文書と素材マップだけで利用。公開 API は必ず再検証する。 */
+export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap = {}): string {
   const scope = `[data-nw-scope="${pageScope(document)}"]`;
   const rules: string[] = [];
   const tokens = Object.entries(document.tokens).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
@@ -23,9 +29,9 @@ export function cssForDocument(document: PageDocument): string {
     for (const node of nodes) {
       if (node.type === "text") continue;
       const selector = `${scope} ${owner}[data-nw-node="${node.id}"]`;
-      if (node.style?.base) rules.push(`${selector}{${declarations(node.style.base)}}`);
+      if (node.style?.base) rules.push(`${selector}{${declarations(node.style.base, assets)}}`);
       for (const responsive of node.style?.responsive ?? []) {
-        rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations)}}}`);
+        rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets)}}}`);
       }
       if (node.type === "element") visit(node.children);
     }
@@ -33,6 +39,6 @@ export function cssForDocument(document: PageDocument): string {
   visit(document.body);
   return rules.join("\n");
 }
-export function generatePageCss(input: unknown, blocks: BlockContracts = {}): string {
-  return cssForDocument(parsePageDocument(input, blocks));
+export function generatePageCss(input: unknown, blocks: BlockContracts = {}, assets?: unknown): string {
+  return cssForDocument(parsePageDocument(input, blocks), assets === undefined ? {} : parseResolvedAssets(assets));
 }

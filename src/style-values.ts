@@ -1,5 +1,5 @@
-import type { DesignToken, NodeStyle, StyleDeclarations, StyleProperty, StyleValue, TokenKind } from "./types.js";
-import { fail, identifier, keys, record } from "./validation-utils.js";
+import type { BackgroundImageValue, DesignToken, NodeStyle, StyleDeclarations, StyleProperty, StyleValue, TokenKind } from "./types.js";
+import { fail, identifier, keys, parseAssetReference, record } from "./validation-utils.js";
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 100000;
 const length = (v: string) => /^(?:0|-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em|%|vh|vw|vmin|vmax|ch))$/.test(v) && Math.abs(parseFloat(v)) <= 100000;
@@ -82,7 +82,10 @@ const specs: Record<StyleProperty, PropertySpec> = {
   borderWidth: nonnegative, borderStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") },
   borderRadius: padding, overflow: { valid: oneOf("visible", "hidden", "clip", "auto", "scroll") },
   objectFit: { valid: oneOf("fill", "contain", "cover", "none", "scale-down") },
-  opacity: { kind: "number", valid: (v) => /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(v) }
+  opacity: { kind: "number", valid: (v) => /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(v) },
+  backgroundSize: { valid: oneOf("auto", "cover", "contain") },
+  backgroundPosition: { valid: oneOf("center", "top", "bottom", "left", "right", "top left", "top right", "bottom left", "bottom right") },
+  backgroundRepeat: { valid: oneOf("no-repeat", "repeat", "repeat-x", "repeat-y") }
 };
 export function tokenCssValue(token: DesignToken): string {
   return typeof token.value === "number" && token.type === "length" ? `${token.value}px` : String(token.value);
@@ -113,9 +116,16 @@ function literal(property: StyleProperty, value: unknown, path: string): string 
   if (!spec.valid(text)) fail(path, "unsupported style value");
   return text;
 }
+/** URL・token・数値は受け付けず、素材参照だけを通す。 */
+function backgroundImage(value: unknown, path: string): BackgroundImageValue {
+  const source = record(value, path);
+  keys(source, ["asset"], path);
+  return { asset: parseAssetReference(source.asset, `${path}.asset`) };
+}
 function declarations(value: unknown, tokens: Record<string, DesignToken>, path: string): StyleDeclarations {
   const source = record(value, path), result: StyleDeclarations = {};
   for (const [name, raw] of Object.entries(source)) {
+    if (name === "backgroundImage") { result.backgroundImage = backgroundImage(raw, `${path}.${name}`); continue; }
     if (!Object.hasOwn(specs, name)) fail(path, "unknown style property");
     const property = name as StyleProperty;
     if (raw !== null && typeof raw === "object") {
