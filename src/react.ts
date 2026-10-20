@@ -31,6 +31,8 @@ export function PageRenderer({ document: input, blocks = {} }: PageRendererProps
       ...(node.children.length ? node.children.map(render) : []));
   }
   return createElement(Fragment, null,
-    createElement("style", { "data-nw-style": scope }, cssForDocument(document)),
+    // React 18 HTML-escapes text children inside <style>, which changes CSS selectors.
+    // cssForDocument only emits identifiers and values accepted by the closed CSS schema.
+    createElement("style", { "data-nw-style": scope, dangerouslySetInnerHTML: { __html: cssForDocument(document) } }),
     createElement("div", { "data-nw-scope": scope, lang: document.locale }, ...document.body.map(render)));
 }

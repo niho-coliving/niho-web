@@ -242,7 +242,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
   }
   const siblingCount = document && selection ? selection.length === 1 ? document.body.length : (nodeAt(document, selection.slice(0, -1)) as { children: PageNode[] }).children.length : 0;
   return <div className="nw-editor"><style>{editorCss}</style>
-    <header className="e-toolbar" inert={!!plan || !!navigation}><span className="e-brand">ページ編集</span>
+    <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><span className="e-brand">ページ編集</span>
       <span className="e-status" role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
       <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>
       <button onClick={() => travel("redo")} disabled={!session?.history.future.length || blocked || hasInput}>やり直す</button>
@@ -250,7 +250,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
       <button className="e-primary" onClick={() => void prepare("publish")} disabled={!session || dirty || blocked || hasInput}>公開前の確認</button>
     </header>
     {notice && <div className="e-notice" role="alert">{notice}</div>}
-    <div className="e-body" inert={!!plan || !!navigation}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
+    <div className="e-body" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
       <h2>サイト</h2><label className="e-field"><span>編集するサイト</span><select aria-label="編集するサイト" value={siteId} disabled={blocked} onChange={(event) => requestNavigation({ type: "site", id: event.target.value })}>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
       <label className="e-field"><span>ページ</span><select aria-label="ページ" value={session ? `${session.target.pageId}/${session.target.locale}` : ""} disabled={blocked || !pages.length} onChange={(event) => { const page = pages.find((page) => `${page.pageId}/${page.locale}` === event.target.value); if (page) requestNavigation({ type: "page", target: page }); }}>
         {!session && <option value="">選択してください</option>}{pages.map((page) => <option key={`${page.pageId}/${page.locale}`} value={`${page.pageId}/${page.locale}`}>{page.title} · {page.locale}</option>)}
