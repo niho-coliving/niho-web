@@ -24,7 +24,7 @@
 
 element / component の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
 
-タグは `src/types.ts` の `ElementTag`、属性は `src/document.ts` の許可リストを正とします。`img` は安全な `src` と `alt` が必須です。空の alt は装飾画像として許可します。`a[target=_blank]` には `noopener noreferrer` を描画時に補います。`source.srcSet` は単一 URL のみを許可します。複数候補の srcset、SVG、iframe、form、script、style は v1 の対象外です。
+タグは `src/types.ts` の `ElementTag`、属性は `src/document.ts` の許可リストを正とします。`img` は安全な `src` か素材参照 `asset: { provider, id }` のどちらか一方と、`alt` が必須です。空の alt は装飾画像として許可します。素材参照の URL は描画時にホストの解決済み map から決め、解決できない画像は描画しません（[素材ライブラリ契約](asset-contract.md)）。`a[target=_blank]` には `noopener noreferrer` を描画時に補います。`source.srcSet` は単一 URL のみを許可します。複数候補の srcset、SVG、iframe、form、script、style は v1 の対象外です。
 
 `p` や見出しなどの phrasing content の中への block element、入れ子のリンク、void element の子、不正な list / picture の子を拒否し、初期 HTML をブラウザが組み替えて hydration と食い違うことを防ぎます。ブロックは `<div data-nw-node="…" data-nw-block="…">` に包むため、flow content の中だけで利用できます。ブロック自身が返す HTML の妥当性は利用側で保証します。
 
@@ -32,7 +32,7 @@ element / component の `id` は文書全体で一意です。element の `attrs
 
 tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
 
-`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、画像 URL、擬似クラス・擬似要素、アニメーションは v1 に含めません。
+`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、擬似クラス・擬似要素、アニメーションは v1 に含めません。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
 
 node の `style` は `base` と `responsive` の宣言を持ちます。base を先に、続いて minWidth 昇順の `@media` を生成します。Grid はトラック列と限定した `repeat()` / `minmax()` に対応します。生の selector や CSS ファイルを JSON から読み込みません。CSS と token 変数は文書の `data-nw-scope` の下だけに出力し、ノードごとの `data-nw-owner` でも所属を限定するため、入れ子の別文書へ同じノード ID のルールが漏れません。ノードへ任意 class / style / data 属性を付ける入口は設けません。
 

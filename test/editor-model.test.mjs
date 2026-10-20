@@ -93,3 +93,51 @@ test("release confirmation binds domain, target, version, action and rollback re
   for (const invalid of [{ ...plan, domain: "https://evil.example" }, { ...plan, domain: "https://example.com/path" }, { ...plan, expectedVersion: "v1" },
     { ...plan, target: { ...plan.target, pageId: "other" } }, { ...plan, action: "rollback", revision: 1 }, { ...plan, confirmationToken: "" }]) assert.throws(() => validateReleasePlan(invalid, request, site));
 });
+
+const withPhoto = (node = { attrs: { src: "/photo.webp", alt: "旧い写真" } }) => { const original = doc(); original.body[0].children.push({ type: "element", id: "photo", tag: "img", children: [], ...node }); return original; };
+test("image operations switch between library assets and URLs and keep or set alt text", () => {
+  const original = withPhoto(), sea = { provider: "uploads", id: "sea" };
+  let next = editDocument(original, { type: "image", path: [0, 3], source: { asset: sea }, alt: "朝の海" });
+  assert.deepEqual(nodeAt(next, [0, 3]).asset, sea); assert.deepEqual(nodeAt(next, [0, 3]).attrs, { alt: "朝の海" });
+  assert.equal(nodeAt(original, [0, 3]).attrs.src, "/photo.webp");
+  next = editDocument(next, { type: "image", path: [0, 3], source: { src: "https://example.com/a.webp" } });
+  assert.equal(nodeAt(next, [0, 3]).asset, undefined); assert.deepEqual(nodeAt(next, [0, 3]).attrs, { alt: "朝の海", src: "https://example.com/a.webp" });
+  assert.throws(() => editDocument(original, { type: "image", path: [0], source: { asset: sea } }), /画像を選択/);
+  for (const source of [{ src: "javascript:alert(1)" }, { asset: { provider: "uploads", id: "../sea" } }, { asset: { ...sea, src: "/x.webp" } }]) assert.throws(() => editDocument(original, { type: "image", path: [0, 3], source }), DocumentValidationError);
+  assert.throws(() => editDocument(original, { type: "image", path: [0, 3], source: { asset: sea } }, {}, [{ nodeId: "photo", fields: ["attrs.src"], reason: "外部の画像です" }]), /外部の画像です/);
+  const locked = withPhoto({ asset: sea, attrs: { alt: "" } });
+  assert.throws(() => editDocument(locked, { type: "image", path: [0, 3], source: { src: "/other.webp" } }, {}, [{ nodeId: "photo", fields: ["asset"], reason: "連動画像" }]), /連動画像/);
+  assert.throws(() => editDocument(locked, { type: "image", path: [0, 3], source: { asset: { provider: "uploads", id: "b" } } }, {}, [{ nodeId: "photo", fields: ["*"], reason: "連動画像" }]), /連動画像/);
+});
+test("background operations set and clear images per breakpoint like style operations", () => {
+  const wave = { provider: "uploads", id: "wave" };
+  let next = editDocument(doc(), { type: "background", path: [0], breakpoint: "base", asset: wave });
+  next = editDocument(next, { type: "background", path: [0], breakpoint: 768, asset: wave });
+  next = editDocument(next, { type: "background", path: [0], breakpoint: 1280, asset: { provider: "cms", id: "hero" } });
+  assert.deepEqual(nodeAt(next, [0]).style.base.backgroundImage, { asset: wave });
+  assert.deepEqual(nodeAt(next, [0]).style.responsive.map((entry) => [entry.minWidth, Object.keys(entry.declarations)]), [[768, ["maxWidth", "margin", "backgroundImage"]], [1280, ["backgroundImage"]]]);
+  next = editDocument(next, { type: "background", path: [0], breakpoint: 1280, asset: undefined });
+  next = editDocument(next, { type: "background", path: [0], breakpoint: 768, asset: undefined });
+  assert.deepEqual(nodeAt(next, [0]).style.responsive, doc().body[0].style.responsive);
+  next = editDocument(next, { type: "background", path: [0], breakpoint: "base", asset: undefined });
+  assert.deepEqual(nodeAt(next, [0]).style, doc().body[0].style);
+  assert.throws(() => editDocument(doc(), { type: "background", path: [0, 0, 0], breakpoint: "base", asset: wave }), /親要素/);
+  assert.throws(() => editDocument(doc(), { type: "background", path: [0], breakpoint: "base", asset: { provider: "uploads", id: "a b" } }), DocumentValidationError);
+  assert.throws(() => editDocument(doc(), { type: "background", path: [0], breakpoint: "base", asset: wave }, {}, [{ nodeId: "hero", fields: ["style.base.backgroundImage"], reason: "ブランド画像" }]), /ブランド画像/);
+});
+test("replaceAsset swaps every image and background reference to the same asset", () => {
+  const sea = { provider: "uploads", id: "sea" }, wave = { provider: "uploads", id: "wave" }, original = withPhoto({ asset: sea, attrs: { alt: "" } });
+  original.body[0].style.base.backgroundImage = { asset: sea }; original.body[0].style.responsive[0].declarations.backgroundImage = { asset: wave };
+  const next = editDocument(original, { type: "replaceAsset", from: sea, to: { provider: "cms", id: "new" } });
+  assert.deepEqual(nodeAt(next, [0, 3]).asset, { provider: "cms", id: "new" }); assert.deepEqual(nodeAt(next, [0]).style.base.backgroundImage, { asset: { provider: "cms", id: "new" } });
+  assert.deepEqual(nodeAt(next, [0]).style.responsive[0].declarations.backgroundImage, { asset: wave });
+  assert.throws(() => editDocument(next, { type: "replaceAsset", from: sea, to: wave }), /置き換える素材/);
+  assert.throws(() => editDocument(original, { type: "replaceAsset", from: sea, to: wave }, {}, [{ nodeId: "photo", fields: ["asset"], reason: "連動画像" }]), /連動画像/);
+});
+test("add can insert at a position within the destination", () => {
+  const next = editDocument(doc(), { type: "add", parentId: "hero", index: 1, node: newElement("img", "photo") });
+  assert.deepEqual(nodeAt(next, [0]).children.map((node) => node.id), ["heading", "photo", "lead", "link"]);
+  assert.equal(editDocument(doc(), { type: "add", parentId: null, index: 0, node: newElement("p", "first") }).body[0].id, "first");
+  assert.equal(editDocument(doc(), { type: "add", parentId: "hero", index: 3, node: newElement("p", "last") }).body[0].children[3].id, "last");
+  for (const index of [-1, 4, 1.5, Number.NaN]) assert.throws(() => editDocument(doc(), { type: "add", parentId: "hero", index, node: newElement("p", "x") }), /追加先の位置が不正です/);
+});

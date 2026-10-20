@@ -1,6 +1,6 @@
 import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
-import type { ElementNode, PageDocument, PageNode, PublicPropValue, StyleProperty, StyleValue } from "./types.js";
+import type { AssetReference, ComponentNode, ElementNode, PageDocument, PageNode, PublicPropValue, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
 import { isSafeHttpsOrigin } from "./validation-utils.js";
 
 export type NodePath = readonly number[];
@@ -14,6 +14,9 @@ export type EditorOperation =
   | { type: "title"; value: string }
   | { type: "add"; parentId: string | null; node: PageNode; index?: number }
   | { type: "replaceChildren"; path: NodePath; children: PageNode[] }
+  | { type: "image"; path: NodePath; source: { asset: AssetReference } | { src: string }; alt?: string }
+  | { type: "background"; path: NodePath; breakpoint: number | "base"; asset: AssetReference | undefined }
+  | { type: "replaceAsset"; from: AssetReference; to: AssetReference }
   | { type: "duplicate" | "remove"; path: NodePath }
   | { type: "move"; path: NodePath; parentId: string | null; index: number };
 export type EditorHistory = { past: PageDocument[]; present: PageDocument; future: PageDocument[] };
@@ -88,13 +91,33 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     if (!found || found.type !== "element") throw new Error("追加・移動先が見つかりません。");
     return found.children;
   };
+  const declarationsAt = (node: ElementNode | ComponentNode, breakpoint: number | "base"): StyleDeclarations => {
+    node.style ??= {};
+    if (breakpoint === "base") return node.style.base ??= {};
+    node.style.responsive ??= [];
+    let entry = node.style.responsive.find((entry) => entry.minWidth === breakpoint);
+    if (!entry) { entry = { minWidth: breakpoint, declarations: {} }; node.style.responsive.push(entry); }
+    node.style.responsive.sort((a, b) => a.minWidth - b.minWidth);
+    return entry.declarations;
+  };
+  const pruneResponsive = (node: ElementNode | ComponentNode) => { if (node.style?.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length); };
   if (operation.type === "title") draft.title = operation.value;
   else if (operation.type === "add") {
     const destination = targetChildren(operation.parentId), index = operation.index ?? destination.length;
     if (!Number.isInteger(index) || index < 0 || index > destination.length) throw new Error("追加先の位置が不正です。");
     destination.splice(index, 0, structuredClone(operation.node));
-  }
-  else {
+  } else if (operation.type === "replaceAsset") {
+    const { from, to } = operation, same = (reference: AssetReference) => reference.provider === from.provider && reference.id === from.id;
+    let count = 0;
+    for (const { node } of walkNodes(draft)) {
+      if (node.type === "text") continue;
+      if (node.type === "element" && node.asset && same(node.asset)) { node.asset = structuredClone(to); count++; }
+      for (const declarations of [node.style?.base, ...(node.style?.responsive ?? []).map((entry) => entry.declarations)]) {
+        if (declarations?.backgroundImage && same(declarations.backgroundImage.asset)) { declarations.backgroundImage = { asset: structuredClone(to) }; count++; }
+      }
+    }
+    if (!count) throw new Error("置き換える素材がこのページにありません。");
+  } else {
     const node = nodeAt(draft, operation.path);
     if (operation.type === "text") {
       if (node.type !== "text") throw new Error("テキストを選択してください。");
@@ -115,21 +138,23 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       if (operation.value === undefined) delete node.props[operation.name]; else node.props[operation.name] = operation.value;
     } else if (operation.type === "style" || operation.type === "resize") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
-      node.style ??= {};
-      let declarations;
-      if (operation.breakpoint === "base") declarations = node.style.base ??= {};
-      else {
-        node.style.responsive ??= [];
-        let entry = node.style.responsive.find((entry) => entry.minWidth === operation.breakpoint);
-        if (!entry) { entry = { minWidth: operation.breakpoint, declarations: {} }; node.style.responsive.push(entry); }
-        node.style.responsive.sort((a, b) => a.minWidth - b.minWidth);
-        declarations = entry.declarations;
-      }
+      const declarations = declarationsAt(node, operation.breakpoint);
       if (operation.type === "resize") {
         if (![operation.width, operation.height].every((value) => Number.isFinite(value) && value >= 1 && value <= 10000)) throw new Error("幅と高さは1〜10000pxで指定してください。");
         declarations.width = Math.round(operation.width); declarations.height = Math.round(operation.height);
       } else if (operation.value === undefined) delete declarations[operation.property]; else declarations[operation.property] = operation.value;
-      if (node.style.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length);
+      pruneResponsive(node);
+    } else if (operation.type === "image") {
+      if (node.type !== "element" || node.tag !== "img") throw new Error("画像を選択してください。");
+      node.attrs ??= {};
+      if ("asset" in operation.source) { node.asset = structuredClone(operation.source.asset); delete node.attrs.src; }
+      else { node.attrs.src = operation.source.src; delete node.asset; }
+      if (operation.alt !== undefined) node.attrs.alt = operation.alt;
+    } else if (operation.type === "background") {
+      if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      const declarations = declarationsAt(node, operation.breakpoint);
+      if (operation.asset === undefined) delete declarations.backgroundImage; else declarations.backgroundImage = { asset: structuredClone(operation.asset) };
+      pruneResponsive(node);
     } else if (operation.type === "remove") parentChildren(operation.path).splice(operation.path.at(-1)!, 1);
     else if (operation.type === "duplicate") {
       const subtree = node.type === "text" ? [] : walkNodes({ ...draft, body: [node] });
