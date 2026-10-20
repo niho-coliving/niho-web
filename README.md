@@ -8,14 +8,14 @@
 
 ## 利用開始
 
-Node.js 22 以上が必要です。React renderer には React 19、HTML helper にはさらに React DOM 19 を利用側で用意します。検証・CSS の `@niho/web/core` だけを利用する場合は React を必要としません。npm 公開前でも、リポジトリ直下を Git dependency として利用できます。利用先ではレビュー済みの commit SHA に固定してください。
+Node.js 22 以上が必要です。React renderer には React 18.3 または 19、HTML helper には同じ版の React DOM を利用側で用意します。検証・CSS の `@niho/web/core` だけを利用する場合は React を必要としません。npm 公開前でも、リポジトリ直下を Git dependency として利用できます。利用先ではレビュー済みの commit SHA に固定してください。
 
 ```json
 {
   "dependencies": {
     "@niho/web": "github:niho-coliving/niho-web#<reviewed-commit-sha>",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0"
   }
 }
 ```
