@@ -149,7 +149,7 @@ const html = renderPageToHtml(document);
 
 ## 開発
 
-スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。3レールのライブ編集、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
+スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。左の追加・ページ・レイヤーパネル、中央キャンバスでの直接文字編集とドラッグ配置、右インスペクタ、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
 
 プロジェクト管理は `@niho/web/projects` と `@niho/web/project-manager` を使います。1プロジェクトは唯一のサイトと複数メンバーを持ち、同じメンバーは別プロジェクトにも参加できます。ユーザーIDは数字開始を含む最大128文字のopaque値として扱い、既存Projectの消失やSite差替えを拒否します。権限・ロール・招待・認証・ID採番・本番DB/APIは含まず、認証済みホストのatomic CAS adapterが必要です。[共通プロジェクト契約](docs/project-contract.md)を参照してください。
 

@@ -7,10 +7,13 @@ export type NodePath = readonly number[];
 export type EditorOperation =
   | { type: "text"; path: NodePath; value: string }
   | { type: "attribute"; path: NodePath; name: string; value: string }
+  | { type: "tag"; path: NodePath; value: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" }
   | { type: "prop"; path: NodePath; name: string; value: PublicPropValue | undefined }
   | { type: "style"; path: NodePath; breakpoint: number | "base"; property: StyleProperty; value: StyleValue | undefined }
+  | { type: "resize"; path: NodePath; breakpoint: number | "base"; width: number; height: number }
   | { type: "title"; value: string }
-  | { type: "add"; parentId: string | null; node: PageNode }
+  | { type: "add"; parentId: string | null; node: PageNode; index?: number }
+  | { type: "replaceChildren"; path: NodePath; children: PageNode[] }
   | { type: "duplicate" | "remove"; path: NodePath }
   | { type: "move"; path: NodePath; parentId: string | null; index: number };
 export type EditorHistory = { past: PageDocument[]; present: PageDocument; future: PageDocument[] };
@@ -86,12 +89,22 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     return found.children;
   };
   if (operation.type === "title") draft.title = operation.value;
-  else if (operation.type === "add") targetChildren(operation.parentId).push(structuredClone(operation.node));
+  else if (operation.type === "add") {
+    const destination = targetChildren(operation.parentId), index = operation.index ?? destination.length;
+    if (!Number.isInteger(index) || index < 0 || index > destination.length) throw new Error("追加先の位置が不正です。");
+    destination.splice(index, 0, structuredClone(operation.node));
+  }
   else {
     const node = nodeAt(draft, operation.path);
     if (operation.type === "text") {
       if (node.type !== "text") throw new Error("テキストを選択してください。");
       node.text = operation.value;
+    } else if (operation.type === "replaceChildren") {
+      if (node.type !== "element") throw new Error("文字を編集できる要素を選択してください。");
+      node.children = structuredClone(operation.children);
+    } else if (operation.type === "tag") {
+      if (node.type !== "element" || !["p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(node.tag)) throw new Error("見出し・段落を選択してください。");
+      node.tag = operation.value;
     } else if (operation.type === "attribute") {
       if (node.type !== "element") throw new Error("要素を選択してください。");
       node.attrs ??= {};
@@ -100,7 +113,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     } else if (operation.type === "prop") {
       if (node.type !== "component") throw new Error("ブロックを選択してください。");
       if (operation.value === undefined) delete node.props[operation.name]; else node.props[operation.name] = operation.value;
-    } else if (operation.type === "style") {
+    } else if (operation.type === "style" || operation.type === "resize") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
       node.style ??= {};
       let declarations;
@@ -112,7 +125,10 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
         node.style.responsive.sort((a, b) => a.minWidth - b.minWidth);
         declarations = entry.declarations;
       }
-      if (operation.value === undefined) delete declarations[operation.property]; else declarations[operation.property] = operation.value;
+      if (operation.type === "resize") {
+        if (![operation.width, operation.height].every((value) => Number.isFinite(value) && value >= 1 && value <= 10000)) throw new Error("幅と高さは1〜10000pxで指定してください。");
+        declarations.width = Math.round(operation.width); declarations.height = Math.round(operation.height);
+      } else if (operation.value === undefined) delete declarations[operation.property]; else declarations[operation.property] = operation.value;
       if (node.style.responsive) node.style.responsive = node.style.responsive.filter((entry) => Object.keys(entry.declarations).length);
     } else if (operation.type === "remove") parentChildren(operation.path).splice(operation.path.at(-1)!, 1);
     else if (operation.type === "duplicate") {
