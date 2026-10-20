@@ -58,13 +58,46 @@ test("Search Console property scope preserves www, slash, and domain/path distin
   const input = connection();
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "https://www.kamakura.example/");
   input.searchConsole.property = { kind: "domain", value: "sc-domain:kamakura.example" };
+  input.searchConsole.verificationMethod = "dns";
+  input.searchConsole.reportingState = "property-mismatch";
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "sc-domain:kamakura.example");
   input.searchConsole.property = { kind: "url-prefix", value: "https://www.kamakura.example/pages/" };
   assert.equal(parseSiteAnalyticsConnection(input).searchConsole.property.value, "https://www.kamakura.example/pages/");
+  input.searchConsole.reportingState = "connected";
+  assert.throws(() => parseSiteAnalyticsConnection(input, target), /exact URL-prefix property/u);
+  input.searchConsole.property = { kind: "url-prefix", value: "https://kamakura.example/" };
+  assert.throws(() => parseSiteAnalyticsConnection(input, target), /exact URL-prefix property/u);
   for (const value of ["https://www.kamakura.example", "http://www.kamakura.example/", "https://www.kamakura.example/?x=1", "sc-domain:kamakura.example"]) {
     input.searchConsole.property = { kind: "url-prefix", value };
     assert.throws(() => parseSiteAnalyticsConnection(input), SiteAnalyticsContractError);
   }
+});
+
+test("Search Console domain properties cannot claim meta-tag verification", () => {
+  const input = connection();
+  input.searchConsole.property = { kind: "domain", value: "sc-domain:kamakura.example" };
+  input.searchConsole.verificationMethod = "meta-tag";
+  input.searchConsole.reportingState = "property-mismatch";
+  assert.throws(() => parseSiteAnalyticsConnection(input), /domain properties require DNS verification/u);
+  input.searchConsole.verificationMethod = "dns";
+  assert.equal(parseSiteAnalyticsConnection(input).searchConsole.verificationMethod, "dns");
+});
+
+test("UTC timestamps reject impossible calendar dates and clock values", () => {
+  for (const lastSyncedAt of [
+    "2026-02-30T01:00:00Z",
+    "2026-13-01T01:00:00Z",
+    "2026-10-20T24:00:00Z",
+    "2026-10-20T01:60:00Z",
+    "2026-10-20T01:00:60Z"
+  ]) {
+    const input = connection();
+    input.ga4.lastSyncedAt = lastSyncedAt;
+    assert.throws(() => parseSiteAnalyticsConnection(input), SiteAnalyticsContractError, lastSyncedAt);
+  }
+  const valid = connection();
+  valid.ga4.lastSyncedAt = "2024-02-29T23:59:59.999Z";
+  assert.equal(parseSiteAnalyticsConnection(valid).ga4.lastSyncedAt, "2024-02-29T23:59:59.999Z");
 });
 
 test("reports distinguish known zero from unavailable and retain provider date bases", () => {

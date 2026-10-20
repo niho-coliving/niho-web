@@ -106,7 +106,7 @@ export type SiteAnalyticsChangePlan = {
 };
 
 /** Host methods always authorize the current user and exact project/site/origin. */
-export type SiteAnalyticsAdapter = {
+export type SiteAnalyticsConnectionAdapter = {
   readConnection(target: SiteAnalyticsTarget, signal: AbortSignal): Promise<unknown>;
   readReport(request: { readonly target: SiteAnalyticsTarget; readonly period: SiteAnalyticsPeriod }, signal: AbortSignal): Promise<unknown>;
   prepareGa4TrackingTag(request: { readonly target: SiteAnalyticsTarget; readonly measurementId: string }, signal: AbortSignal): Promise<unknown>;
@@ -129,6 +129,9 @@ export type SiteAnalyticsAdapter = {
   prepareSearchConsoleReportingDisconnection(target: SiteAnalyticsTarget, signal: AbortSignal): Promise<unknown>;
   disconnectSearchConsoleReporting(request: { readonly target: SiteAnalyticsTarget; readonly confirmationToken: string }, signal: AbortSignal): Promise<unknown>;
 };
+
+/** @deprecated Use SiteAnalyticsConnectionAdapter; SiteAnalyticsAdapter names the read-only view contract in @niho/web/analytics. */
+export type SiteAnalyticsAdapter = SiteAnalyticsConnectionAdapter;
 
 export class SiteAnalyticsContractError extends Error {
   constructor(public readonly path: string, reason: string) {
@@ -156,8 +159,14 @@ function nullableString(value: unknown, path: string, max = 256): string | null 
 }
 function timestamp(value: unknown, path: string, nullable = true): string | null {
   if (value === null && nullable) return null;
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) || !Number.isFinite(Date.parse(value))) {
+  if (typeof value !== "string") return invalid(path, "expected a UTC timestamp");
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u.exec(value);
+  if (match === null || !Number.isFinite(Date.parse(value))) {
     return invalid(path, "expected a UTC timestamp");
+  }
+  date(match[1]!, `${path}.date`);
+  if (Number(match[2]) > 23 || Number(match[3]) > 59 || Number(match[4]) > 59) {
+    return invalid(path, "expected a valid UTC timestamp");
   }
   return value;
 }
@@ -236,7 +245,7 @@ function parseGa4(input: unknown): SiteAnalyticsConnection["ga4"] {
   return { measurementId, trackingTagState, propertyId, reportingState, propertyTimeZone, lastSyncedAt };
 }
 
-function parseSearchConsole(input: unknown): SiteAnalyticsConnection["searchConsole"] {
+function parseSearchConsole(input: unknown, target: SiteAnalyticsTarget): SiteAnalyticsConnection["searchConsole"] {
   const path = "connection.searchConsole", value = object(input, path);
   exactKeys(value, ["property", "ownershipState", "verificationMethod", "reportingState", "lastSyncedAt"], path);
   const selectedProperty = value.property === null ? null : property(value.property, `${path}.property`);
@@ -244,8 +253,12 @@ function parseSearchConsole(input: unknown): SiteAnalyticsConnection["searchCons
   const verificationMethod = value.verificationMethod === null ? null : enumValue(value.verificationMethod, ["meta-tag", "dns"] as const, `${path}.verificationMethod`);
   const reportingState = enumValue(value.reportingState, ["not-connected", "checking", "connected", "permission-required", "property-mismatch", "permission-revoked", "syncing", "sync-delayed", "quota-limited", "partial", "failed"] as const, `${path}.reportingState`);
   const lastSyncedAt = timestamp(value.lastSyncedAt, `${path}.lastSyncedAt`);
+  if (verificationMethod !== null && selectedProperty === null) invalid(path, "verification method requires a property");
+  if (selectedProperty?.kind === "domain" && verificationMethod === "meta-tag") invalid(path, "domain properties require DNS verification");
   if (ownershipState === "verified" && (selectedProperty === null || verificationMethod === null)) invalid(path, "verified ownership requires a property and method");
-  if (reportingState === "connected" && selectedProperty === null) invalid(path, "connected reporting requires a property");
+  if (reportingState === "connected" && (selectedProperty?.kind !== "url-prefix" || selectedProperty.value !== `${target.siteOrigin}/`)) {
+    invalid(`${path}.property`, "connected reporting requires the exact URL-prefix property for the selected origin");
+  }
   return { property: selectedProperty, ownershipState, verificationMethod, reportingState, lastSyncedAt };
 }
 
@@ -253,7 +266,7 @@ export function parseSiteAnalyticsConnection(input: unknown, expectedTarget?: Si
   const value = object(input, "connection");
   exactKeys(value, ["target", "ga4", "searchConsole"], "connection");
   const target = expectedTarget ? assertSiteAnalyticsTarget(value.target, expectedTarget, "connection.target") : parseSiteAnalyticsTarget(value.target, "connection.target");
-  return { target, ga4: parseGa4(value.ga4), searchConsole: parseSearchConsole(value.searchConsole) };
+  return { target, ga4: parseGa4(value.ga4), searchConsole: parseSearchConsole(value.searchConsole, target) };
 }
 
 function count(value: unknown, path: string): number | null {
