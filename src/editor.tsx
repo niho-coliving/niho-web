@@ -242,7 +242,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: 
     structural({ type: "move", path: selection, parentId: parent?.type === "element" ? parent.id : null, index: selection.at(-1)! + delta });
   }
   const siblingCount = document && selection ? selection.length === 1 ? document.body.length : (nodeAt(document, selection.slice(0, -1)) as { children: PageNode[] }).children.length : 0;
-  return <div className="nw-editor"><style>{editorCss}</style>
+  return <div className="nw-editor"><style dangerouslySetInnerHTML={{ __html: editorCss }} />
     <header className="e-toolbar" ref={(element) => { if (element) element.inert = !!plan || !!navigation; }}><span className="e-brand">ページ編集</span>
       <span className="e-status" role="status">{busy || (hasInput ? "入力を確認中" : dirty ? "未保存の変更あり" : session ? "保存済み" : "文書を選択してください")}</span>
       <button onClick={() => travel("undo")} disabled={!session?.history.past.length || blocked || hasInput}>元に戻す</button>

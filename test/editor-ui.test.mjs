@@ -8,8 +8,15 @@ for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Ele
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
+const { renderToString } = await import("react-dom/server");
 const { PageEditor } = await import("@niho/web/editor");
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
+test("editor CSS remains literal in server-rendered HTML", () => {
+  const html = renderToString(createElement(PageEditor, { adapter: {} }));
+  const stylesheet = html.match(/<style>([^]*?)<\/style>/)?.[1];
+  assert.ok(stylesheet?.includes('"Segoe UI"'));
+  assert.ok(!stylesheet.includes("&quot;"));
+});
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
 const input = (text) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
