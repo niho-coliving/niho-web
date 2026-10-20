@@ -7,7 +7,7 @@ import { fingerprint, sameTarget } from "./editor-model.js";
 import { Icon } from "./editor-pages.js";
 import { diffDocuments, parseRevisionEntry, parseRevisionPage, RecoveryTooLargeError, type DocumentChange, type EditorRecoveryStore, type EditorRevisionEntry, type EditorRevisionKind } from "./history.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorReleaseAffected, EditorSnapshot, EditorTarget } from "./editor-types.js";
-import type { PageDocument } from "./types.js";
+import type { ComponentLibrary, PageDocument } from "./types.js";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 /** ja-JP の YYYY/MM/DD HH:MM（端末の時刻）。 */
@@ -91,27 +91,31 @@ export function DiffTable({ changes, columns }: { changes: readonly DocumentChan
 
 export type RecoveryOffer = { target: EditorTarget; document: PageDocument; baseVersion: string; updatedAt: string };
 type RecoveryPhase = { epoch: number; key: string; state: "checking" | "offer" | "idle" | "discarded"; at?: PageDocument | undefined };
-function recoveredEntry(stored: unknown, target: EditorTarget, blocks: EditorBlockRegistry): RecoveryOffer | null {
+// 共通部品のインスタンスを含む文書。ライブラリで展開できない退避内容は、消さずに残す（部品が戻れば復元できる）。
+const hasInstance = (document: unknown) => { try { return JSON.stringify(document).includes('"type":"instance"'); } catch { return false; } };
+function recoveredEntry(stored: unknown, target: EditorTarget, blocks: EditorBlockRegistry, components?: ComponentLibrary): RecoveryOffer | "unresolved" | null {
   if (!stored || typeof stored !== "object") return null;
   const { target: place, baseVersion, baseRevision, document, updatedAt } = stored as Record<string, unknown>;
   if (!place || typeof place !== "object" || !sameTarget(place as EditorTarget, target) || typeof baseVersion !== "string" || !baseVersion ||
     typeof baseRevision !== "number" || !Number.isSafeInteger(baseRevision) || baseRevision < 1 || typeof updatedAt !== "string" || !Number.isFinite(Date.parse(updatedAt))) return null;
   try {
-    const parsed = parsePageDocument(document, blocks);
+    const parsed = parsePageDocument(document, blocks, components ? { components } : {});
     return sameTarget(parsed, target) ? { target: copyTarget(target), document: parsed, baseVersion, updatedAt } : null;
-  } catch { return null; }
+  } catch { return hasInstance(document) ? "unresolved" : null; }
 }
 /**
  * 文書の読込ごとに退避内容を確認し、それ以外は確定した編集から 800ms 後に退避する。
  * 復元の提案中は退避内容を上書き・削除しない。保存などで未保存の変更が無くなったら消す。
  */
-export function useRecovery({ store, session, dirty, blocks, epoch, report }: {
+export function useRecovery({ store, session, dirty, blocks, components, epoch, report }: {
   store: EditorRecoveryStore | undefined; session: { target: EditorTarget; version: string; present: PageDocument } | undefined; dirty: boolean;
-  blocks: EditorBlockRegistry; epoch: number; report: (text: string) => void;
+  /** 退避内容のインスタンスを検証する、文書を開いた時点の共通部品。変わっても確認し直さない。 */
+  blocks: EditorBlockRegistry; components?: ComponentLibrary | undefined; epoch: number; report: (text: string) => void;
 }) {
   const [offer, setOffer] = useState<RecoveryOffer | null>(null), [phase, setPhase] = useState<RecoveryPhase>({ epoch: -1, key: "", state: "idle" });
   const latest = useRef(session), phaseRef = useRef(phase), reporter = useRef(report), written = useRef(false), warned = useRef(false), pendingWrite = useRef<(() => void) | null>(null);
-  latest.current = session; phaseRef.current = phase; reporter.current = report;
+  const library = useRef(components);
+  latest.current = session; phaseRef.current = phase; reporter.current = report; library.current = components;
   const key = targetKeyOf(session?.target), present = session?.present, version = session?.version;
   useEffect(() => {
     setOffer(null); written.current = false; warned.current = false; pendingWrite.current = null;
@@ -122,7 +126,8 @@ export function useRecovery({ store, session, dirty, blocks, epoch, report }: {
     const target = copyTarget(current.target), loaded = current.present;
     Promise.resolve().then(() => store.read(target)).then((stored) => {
       if (cancelled) return;
-      const recovered = stored ? recoveredEntry(stored, target, blocks) : null;
+      const recovered = stored ? recoveredEntry(stored, target, blocks, library.current) : null;
+      if (recovered === "unresolved") { reporter.current("端末に残っていた変更がありますが、共通部品の現在の内容と合わないため復元できません。"); setPhase({ epoch, key: currentKey, state: "idle" }); return; }
       if (recovered && fingerprint({ ...recovered.document, revision: 0 }) !== fingerprint({ ...loaded, revision: 0 })) { setOffer(recovered); setPhase({ epoch, key: currentKey, state: "offer" }); return; }
       if (stored) silent(() => store.remove(target));
       setPhase({ epoch, key: currentKey, state: "idle" });
@@ -188,8 +193,8 @@ export function RecoveryCompareDialog({ base, baseLabel, recovered, stale, close
 
 export type LatestSnapshot = { snapshot: EditorSnapshot; document: PageDocument };
 /** 409 のあと最新の保存内容を読み、差分を見てから残す内容を選ぶ。読込だけでは作業コピーを変えない。 */
-export function ConflictDialog({ adapter, target, present, blocks, close, discard, overwrite }: {
-  adapter: EditorAdapter; target: EditorTarget; present: PageDocument; blocks: EditorBlockRegistry;
+export function ConflictDialog({ adapter, target, present, blocks, components, close, discard, overwrite }: {
+  adapter: EditorAdapter; target: EditorTarget; present: PageDocument; blocks: EditorBlockRegistry; components?: ComponentLibrary | undefined;
   close: () => void; discard: (latest: LatestSnapshot) => void; overwrite: (latest: LatestSnapshot) => void;
 }) {
   const [latest, setLatest] = useState<LatestSnapshot | null>(null), [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0), [confirmed, setConfirmed] = useState(false);
@@ -199,12 +204,12 @@ export function ConflictDialog({ adapter, target, present, blocks, close, discar
     setLatest(null); setFailed(false); setConfirmed(false);
     adapter.readDocument(requested, controller.signal).then((snapshot) => {
       if (controller.signal.aborted) return;
-      const document = parsePageDocument(snapshot?.document, blocks);
+      const document = parsePageDocument(snapshot?.document, blocks, components ? { components } : {});
       if (!sameTarget(document, requested) || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("target mismatch");
       setLatest({ snapshot, document });
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [adapter, blocks, siteId, pageId, locale, attempt]);
+  }, [adapter, blocks, components, siteId, pageId, locale, attempt]);
   return <Dialog name="最新の保存内容との比較" dismiss={close}><h2>保存内容が競合しています</h2>
     <p>ほかの保存で内容が更新されています。最新の保存内容とあなたの編集を見比べて、残す内容を選んでください。</p>
     {failed ? <><p className="e-help e-problem" role="alert">最新の内容を取得できませんでした。編集内容は保持しています。</p><button type="button" className="e-small" onClick={() => setAttempt((value) => value + 1)}>再試行</button></>
@@ -221,15 +226,16 @@ type RevisionList = { status: "idle" | "loading" | "error" | "ready"; entries: r
 const emptyList: RevisionList = { status: "idle", entries: [], next: undefined, more: "idle" };
 type SnapshotForm = { label: string; error: string; busy: boolean };
 /** 版履歴パネルの状態。ページ・サイトの切替と再読込で閉じ、進行中の要求を abort する。 */
-export function useVersionHistory({ adapter, blocks, target, version, epoch, report, guard }: {
-  adapter: EditorAdapter; blocks: EditorBlockRegistry; target: EditorTarget | undefined; version: string | undefined; epoch: number;
+export function useVersionHistory({ adapter, blocks, components, target, version, epoch, report, guard }: {
+  /** 版のインスタンスを検証する共通部品。 */
+  adapter: EditorAdapter; blocks: EditorBlockRegistry; components?: ComponentLibrary | undefined; target: EditorTarget | undefined; version: string | undefined; epoch: number;
   report: (text: string) => void; guard: () => string | undefined;
 }) {
   const [open, setOpen] = useState(false), [list, setList] = useState<RevisionList>(emptyList), [attempt, setAttempt] = useState(0);
   const [viewing, setViewing] = useState<{ entry: EditorRevisionEntry; document: PageDocument } | null>(null), [reading, setReading] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"diff" | "snapshot" | null>(null), [snapshot, setSnapshot] = useState<SnapshotForm>({ label: "", error: "", busy: false });
-  const controllers = useRef(new Set<AbortController>()), latest = useRef({ target, version, report, guard, list });
-  latest.current = { target, version, report, guard, list };
+  const controllers = useRef(new Set<AbortController>()), latest = useRef({ target, version, report, guard, list, components });
+  latest.current = { target, version, report, guard, list, components };
   const key = targetKeyOf(target);
   const track = () => { const controller = new AbortController(); controllers.current.add(controller); return controller; };
   const untrack = (controller: AbortController) => { controllers.current.delete(controller); };
@@ -269,7 +275,7 @@ export function useVersionHistory({ adapter, blocks, target, version, epoch, rep
     const controller = track(); readController.current = controller; setReading(entry.id);
     adapter.readRevision({ target: requested, id: entry.id }, controller.signal).then((result) => {
       if (controller.signal.aborted || targetKeyOf(latest.current.target) !== targetKeyOf(requested)) return;
-      const document = parsePageDocument(result?.document, blocks);
+      const library = latest.current.components, document = parsePageDocument(result?.document, blocks, library ? { components: library } : {});
       if (!sameTarget(document, requested)) throw new Error("target mismatch");
       setViewing({ entry, document });
     }).catch(() => { if (!controller.signal.aborted) latest.current.report("この版を読み込めませんでした。"); })

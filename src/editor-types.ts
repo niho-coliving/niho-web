@@ -58,8 +58,9 @@ export type ComponentLibrarySnapshot = {
 export type ComponentUsageEntry = {
   target: EditorTarget;
   title: string;
-  role?: "page" | "template" | "frame";
-  /** template / frame の場合、その文書と一緒に表示される公開ページ数。 */
+  /** 文書の種類（EditorPage.kind と同じ）。省略時はページ一覧の同じ文書の kind、無ければ page として扱う。 */
+  role?: PageKind;
+  /** template / shared の場合、その文書と一緒に表示される公開ページ数。 */
   reach?: number;
   /** 部品 ID ごとのインスタンス数（入れ子の部品経由を含む）。 */
   components: Readonly<Record<string, number>>;
@@ -67,7 +68,8 @@ export type ComponentUsageEntry = {
 /** 保存はページの下書きと同じく、expectedVersion の比較・revision の採番・競合の変換をホストが原子的に行う。 */
 export interface EditorComponentAdapter {
   readLibrary(siteId: string, signal: AbortSignal): Promise<ComponentLibrarySnapshot>;
-  saveLibrary(request: { siteId: string; library: ComponentLibrary; expectedVersion: string }, signal: AbortSignal): Promise<EditorSaveResult>;
+  /** trigger は自動保存のときだけ "autosave"（saveDraft と同じ）。 */
+  saveLibrary(request: { siteId: string; library: ComponentLibrary; expectedVersion: string; trigger?: "autosave" }, signal: AbortSignal): Promise<EditorSaveResult>;
   /** 保存済みの下書きを対象にした使用状況。 */
   listUsage(siteId: string, signal: AbortSignal): Promise<readonly ComponentUsageEntry[]>;
 }
