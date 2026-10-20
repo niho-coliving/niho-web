@@ -34,6 +34,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
 | `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
+| `@niho/web/analytics` | GA4 / Search Console を分けて示す読取専用画面、型付きadapter、応答検証 |
 
 React は optional peer dependency です。API サーバーなど React を入れない利用先では `import { parsePageDocument } from '@niho/web/core'` を使います。root と `/react` は React runtime を import します。
 
@@ -181,6 +182,8 @@ npm run demo:projects
 ```
 
 この動作例は架空メンバーを持つ2プロジェクトをメモリ内だけで操作し、選択プロジェクトの1サイトに限定した `PageEditor` 接続も表示します。実アカウント、実サイト、本番永続化には接続しません。
+
+サイト分析は `@niho/web/analytics` の `SiteAnalytics` を認証済みホストの読取adapterへ接続します。[サイト分析の契約](docs/analytics-contract.md)と `npm run demo:analytics` の合成データ例を参照してください。
 
 ```sh
 npm ci
