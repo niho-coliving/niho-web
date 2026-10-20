@@ -46,4 +46,9 @@ export type EditorBlockRegistry = Readonly<Record<string, BlockDefinition & {
   /** データ連動値。すべての同種ブロックへ適用し、理由を表示する。 */
   lockedProps?: Readonly<Record<string, string>>;
 }>>;
-export type PageEditorProps = { adapter: EditorAdapter; blocks?: EditorBlockRegistry };
+export type PageEditorProps = {
+  adapter: EditorAdapter;
+  blocks?: EditorBlockRegistry;
+  /** 新規配置できる登録ブロック。省略時は全件、空配列なら既存ブロックの編集だけを許可。 */
+  insertableBlocks?: readonly string[];
+};

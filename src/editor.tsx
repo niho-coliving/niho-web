@@ -96,7 +96,7 @@ const styleText = (value: StyleValue | undefined) => value === undefined ? "" : 
 const parseStyleText = (value: string): StyleValue | undefined => value === "" ? undefined : value.startsWith("@") ? { token: value.slice(1) } : /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : value;
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks }: PageEditorProps) {
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -228,7 +228,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
     let newNode: PageNode;
     if (addType === "text") newNode = { type: "text", text: "新しいテキスト" };
     else if (addType.startsWith("block:")) {
-      const block = addType.slice(6), definition = blocks[block]!;
+      const block = addType.slice(6), definition = blocks[block];
+      if (!definition || insertableBlocks && !insertableBlocks.includes(block)) return;
       const props = { ...definition.defaultProps };
       for (const [name, rule] of Object.entries(definition.props)) if (rule.required && props[name] === undefined) props[name] = rule.type === "boolean" ? false : rule.type === "number" ? Math.min(rule.max ?? Infinity, Math.max(rule.min ?? -Infinity, 0)) : rule.type === "enum" ? rule.values[0] ?? "" : rule.type === "url" ? "/" : "表示テキスト";
       newNode = { type: "component", id, block, props };
@@ -259,7 +260,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks }: PageEditorProps) {
       <h2>レイヤー</h2><button className="e-layer" aria-pressed={!selection} onClick={() => select(null)} disabled={editBlocked}>ページ全体</button>
       {entries.map(({ node, path }) => <button key={path.join(".")} className="e-layer" style={{ paddingLeft: 8 + (path.length - 1) * 12 }} aria-pressed={selection?.join(".") === path.join(".")} title={label(node, blocks)} onClick={() => select(path)} disabled={editBlocked}>{label(node, blocks)}</button>)}
       <h2>要素の操作</h2><label className="e-field"><span>追加・移動先</span><select aria-label="追加・移動先" value={parentId} disabled={editBlocked || hasInput} onChange={(event) => setParentId(event.target.value)}><option value="">ページ直下</option>{entries.filter(({ node }) => node.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
-      <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{Object.entries(blocks).map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
+      <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{Object.entries(blocks).filter(([key]) => !insertableBlocks || insertableBlocks.includes(key)).map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
       <button onClick={add} disabled={!document || editBlocked || hasInput}>要素を追加</button>
       <div className="e-actions"><button disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "duplicate", path: selection })}>複製</button><button className="e-danger" disabled={!selection || editBlocked || hasInput} onClick={() => selection && structural({ type: "remove", path: selection })}>削除</button>
         <button disabled={!selection || selection.at(-1) === 0 || editBlocked || hasInput} onClick={() => moveBy(-1)}>上へ</button><button disabled={!selection || selection.at(-1)! >= siblingCount - 1 || editBlocked || hasInput} onClick={() => moveBy(1)}>下へ</button>
