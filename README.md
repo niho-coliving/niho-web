@@ -25,7 +25,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | 入口 | 用途 |
 | --- | --- |
 | `@niho/web` | JSON 型、`validateDocument` / `parsePageDocument`、CSS、React SSR に使える `PageRenderer` |
-| `@niho/web/core` | 検証・文書型・CSS だけの入口。React の runtime import を含みません |
+| `@niho/web/core` | 検証・文書型・CSS・共通部品の検証と展開だけの入口。React の runtime import を含みません |
 | `@niho/web/react` | `PageRenderer` とブロック registry の型 |
 | `@niho/web/server` | Astro の build / server で使える `renderPageToHtml` |
 | `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |
@@ -120,6 +120,24 @@ const notice = {
 props 契約は `string` / `url` / `number` / `boolean` / `enum` です。入れ子のオブジェクト、配列、関数、React の特殊 props、イベント props を文書から渡せません。URL に使う prop には `url` を指定します。既存の型付きコンポーネントへ接続するときは registry の小さな adapter で props を渡してください。
 
 registry は利用側がレビューした信頼できるコードです。文書からモジュールや JS を取得しません。ブロックは同期描画できるよう、必要な公開データを利用側で取得してから接続します。価格や在庫を表示する場合も、計算・認可・取得元の判断は利用側に置きます。Client Component の接続・hydration は各フレームワークの規則に従います。
+
+## 共通部品
+
+スタッフが組んだ要素の部分木をサイトごとの部品ライブラリへ登録し、文書から `instance` ノードで参照できます。ヘッダー・フッター・セクション見出しなどを複数の文書で共有し、部品を1回更新すると、使っている文書のプレビューと公開差分に反映されます。部品は公開時に通常の element へ展開します。
+
+```ts
+import { parseComponentLibrary, parsePageDocument, resolvePageDocument } from '@niho/web/core';
+
+// 下書きの検証。部品ライブラリを渡したときだけ instance を受け付ける。
+const library = parseComponentLibrary(rawLibrary, blocks);
+const draft = parsePageDocument(rawDraft, blocks, { components: library });
+
+// 公開時は展開済みの文書を、新しい revision の公開版として保存する。
+const { document: resolved } = resolvePageDocument(draft, library, blocks);
+const published = { ...resolved, revision: nextRevision };
+```
+
+`PageRenderer`・`renderPageToHtml`・CSS 生成は展開済みの文書だけを描画し、未展開の instance は拒否します。公開版の形は従来の v1 文書のままなので、公開サイトの renderer を更新しなくても導入できます。詳細は [共通部品契約](docs/component-contract.md) を参照してください。
 
 ## Astro の静的 / サーバー HTML
 

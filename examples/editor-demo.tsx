@@ -18,10 +18,10 @@ function summary(document: PageDocument): Record<string, string> {
   function visit(nodes: PageNode[], parent = "ページ"): void {
     nodes.forEach((node, index) => {
       if (node.type === "text") { values[`${parent} のテキスト ${index + 1}`] = node.text; return; }
-      layers.push(`${node.id} (${node.type === "element" ? node.tag : node.block})`);
+      layers.push(`${node.id} (${node.type === "element" ? node.tag : node.type === "component" ? node.block : node.component})`);
       values[`${node.id} の見た目`] = JSON.stringify(node.style ?? {});
       if (node.type === "element") { for (const [key, value] of Object.entries(node.attrs ?? {})) values[`${node.id} の ${key}`] = String(value); visit(node.children, node.id); }
-      else for (const [key, value] of Object.entries(node.props)) values[`${node.id} の ${key}`] = String(value);
+      else for (const [key, value] of Object.entries(node.props ?? {})) values[`${node.id} の ${key}`] = String(value);
     });
   }
   visit(document.body); values["レイヤー構成"] = layers.join(" → "); return values;

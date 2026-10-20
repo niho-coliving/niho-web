@@ -21,8 +21,9 @@
 | `text` | `text` | HTML として解釈せず React が escape |
 | `element` | `id`, `tag`, `attrs?`, `style?`, `children` | 安全な HTML タグ・属性のみ。子配列は必須 |
 | `component` | `id`, `block`, `props`, `style?` | 登録済み名・許可された primitive props のみ。独自の children は持たない |
+| `instance` | `id`, `component`, `props?`, `style?` | 下書きだけで使う共通部品の参照。部品ライブラリを渡した検証でだけ受け付け、公開前に通常の element へ展開する（[共通部品契約](component-contract.md)） |
 
-element / component の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
+element / component / instance の `id` は文書全体で一意です。element の `attrs.id` は別の HTML ID として同一文書内の重複を拒否します。リンクの `#id` と ARIA の参照先は利用側で揃えます。HTML ID はブラウザ全体の名前空間なので、複数文書を同じページへ置く利用側は document 間でも一意にします。
 
 タグは `src/types.ts` の `ElementTag`、属性は `src/document.ts` の許可リストを正とします。`img` は安全な `src` か素材参照 `asset: { provider, id }` のどちらか一方と、`alt` が必須です。空の alt は装飾画像として許可します。素材参照の URL は描画時にホストの解決済み map から決め、解決できない画像は描画しません（[素材ライブラリ契約](asset-contract.md)）。`a[target=_blank]` には `noopener noreferrer` を描画時に補います。`source.srcSet` は単一 URL のみを許可します。複数候補の srcset、SVG、iframe、form、script、style は v1 の対象外です。
 
