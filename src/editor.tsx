@@ -28,7 +28,7 @@ import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlaceme
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
-import { bumpChangedComponentVersions, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
+import { bumpChangedComponentVersions, componentCreationLock, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
 import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
 import { BlockSlotInspector, BlockSlotList, applyToSlot, declaredSlot, previewRegistry, slotFromTarget } from "./block-slot-panel.js";
 import {
@@ -1219,7 +1219,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
         clean={() => reportProblem(apply(staleProps.map((name): EditorOperation => ({ type: "instanceProp", path: selection, name, value: undefined }))))} />}
       {node?.type === "element" && selection && libraryPresent && (masterComponent ? <MasterPropFields component={masterComponent} node={node} field={input} disabled={libraryBlocked || hasInput}
         toggle={(name, exposed) => reportProblem(updateLibrary((library) => exposeComponentProp(library, masterComponent.id, node.id, name, exposed, blocks)))} relabel={(name, value) => updateLibrary((library) => relabelComponentProp(library, masterComponent.id, name, value, blocks))} />
-        : !targetMode && <CreateComponentSection disabled={libraryBlocked || hasInput} reason={reason("*")} open={() => setComponentDialog({ type: "create", path: selection })} />)}
+        : !targetMode && <CreateComponentSection disabled={libraryBlocked || hasInput} reason={reason("*") ?? (document ? componentCreationLock(document, selection, session?.locks ?? [])?.reason : undefined)} open={() => setComponentDialog({ type: "create", path: selection })} />)}
       {node && node.type !== "text" && selection && document && <StyleInspector key={pathKey} document={document} saved={masterId ? savedMaster : session?.saved} node={node} path={selection} blocks={blocks} tiers={tiers} tier={tier} setTier={setBreakpoint} range={range} setRange={setRange}
         width={width} setWidth={setWidth} apply={apply} preview={previewOperation} pending={pending} fieldKey={pathKey} disabled={editBlocked || targetMode} tierLocked={hasInput} reason={reason} notify={setNotice} styleState={styleState} setStyleState={setStyleState}
         appearanceExtra={assets && (node.type !== "element" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${tier}-background`} declarations={tier === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === tier)?.declarations} assets={resolvedAssets.map}

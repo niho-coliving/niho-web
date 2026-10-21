@@ -102,7 +102,7 @@ async function setup(options = {}) {
       calls.order.push("listPages");
       return [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }, { siteId: "demo", pageId: "other", locale: "ja-JP", title: "別ページ" }, { siteId: "demo", pageId: "chrome", locale: "ja-JP", title: "サイトの共通枠", kind: "shared" }];
     },
-    readDocument: async (request) => { calls.order.push("readDocument"); calls.reads.push(structuredClone(request)); return { document: { ...structuredClone(stored), pageId: request.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.readOnly ? { readOnly: options.readOnly } : {}) }; },
+    readDocument: async (request) => { calls.order.push("readDocument"); calls.reads.push(structuredClone(request)); return { document: { ...structuredClone(stored), pageId: request.pageId }, version, releases: [{ revision: 1, label: "最初の公開" }], ...(options.readOnly ? { readOnly: options.readOnly } : {}), ...(options.locks ? { locks: options.locks } : {}) }; },
     saveDraft: async (request) => {
       calls.order.push("saveDraft"); calls.saves.push(structuredClone(request));
       const custom = options.saveDraft && await options.saveDraft(request);
@@ -757,4 +757,56 @@ test("the project adapter forwards the autosave trigger of component library sav
   await wrapped.saveLibrary({ siteId: "demo", library: parsed, expectedVersion: "lib-1", trigger: "autosave" }, signal);
   await wrapped.saveLibrary({ siteId: "demo", library: parsed, expectedVersion: "lib-1" }, signal);
   assert.equal(sent[0].trigger, "autosave"); assert.deepEqual(Object.keys(sent[1]).sort(), ["expectedVersion", "library", "siteId"]);
+});
+
+test("部品にする is disabled before opening a dialog when a descendant has a page-owned lock", async () => {
+  const app = await setup({ locks: [{ nodeId: "lead", fields: ["children"], reason: "外部データ" }] });
+  try {
+    await click("section · hero");
+    assert.equal(button("部品にする")?.disabled, true);
+    assert.ok(text().includes("ロック: 外部データ"));
+    await click("部品にする");
+    assert.equal(dialog(), null);
+    assert.equal(app.calls.librarySaves.length, 0); assert.equal(app.calls.saves.length, 0);
+    assert.equal(rendered("heading").textContent, "海のそばで過ごす");
+  } finally { await app.cleanup(); }
+});
+
+for (const variant of ["outside-only", "shared-text-style", "page-override"]) test(`部品にする preserves site-wide styles used outside the selection across save and reload (${variant})`, async () => {
+  const doc = structuredClone(fixture);
+  doc.body.push({ type: "element", id: "outside", tag: "p", style: { base: { color: { token: "brand" } } }, children: [{ type: "text", text: "選択範囲外" }] });
+  const siteStyles = { tokens: { brand: { type: "color", value: "#336655" }, ink: { type: "color", value: "#112233" }, displaySize: { type: "length", value: 32 } }, textStyles: { headline: { base: { fontSize: { token: "displaySize" }, fontWeight: 700 } } } };
+  if (variant !== "outside-only") doc.body[0].children[0].style = { textStyle: "headline", base: { color: { token: variant === "shared-text-style" ? "brand" : "ink" } } };
+  if (variant === "page-override") { doc.tokens.displaySize = { type: "length", value: 20 }; doc.textStyles = { headline: { base: { fontSize: { token: "displaySize" }, fontWeight: 600 } } }; }
+  const app = await setup({ document: doc, locks: [{ nodeId: "outside", fields: ["children"], reason: "外部データ" }], adapter: { readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", ...siteStyles }, version: "s1" }) } });
+  try {
+    await click("section · hero"); await click("部品にする");
+    await change(input("部品名", dialog()), "サイトヘッダー"); await click(button("登録する", dialog()));
+    assert.ok(dialog().textContent.includes("同じ名前の部品があります。"));
+    assert.equal(app.calls.librarySaves.length, 0); assert.equal(app.calls.saves.length, 0);
+    assert.equal(rendered("heading").textContent, "海のそばで過ごす");
+    await change(input("部品名", dialog()), "共有スタイルの部品"); await click(button("登録する", dialog()));
+    assert.equal(dialog(), null, "unselected site token references must not block component creation");
+    await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.saves.length, 1);
+    const savedLibrary = parseComponentLibrary(app.calls.librarySaves[0].library);
+    assert.equal(savedLibrary.components.length, library().components.length + 1, "failed creation does not change the working library");
+    const saved = parsePageDocument(app.calls.saves[0].document, {}, { components: savedLibrary, siteStyles });
+    assert.equal(Object.hasOwn(saved.tokens, "brand"), false);
+    assert.equal(Object.hasOwn(savedLibrary.tokens, "brand"), variant === "shared-text-style");
+    assert.equal(Object.hasOwn(saved.textStyles ?? {}, "headline"), variant === "page-override");
+    assert.deepEqual(saved.tokens.ink, fixture.tokens.ink);
+    if (variant !== "outside-only") {
+      const heading = savedLibrary.components.find((component) => component.name === "共有スタイルの部品").root.children[0];
+      assert.equal(heading.style.textStyle, undefined);
+      assert.deepEqual(heading.style.base.fontSize, { token: "displaySize" });
+      assert.equal(savedLibrary.tokens.displaySize.value, variant === "page-override" ? 20 : 32);
+      assert.equal(heading.style.base.fontWeight, variant === "page-override" ? 600 : 700);
+    }
+    assert.deepEqual(saved.body.at(-1), doc.body.at(-1));
+    await openPage("別ページ"); await openPage("ホーム"); await loadCanvas();
+    assert.equal(rendered("outside").textContent, "選択範囲外");
+    assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
+    await click("p · outside"); assert.equal(button("部品にする")?.disabled, true, "outside locks survive the reload");
+  } finally { await app.cleanup(); }
 });
