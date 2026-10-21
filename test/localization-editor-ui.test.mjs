@@ -60,7 +60,7 @@ async function localizedSite(siteId, sourceLocale, labels) {
   const targetDocument = (await materializeLocalizedPage(cfg, sourceDocument, collection, overlay)).document;
   return { cfg, sourceDocument, targetDocument, collection, overlay, labels, documentVersion: 1, localizationVersion: 1, siteVersion: 1, job: { state: "failed", message: "合成した失敗" } };
 }
-async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, extraPublicPage = false, recovery, localeRelease, readOnlySource = false, readOnlyTarget = false } = {}) {
+async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, extraPublicPage = false, recovery, localeRelease, readOnlySource = false, readOnlyTarget = false, previewComponent } = {}) {
   const kamakura = await localizedSite("kamakura", "ja", { source: "鎌倉ホーム", manual: "Manual Kamakura", candidate: "Candidate Kamakura" });
   const experience = await localizedSite("experience", "en", { source: "Experience home", manual: "体験（手修正）", candidate: "体験（翻訳案）" });
   const sites = { kamakura, experience }, calls = { saves: [], commands: [], siteReads: 0, pageReads: 0 }; let conflict = conflictOnce, rejectCommand = rejectCommandOnce, delayedResolve, delayedSiteResolve, failSite = rejectSiteOnce, failPage = rejectPageOnce;
@@ -135,9 +135,9 @@ async function setup({ conflictOnce = false, conflictSourceChange = false, rejec
   };
   if (localeRelease) Object.assign(adapter.localization, localeRelease);
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
-  await act(async () => root.render(createElement(PageEditor, { adapter, ...(recovery ? { recovery } : {}) }))); await flush(6);
+  await act(async () => root.render(createElement(PageEditor, { adapter, ...(recovery ? { recovery } : {}), ...(previewComponent ? { previewComponent } : {}) }))); await flush(6);
   return { sites, calls, adapter, resolveDelayed: () => delayedResolve?.(), resolveDelayedSite: () => delayedSiteResolve?.(),
-    rerenderAdapter: async (next) => { await act(async () => root.render(createElement(PageEditor, { adapter: next, ...(recovery ? { recovery } : {}) }))); await flush(4); },
+    rerenderAdapter: async (next) => { await act(async () => root.render(createElement(PageEditor, { adapter: next, ...(recovery ? { recovery } : {}), ...(previewComponent ? { previewComponent } : {}) }))); await flush(4); },
     cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
@@ -729,5 +729,28 @@ test("target content undo/redo works and emergency recovery accepts content but 
     await click("English（訳文）"); await flush(6); await click("復元する"); await flush(5);
     assert.match(document.body.textContent, /共通構造|non-localizable|文書のルール|変更できません/);
     assert.notEqual(app.sites.kamakura.targetDocument.body[0].style.base.padding, 999);
+  } finally { await app.cleanup(); }
+});
+
+
+test("host preview follows the displayed locale and unsaved target without replacing the source", async () => {
+  const Preview = ({ document: shown, children }) => createElement("section", { "data-host-locale": shown.locale, "data-host-title": shown.title }, children);
+  const app = await setup({ previewComponent: Preview });
+  const frame = () => document.querySelector('iframe[title="ページのライブキャンバス"]');
+  const load = async () => { await act(async () => frame().dispatchEvent(new dom.window.Event("load"))); await flush(); };
+  const host = () => frame().contentDocument.querySelector("[data-host-locale]");
+  try {
+    await load(); assert.equal(host().dataset.hostLocale, "ja-JP");
+    await click("English（訳文）"); await flush(5); await load();
+    assert.equal(host().dataset.hostLocale, "en-US");
+    assert.equal(frame().contentDocument.documentElement.lang, "en-US");
+    const sourceTitle = app.sites.kamakura.sourceDocument.title;
+    await change(input("ページタイトル"), "Unsaved translated title");
+    assert.equal(host().dataset.hostTitle, "Unsaved translated title");
+    assert.equal(app.sites.kamakura.sourceDocument.title, sourceTitle);
+    assert.equal(app.calls.saves.length, 0);
+    await click("日本語（原文）"); assert.ok(document.querySelector('[role="dialog"]'));
+    assert.equal(host().dataset.hostLocale, "en-US");
+    await click("編集を続ける"); assert.equal(host().dataset.hostTitle, "Unsaved translated title");
   } finally { await app.cleanup(); }
 });
