@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { detachRemovedSiteStyles, parseSiteStyles, type SiteStyles } from "./site-styles.js";
+import { parsePageDocument } from "./document.js";
 import { Dialog } from "./editor-dialog.js";
 import { pageChangeProblems, sameTarget, validatePageChangePlan, type EditorOperation } from "./editor-model.js";
-import type { EditorAdapter, EditorLocalizedPage, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
+import type { EditorAdapter, EditorBlockRegistry, EditorLocalizedPage, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
 import { localizationStateLabel } from "./editor-localization.js";
 import { buildPageTree, findPathConflict, pageUrl, parseSiteSettings, resolvePageMetadata, validatePagePath, type PageMetadata, type PageTreeNode, type PageVisibility, type SiteSettings } from "./pages.js";
-import type { PageDocument } from "./types.js";
+import type { ComponentLibrary, PageDocument } from "./types.js";
 import { DocumentValidationError } from "./validation-utils.js";
 
 const iconPaths = {
@@ -271,32 +273,37 @@ export type SiteSettingsState = {
   status: "idle" | "loading" | "error" | "ready";
   /** 保存済みの設定。 */
   settings: SiteSettings | undefined;
+  styleSaveEpoch: number; styles: SiteStyles; stylesDirty: boolean; latest: SiteSettings | undefined;
+  editStyles: (styles: SiteStyles) => string | undefined;
   form: SiteForm; dirty: boolean; problem: string | undefined; canSave: boolean; busy: boolean;
   message: { text: string; alert: boolean } | null; conflict: boolean;
   edit: (patch: Partial<SiteForm>) => void; reset: () => void; reload: () => void; save: () => Promise<void>;
 };
 /** サイト設定は文書と別に、opaque な version の楽観ロックで保存する。 */
-export function useSiteSettings(adapter: EditorAdapter, siteId: string): SiteSettingsState {
+export function useSiteSettings(adapter: EditorAdapter, siteId: string, blocks: EditorBlockRegistry, components?: ComponentLibrary): SiteSettingsState {
   const [loaded, setLoaded] = useState<{ siteId: string; settings: SiteSettings; version: string } | null>(null);
   const [status, setStatus] = useState<SiteSettingsState["status"]>("idle"), [form, setForm] = useState(emptyForm), [epoch, setEpoch] = useState(0);
+  const [styleSaveEpoch, setStyleSaveEpoch] = useState(0);
+  const [styles, setStyles] = useState<SiteStyles>({}), [latest, setLatest] = useState<SiteSettings>();
   const [busy, setBusy] = useState(false), [message, setMessage] = useState<SiteSettingsState["message"]>(null), [conflict, setConflict] = useState(false);
   const saving = useRef<AbortController | null>(null);
   useEffect(() => {
-    saving.current?.abort(); saving.current = null; setLoaded(null); setForm(emptyForm); setMessage(null); setConflict(false); setBusy(false);
+    saving.current?.abort(); saving.current = null; setLoaded(null); setForm(emptyForm); setStyles({}); setLatest(undefined); setMessage(null); setConflict(false); setBusy(false);
     if (!siteId || !adapter.readSiteSettings) { setStatus("idle"); return; }
     const controller = new AbortController(); setStatus("loading");
     adapter.readSiteSettings(siteId, controller.signal).then((snapshot) => {
       if (controller.signal.aborted) return;
       if (!snapshot || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("version is required");
       const settings = parseSiteSettings(snapshot.settings);
-      setLoaded({ siteId, settings, version: snapshot.version }); setForm(formFrom(settings)); setStatus("ready");
+      setLoaded({ siteId, settings, version: snapshot.version }); setForm(formFrom(settings)); setStyles(parseSiteStyles(settings)); setStatus("ready");
     }).catch(() => { if (!controller.signal.aborted) setStatus("error"); });
     return () => controller.abort();
   }, [adapter, siteId, epoch]);
   useEffect(() => () => saving.current?.abort(), []);
-  const dirty = status === "ready" && !!loaded && JSON.stringify(form) !== JSON.stringify(formFrom(loaded.settings));
+  const stylesDirty = status === "ready" && !!loaded && JSON.stringify(styles) !== JSON.stringify(parseSiteStyles(loaded.settings));
+  const dirty = status === "ready" && !!loaded && (stylesDirty || JSON.stringify(form) !== JSON.stringify(formFrom(loaded.settings)));
   let parsed: SiteSettings | undefined, problem: string | undefined;
-  if (dirty) try { parsed = parseSiteSettings(settingsFrom(form)); } catch (error) { problem = publicInfoMessage(error) ?? "サイト設定の値を確認してください。"; }
+  if (dirty) try { parsed = parseSiteSettings({ ...settingsFrom(form), ...styles }); } catch (error) { problem = publicInfoMessage(error) ?? "サイト設定の値を確認してください。"; }
   const editable = typeof adapter.saveSiteSettings === "function";
   async function save() {
     if (!loaded || !parsed || !adapter.saveSiteSettings || saving.current) return;
@@ -306,19 +313,37 @@ export function useSiteSettings(adapter: EditorAdapter, siteId: string): SiteSet
       else setMessage({ text: "サイト設定を保存できませんでした。入力を保持しています。", alert: true });
     };
     try {
-      const result = await adapter.saveSiteSettings({ siteId: loaded.siteId, settings: structuredClone(settings), expectedVersion: loaded.version }, controller.signal);
+      if (stylesDirty) {
+        const before = parseSiteStyles(loaded.settings), after = parseSiteStyles(settings);
+        const removed = Object.keys(before.tokens ?? {}).some((name) => !Object.hasOwn(after.tokens ?? {}, name)) || Object.keys(before.textStyles ?? {}).some((name) => !Object.hasOwn(after.textStyles ?? {}, name));
+        if (removed && !adapter.siteStyleCapabilities?.atomicReferenceDetachment) throw new Error("atomic reference detachment is required");
+        const pages = await adapter.listPages(loaded.siteId, controller.signal);
+        await Promise.all(pages.map(async (page) => {
+          if (page.siteId !== loaded.siteId) throw new Error("site mismatch");
+          const snapshot = await adapter.readDocument(page, controller.signal);
+          const document = parsePageDocument(snapshot.document, blocks, { ...(components ? { components } : {}), siteStyles: before });
+          if (!sameTarget(document, page)) throw new Error("page mismatch");
+          parsePageDocument(detachRemovedSiteStyles(document, before, after), blocks, { ...(components ? { components } : {}), siteStyles: after });
+        }));
+      }
+      const current = await adapter.readSiteSettings!(loaded.siteId, controller.signal);
       if (controller.signal.aborted) return;
-      if (result.status === "conflict") { failed({ status: 409 }); return; }
+      const currentSettings = parseSiteSettings(current.settings);
+      if (current.version !== loaded.version || JSON.stringify(currentSettings) !== JSON.stringify(loaded.settings)) { setLatest(currentSettings); failed({ status: 409 }); return; }
+      const result = await adapter.saveSiteSettings({ siteId: loaded.siteId, settings: structuredClone(settings), expectedVersion: loaded.version, ...(stylesDirty ? { previousStyles: parseSiteStyles(loaded.settings) } : {}) }, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result.status === "conflict") { try { const conflictSnapshot = await adapter.readSiteSettings!(loaded.siteId, controller.signal); if (!controller.signal.aborted) setLatest(parseSiteSettings(conflictSnapshot.settings)); } catch { /* 比較の取得に失敗しても入力を保持する。 */ } failed({ status: 409 }); return; }
       if (result.status !== "saved" || typeof result.version !== "string" || !result.version || result.version === loaded.version) throw new Error("version must advance");
-      setLoaded({ siteId: loaded.siteId, settings, version: result.version }); setForm(formFrom(settings)); setMessage({ text: "サイト設定を保存しました。", alert: false });
+      setLoaded({ siteId: loaded.siteId, settings, version: result.version }); setForm(formFrom(settings)); setStyles(parseSiteStyles(settings)); if (stylesDirty) setStyleSaveEpoch((value) => value + 1); setLatest(undefined); setMessage({ text: "サイト設定を保存しました。", alert: false });
     } catch (error) { if (!controller.signal.aborted) failed(error); }
     finally { if (saving.current === controller) { saving.current = null; setBusy(false); } }
   }
   return {
-    supported: typeof adapter.readSiteSettings === "function", editable, status, settings: loaded?.settings, form, dirty, problem,
+    supported: typeof adapter.readSiteSettings === "function", editable, status, settings: loaded?.siteId === siteId ? loaded.settings : undefined, form, dirty, problem, styles, stylesDirty, latest, styleSaveEpoch,
+    editStyles: (next) => { if (!editable || status !== "ready" || busy) return "サイト設定を読み込んでから編集してください。"; try { setStyles(parseSiteStyles(next)); setMessage(null); return undefined; } catch { return "共通スタイルの参照・種類・値を確認してください。"; } },
     canSave: editable && dirty && !!parsed && !busy, busy, message, conflict,
     edit: (patch) => { setForm((previous) => ({ ...previous, ...patch })); setMessage(null); },
-    reset: () => { if (loaded) setForm(formFrom(loaded.settings)); setMessage(null); setConflict(false); },
+    reset: () => { if (loaded) { setForm(formFrom(loaded.settings)); setStyles(parseSiteStyles(loaded.settings)); } setMessage(null); setConflict(false); },
     reload: () => setEpoch((value) => value + 1),
     save
   };
@@ -350,6 +375,7 @@ export function SiteSettingsPanel({ site, state }: { site: EditorSite | undefine
           <label className="e-check"><input type="checkbox" checked={form.noindex} disabled={locked} onChange={(event) => state.edit({ noindex: event.target.checked })} />サイト全体を検索エンジンに表示しない</label>
           {state.problem && <p className="e-help e-problem" role="alert">{state.problem}</p>}
           {state.message && <p className={state.message.alert ? "e-help e-problem" : "e-help"} role={state.message.alert ? "alert" : "status"}>{state.message.text}</p>}
+          {state.latest && <details><summary>競合した保存内容と入力を比較</summary><p>最新の保存内容</p><pre>{JSON.stringify(state.latest, null, 2)}</pre><p>あなたの入力</p><pre>{JSON.stringify({ ...settingsFrom(form), ...state.styles }, null, 2)}</pre></details>}
           {state.conflict && <button type="button" className="e-small" disabled={state.busy} onClick={state.reload}>最新の設定を読み込む（入力を破棄）</button>}
           {state.editable ? <><div className="e-actions"><button type="button" className="e-primary" disabled={!state.canSave} onClick={() => void state.save()}>サイト設定を保存</button>
             <button type="button" disabled={!state.dirty || state.busy} onClick={state.reset}>変更を取り消す</button></div>

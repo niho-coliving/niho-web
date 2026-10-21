@@ -1,10 +1,11 @@
+import { parseSiteStyles } from "./site-styles.js";
 import { normalizePageChange, parseEditorReadOnly, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
 import { parseEditorLocaleReleaseApplyResult, parseEditorLocaleReleasePlan, parseEditorLocaleReleaseState } from "./editor-locale-release.js";
 import type { EditorAdapter, EditorComponentAdapter, EditorLocaleReleaseApplyRequest, EditorLocaleReleasePrepareRequest, EditorLocalizationAdapter, EditorLocalizationCommand, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
 import { parseRevisionEntry, parseRevisionPage } from "./history.js";
 import { parseSiteSettings } from "./pages.js";
 import { parseProject, type Project } from "./projects.js";
-import { identifier, line, record } from "./validation-utils.js";
+import { identifier, keys, line, record } from "./validation-utils.js";
 
 function targetForProject(target: EditorTarget, site: EditorSite): EditorTarget {
   const normalized: EditorTarget = { siteId: target.siteId, pageId: target.pageId, locale: target.locale };
@@ -248,6 +249,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
         return { status: "applied", page: pageEntry(result.page) };
       }
     } satisfies Pick<EditorAdapter, "applyPageChange"> : {}),
+    ...(adapter.siteStyleCapabilities ? { siteStyleCapabilities: adapter.siteStyleCapabilities } : {}),
     ...(adapter.readSiteSettings ? {
       async readSiteSettings(siteId, signal) {
         if (siteId !== site.id) throw new Error("プロジェクト外のサイトは参照できません。");
@@ -258,7 +260,8 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
     ...(adapter.saveSiteSettings ? {
       async saveSiteSettings(request, signal) {
         if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトは変更できません。");
-        return adapter.saveSiteSettings!({ siteId: site.id, settings: parseSiteSettings(request.settings), expectedVersion: request.expectedVersion }, signal);
+        if (request.previousStyles !== undefined) keys(record(request.previousStyles, "$.previousStyles"), ["tokens", "textStyles"], "$.previousStyles");
+        return adapter.saveSiteSettings!({ siteId: site.id, settings: parseSiteSettings(request.settings), expectedVersion: request.expectedVersion, ...(request.previousStyles === undefined ? {} : { previousStyles: parseSiteStyles(request.previousStyles) }) }, signal);
       }
     } satisfies Pick<EditorAdapter, "saveSiteSettings"> : {}),
     ...(adapter.listRevisions ? {

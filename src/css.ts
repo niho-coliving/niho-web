@@ -1,3 +1,4 @@
+import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type { AppearEffect, BlockContracts, NodeStyle, PageDocument, PageNode, StateName, StateProperty, StyleDeclarations, StyleProperty } from "./types.js";
 import { parsePageDocument } from "./document.js";
 import { declarationCss, motionProperties, tokenCssValue } from "./style-values.js";
@@ -124,6 +125,6 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
   if (extra) rules.push(extra);
   return rules.join("\n");
 }
-export function generatePageCss(input: unknown, blocks: BlockContracts = {}, assets?: unknown): string {
-  return cssForDocument(parsePageDocument(input, blocks), assets === undefined ? {} : parseResolvedAssets(assets));
+export function generatePageCss(input: unknown, blocks: BlockContracts = {}, assets?: unknown, siteStyles?: SiteStyles): string {
+  return cssForDocument(resolvePageStyles(parsePageDocument(input, blocks, siteStyles ? { siteStyles } : {}), siteStyles), assets === undefined ? {} : parseResolvedAssets(assets));
 }

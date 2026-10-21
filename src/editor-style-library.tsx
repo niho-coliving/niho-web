@@ -9,6 +9,10 @@ import type { DesignToken, PageDocument, PageNode, StyleProperty, StyleValue, Te
 
 export type StyleLibraryProps = {
   document: PageDocument;
+  scopeLabel?: string;
+  origins?: Readonly<Record<string, string>> | undefined;
+  onPromote?: ((kind: "token" | "textStyle", name: string) => void) | undefined;
+  canPromote?: ((kind: "token" | "textStyle", name: string) => boolean) | undefined;
   selection: NodePath | null;
   apply: (operation: EditorOperation) => string | undefined;
   select: (path: NodePath) => void;
@@ -31,10 +35,10 @@ const defaultLabel = (node: PageNode) => node.type === "text" ? "テキスト" :
 const sizeText = (value: StyleValue | undefined, document: PageDocument) => { const resolved = resolveValue(document, value); return resolved === undefined ? "—" : typeof resolved === "number" ? `${resolved}px` : resolved; };
 
 /** 左レールの「スタイル」。共通カラー・テキストスタイル・その他の共通の値を props だけで編集する独立部品。 */
-export function StyleLibrary({ document, selection, apply, select, disabled, breakpoints = defaultBreakpoints, breakpoint = "base", until, preview, pending = noop, fieldKey = "library", nodeLabel = defaultLabel }: StyleLibraryProps) {
+export function StyleLibrary({ document, selection, apply, select, disabled, breakpoints = defaultBreakpoints, breakpoint = "base", until, preview, pending = noop, fieldKey = "library", nodeLabel = defaultLabel, scopeLabel, origins, onPromote, canPromote }: StyleLibraryProps) {
   const [tab, setTab] = useState<Tab>("color"), [open, setOpen] = useState<string | null>(null), [confirm, setConfirm] = useState(false), [problem, setProblem] = useState("");
   const selected = selection ? (() => { try { const node = nodeAt(document, selection); return node.type === "text" ? undefined : node; } catch { return undefined; } })() : undefined;
-  const run = (operation: EditorOperation) => { const error = apply(operation); setProblem(error ?? ""); return error; };
+  const run = (operation: EditorOperation) => { const inheritedRemoval = (operation.type === "token" && !operation.token || operation.type === "textStyle" && !operation.style) && origins?.[`${operation.type}:${operation.name}`] === "サイト共通"; const error = inheritedRemoval ? "サイト共通の定義は「サイト共通」で削除してください。" : apply(operation); setProblem(error ?? ""); return error; };
   const paint = (property: StyleProperty, name: string): EditorOperation => until === undefined ? { type: "styles", path: selection!, breakpoint, values: { [property]: { token: name } } }
     : { type: "styleRange", path: selection!, breakpoint, until, values: { [property]: { token: name } } };
   const tokens = Object.entries(document.tokens), styles = Object.entries(document.textStyles ?? {});
@@ -152,8 +156,8 @@ export function StyleLibrary({ document, selection, apply, select, disabled, bre
     <div className="e-lib-title"><h3>{heading}</h3><button type="button" className="e-add" aria-label={add} title={add} disabled={disabled} onClick={create}>＋</button></div>
     {problem && <p className="e-help e-problem" role="alert">{problem}</p>}
     {rows.length ? <ul className="e-lib-list">{rows.map(([name, icon, title, detail, editor]) => <li key={name}>
-      <button type="button" className="e-lib-row" aria-expanded={open === name} onClick={() => toggle(name)}>{icon}<span className="e-lib-text"><span className="e-lib-name">{title}</span><small>{detail}</small></span></button>
-      {open === name && editor()}
+      <button type="button" className="e-lib-row" aria-expanded={open === name} onClick={() => toggle(name)}>{icon}<span className="e-lib-text"><span className="e-lib-name">{title}</span><small>{scopeLabel ?? origins?.[`${tab === "text" ? "textStyle" : "token"}:${name}`]}{(scopeLabel || origins) && " · "}{detail}</small></span></button>
+      {open === name && <>{editor()}{onPromote && canPromote?.(tab === "text" ? "textStyle" : "token", name) && <button type="button" className="e-small" disabled={disabled} onClick={() => onPromote(tab === "text" ? "textStyle" : "token", name)}>サイト共通へ移す</button>}</>}
     </li>)}</ul> : <p className="e-help">{tab === "color" ? "共通カラーはまだありません。＋で追加すると、複数の要素で同じ色を使えます。" : tab === "text" ? "テキストスタイルはまだありません。＋で追加すると、見出しや本文の文字の見た目をそろえられます。" : "共通の長さ・フォント・数値はまだありません。"}</p>}
   </div>;
 }
