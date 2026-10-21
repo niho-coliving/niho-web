@@ -95,7 +95,7 @@ function replaceAt(nodes: readonly PageNode[], path: NodePath, next: PageNode): 
   return nodes.map((node, at) => at !== index ? node : !rest.length ? next : node.type === "element" ? { ...node, children: replaceAt(node.children, rest, next) } : node);
 }
 /** StyleInspector に渡す、エディターの段・表示幅・入力中の状態。fieldKey は領域ごとに分ける。 */
-export type SlotStyleContext = Pick<StyleInspectorProps, "tiers" | "tier" | "setTier" | "range" | "setRange" | "width" | "setWidth" | "pending" | "fieldKey" | "disabled" | "tierLocked">;
+export type SlotStyleContext = Pick<StyleInspectorProps, "tiers" | "tier" | "setTier" | "range" | "setRange" | "width" | "setWidth" | "pending" | "fieldKey" | "disabled" | "tierLocked" | "tab">;
 /**
  * 選んだ表示領域の設定。見た目は StyleInspector を領域の見た目で使い（ブロックの style を領域の style に置き換えた文書とノード、
  * styleProperties を領域の style にした registry）、操作は slotStyle へ写す。text は表示用の文字だけ、data は理由と正本だけを示す。
@@ -143,7 +143,7 @@ export function BlockSlotInspector({ document, node, path, slot, blocks, saved, 
     <div className="e-actions"><button type="button" disabled={style.disabled} onClick={back}>ブロック全体に戻る</button></div>
     <p className="e-help">ブロックの中の同じ領域（繰り返すカードなど）すべてに同じ見た目を適用します。</p>
     {declared.data && <p className="e-slot-note" role="note">値は{declared.data.source}が正本です。{declared.data.reason}</p>}
-    {text && rule && input(`${declared.label}の文字`, String(node.props[text] ?? ""), change, `slot-${slot}-text`,
+    {style.tab === "text" && text && rule && input(`${declared.label}の文字`, String(node.props[text] ?? ""), change, `slot-${slot}-text`,
       { reason: reason(`props.${text}`), ...(rule.type === "string" && rule.maxLength !== undefined ? { hint: (value: string) => `${value.length} / ${max}文字` } : {}) })}
     {declared.style?.length ? <StyleInspector {...style} scope="slot" document={view.document} node={view.node} path={path} blocks={scoped} saved={savedSlot} apply={run} preview={draft}
       reason={(field) => reason(field === "style" || field.startsWith("style.") ? `slots.${slot}${field.slice(5)}` : field)} notify={notify} />

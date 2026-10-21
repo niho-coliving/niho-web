@@ -24,6 +24,7 @@ const flush = () => act(async () => { await new Promise((resolve) => setTimeout(
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
 const input = (text) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
+async function editorTab(name) { const target = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name); assert.ok(target, name); if (target.getAttribute("aria-selected") !== "true") await act(async () => target.click()); await flush(); }
 const pageRow = (title) => [...document.querySelectorAll("button.e-page")].find((node) => node.querySelector(".e-page-name")?.textContent === title);
 async function clickPage(title) { const target = pageRow(title); assert.ok(target, title); await act(async () => target.click()); await flush(); }
 async function change(target, value) {
@@ -57,6 +58,19 @@ async function setup(options = {}) {
   return { calls, adapter, root, stored: () => stored, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
+test("editor opens the page tree in a full-width quiet workspace", async () => {
+  const app = await setup();
+  try {
+    assert.equal(document.querySelector('.e-tools button[title="ページ"]').getAttribute("aria-pressed"), "true");
+    assert.equal(document.querySelector('[aria-label="ページ一覧"]').hidden, false);
+    assert.equal(document.querySelector('[aria-label="要素を追加"]').hidden, true);
+    assert.ok(pageRow("ホーム")); assert.ok(document.querySelector('.e-canvas-tools select[aria-label="表示幅"]'));
+    const css = document.querySelector(".nw-editor style").textContent;
+    assert.ok(css.includes("min-height:100vh")); assert.ok(css.includes("grid-template-columns:364px minmax(0,1fr) 320px")); assert.ok(css.includes("@media(max-width:1150px){.nw-editor .e-body{grid-template-columns:300px minmax(0,1fr) 300px}"));
+    assert.ok(css.includes("max-height:none;background:#f5f7f5")); assert.ok(css.includes("@media(max-width:800px)"));
+  } finally { await app.cleanup(); }
+});
+
 test("three rails edit live text, color, size, position and viewport before draft save", async () => {
   const app = await setup();
   try {
@@ -64,11 +78,20 @@ test("three rails edit live text, color, size, position and viewport before draf
     assert.ok(document.querySelector('[aria-label="インスペクタ"]'));
     const frame = document.querySelector("iframe");
     await act(async () => frame.contentDocument.querySelector("h1").dispatchEvent(new frame.contentWindow.MouseEvent("click", { bubbles: true, cancelable: true })));
+    assert.deepEqual([...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].map((tab) => tab.textContent), ["テキスト", "ボックス", "変形", "設定"]);
+    assert.equal(document.querySelector('.e-inspector-tabs [role="tab"][aria-selected="true"]').textContent, "テキスト");
+    assert.equal(button("直し終える"), undefined);
+    const textTab = document.querySelector('.e-inspector-tabs [role="tab"][aria-selected="true"]');
+    await act(async () => textTab.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    await flush(); assert.equal(document.querySelector('.e-inspector-tabs [role="tab"][aria-selected="true"]').textContent, "ボックス");
+    assert.equal(document.activeElement.textContent, "ボックス"); assert.ok(input("幅")); assert.equal(input("テキスト"), undefined);
+    await editorTab("設定"); assert.ok(input("文字の種類"));
+    await editorTab("テキスト");
     await change(input("テキスト"), "編集した見出し");
     assert.ok(document.querySelector("iframe").contentDocument.body.textContent.includes("編集した見出し"));
     assert.equal(button("公開前の確認").disabled, true);
-    await click("section · hero"); await change(input("文字色"), "#ff0000"); await change(input("文字サイズ"), "24");
-    await change(input("配置の基準"), "absolute"); await change(input("上から"), "12");
+    await click("section · hero"); await editorTab("テキスト"); await change(input("文字色"), "#ff0000"); await change(input("文字サイズ"), "24");
+    await editorTab("ボックス"); await change(input("配置の基準"), "absolute"); await change(input("上から"), "12");
     await change(document.querySelector('[aria-label="表示幅"]'), "375"); assert.equal(document.querySelector("iframe").style.width, "375px");
     await click("下書き保存"); assert.equal(app.calls.saves[0].expectedVersion, "v1"); assert.equal("trigger" in app.calls.saves[0], false);
     const saved = app.calls.saves[0].document; assert.equal(saved.body[0].children[0].children[0].text, "編集した見出し");
@@ -114,7 +137,7 @@ test("read-only documents stay selectable and navigable but block every document
 test("invalid URL buffers stay visible, block saving, and can be cancelled", async () => {
   const app = await setup();
   try {
-    await click("a · link"); await change(input("リンク先 URL"), "javascript:alert(1)");
+    await click("a · link"); await editorTab("設定"); await change(input("リンク先 URL"), "javascript:alert(1)");
     assert.equal(input("リンク先 URL").value, "javascript:alert(1)");
     assert.ok(document.body.textContent.includes("文書のルールに合いません"));
     assert.equal(button("下書き保存").disabled, true);
@@ -158,7 +181,7 @@ test("data-linked props show a lock reason while display props remain editable",
   const blocks = { Notice: { props: { heading: { type: "string", required: true }, count: { type: "number", required: true } }, lockedProps: { count: "外部データから取得します" }, component: ({ heading, count }) => createElement("p", null, `${heading}: ${count}`) } };
   const app = await setup({ document: doc, blocks });
   try {
-    await click("Notice · notice"); assert.equal(input("count").disabled, true); assert.ok(document.body.textContent.includes("ロック: 外部データから取得します"));
+    await click("Notice · notice"); await editorTab("設定"); assert.equal(input("count").disabled, true); assert.ok(document.body.textContent.includes("ロック: 外部データから取得します"));
     await change(input("heading"), "編集後の表示名"); await click("下書き保存");
     assert.deepEqual(app.calls.saves[0].document.body.at(-1).props, { heading: "編集後の表示名", count: 5 });
   } finally { await app.cleanup(); }
@@ -169,7 +192,7 @@ test("host can hide business block insertion while retaining existing block edit
   const app = await setup({ document: doc, blocks, insertableBlocks: [] });
   try {
     assert.equal(document.querySelector('select[aria-label="追加する要素"] option[value="block:Notice"]'), null);
-    await click("Notice · notice"); await change(input("heading"), "After"); await click("下書き保存");
+    await click("Notice · notice"); await editorTab("設定"); await change(input("heading"), "After"); await click("下書き保存");
     assert.equal(app.calls.saves[0].document.body.at(-1).props.heading, "After");
   } finally { await app.cleanup(); }
 });
@@ -264,10 +287,10 @@ function pageHost(overrides = {}) {
   return { calls, adapter, setSettings: (next) => { settings = next; settingsVersion++; } };
 }
 const dialog = () => document.querySelector('[role="dialog"]');
-/** 右レールの「ページ」「サイト」タブを開き、その内容を返す。 */
+/** 右レールの対象セレクタから「ページ」「サイト」を開き、その内容を返す。 */
 async function panel(name) {
-  const tab = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name);
-  assert.ok(tab, name); if (tab.getAttribute("aria-selected") !== "true") await press(tab);
+  const select = document.querySelector('.e-inspector-context select[aria-label="編集する対象"]');
+  assert.ok(select, name); await change(select, name === "ページ" ? "page" : "site");
   return document.querySelector(".e-right .e-inspector-content");
 }
 const inputIn = (root, text) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
@@ -281,7 +304,7 @@ const treeShape = (list = document.querySelector(".e-page-tree")) => [...list.ch
 test("page panel shows the path tree, kinds, states and counts, and selecting a row loads that page", async () => {
   const host = pageHost(), app = await setup({ adapter: host.adapter });
   try {
-    assert.equal(document.querySelector('[aria-label="ページ"]'), null);
+    assert.equal(document.querySelector('[aria-label="ページ"]')?.getAttribute("aria-pressed"), "true");
     assert.deepEqual(treeShape(), ["ホーム", "私たちについて", { circles: ["バドミントン", "囲碁"] }, { experiences: ["体験詳細"] }, "ヘッダー"]);
     assert.equal(pageRow("ホーム").getAttribute("aria-current"), "page"); assert.ok(pageRow("ホーム").textContent.includes("/"));
     assert.ok(pageRow("囲碁").textContent.includes("/circles/kamakura-go")); assert.ok(pageRow("囲碁").textContent.includes("非公開"));
@@ -544,7 +567,7 @@ test("failed asset preview resolution can be retried", async () => {
     assert.equal(attempts, 2);
     assert.equal(button("素材を再読み込み"), undefined);
     assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/garden.png"));
-    await clickCanvas("photo"); assert.equal(input("レスポンシブ画像 URL"), undefined);
+    await clickCanvas("photo"); await editorTab("設定"); assert.equal(input("レスポンシブ画像 URL"), undefined);
   } finally { await app.cleanup(); }
 });
 
@@ -584,7 +607,7 @@ test("staff upload an image, set its alt, replace a page image, save the draft a
     await click("一覧に戻る");
     const first = assetPanel().querySelector(".e-asset-card");
     assert.ok(first.getAttribute("aria-label").startsWith("海辺の朝.png（画像・1200×800")); assert.equal(document.activeElement, first);
-    await tool("レイヤー"); await clickCanvas("photo");
+    await tool("レイヤー"); await clickCanvas("photo"); await editorTab("設定");
     await click("画像を置き換え");
     assert.equal(assetPanel().closest("[hidden]"), null); assert.equal(assetPanel().querySelector("h2").textContent, "画像を選ぶ");
     assert.equal(assetCard("利用案内.pdf"), undefined);
@@ -592,7 +615,7 @@ test("staff upload an image, set its alt, replace a page image, save the draft a
     assert.ok(document.body.textContent.includes("画像を置き換えました。代替テキストを確認してください。"));
     assert.equal(canvasNode("photo").getAttribute("src"), "/media/asset-1.png"); assert.equal(canvasNode("photo").getAttribute("alt"), "朝の海辺");
     assert.equal(assetPanel().closest("[hidden]") !== null, true);
-    assert.equal(input("画像の説明").value, "朝の海辺");
+    await editorTab("設定"); assert.equal(input("画像の説明").value, "朝の海辺");
     await click("下書き保存");
     const saved = app.calls.saves[0].document.body[0].children.at(-1);
     assert.deepEqual(saved.asset, { provider: "uploads", id: "asset-1" }); assert.deepEqual(saved.attrs, { alt: "朝の海辺" });
@@ -677,10 +700,10 @@ test("library images can be added inside the selected element and used as its ba
   try {
     await click("section · hero"); await tool("素材"); await chooseAsset("庭の緑.png");
     await click("ページに追加");
-    assert.equal(document.querySelector('[aria-label="インスペクタ"] h2').textContent, "img · node_1");
+    assert.equal(document.querySelector('[aria-label="インスペクタ"] .e-inspector-context strong').textContent, "img · node_1");
     assert.equal(canvasNode("node_1").parentElement.getAttribute("data-nw-node"), "hero");
     assert.equal(canvasNode("node_1").getAttribute("src"), "/media/garden.png"); assert.equal(canvasNode("node_1").getAttribute("width"), "600");
-    await tool("レイヤー"); await click("section · hero"); await click("背景画像を選ぶ");
+    await tool("レイヤー"); await click("section · hero"); assert.equal(document.querySelector('[role="tab"][aria-selected="true"]').textContent, "ボックス"); await click("背景画像を選ぶ");
     assert.equal(assetPanel().querySelector("h2").textContent, "背景画像を選ぶ");
     await chooseAsset("庭の緑.png");
     const css = () => document.querySelector("iframe").contentDocument.querySelector("style[data-nw-style]").textContent;
@@ -763,8 +786,8 @@ test("assets used on this page or other pages cannot be deleted; unused assets a
 test("without an asset adapter the editor keeps the URL image fields and shows no library", async () => {
   const app = await setup({ document: withImage() });
   try {
-    assert.equal(button("素材"), undefined); assert.equal(assetPanel(), null);
-    await clickCanvas("photo");
+    assert.ok(document.querySelector('.e-tools button[aria-label="素材"]')); assert.equal(assetPanel(), null);
+    await clickCanvas("photo"); await editorTab("設定");
     assert.equal(input("画像 URL").value, "/photo.webp"); assert.equal(button("画像を置き換え"), undefined); assert.equal(button("背景画像を選ぶ"), undefined);
     await change(input("画像 URL"), "/other.webp"); assert.equal(canvasNode("photo").getAttribute("src"), "/other.webp");
   } finally { await app.cleanup(); }
@@ -774,7 +797,7 @@ test("image URL locks disable responsive replacement and keep alt editable", asy
   for (const field of ["attrs.src", "attrs.srcSet", "asset"]) {
     const app = await setup({ document: withImage({ attrs: { src: "/photo.webp", srcSet: "/large.webp", alt: "Sea" } }), locks: [{ nodeId: "photo", fields: [field], reason: "業務画像" }] });
     try {
-      await clickCanvas("photo");
+      await clickCanvas("photo"); await editorTab("設定");
       assert.equal(input("画像 URL").disabled, true);
       assert.equal(input("レスポンシブ画像 URL").disabled, true);
       assert.equal(input("画像の説明").disabled, false);
@@ -818,7 +841,7 @@ test("one picker lists site uploads and allowed CMS photos by source and places 
     assert.ok(assetCard("庭の緑.png").getAttribute("aria-label").endsWith("・出所: サイト）")); assert.ok(assetCard("朝ヨガ.png").getAttribute("aria-label").endsWith("・出所: 体験写真）"));
     assert.equal(assetCard("朝ヨガ.png").querySelector(".e-asset-source").textContent, "体験写真");
     assert.equal(button("アップロード").title, "サイトへ追加"); assert.equal(assetPanel().querySelector('select[aria-label="フォルダ"]'), null);
-    await tool("レイヤー"); await clickCanvas("photo"); await click("画像を置き換え");
+    await tool("レイヤー"); await clickCanvas("photo"); await editorTab("設定"); await click("画像を置き換え");
     assert.equal(assetPanel().querySelector("h2").textContent, "画像を選ぶ"); assert.equal(sourceTabs().length, 4);
     await chooseAsset("朝ヨガ.png");
     assert.equal(canvasNode("photo").getAttribute("src"), "/cms/yoga.png"); assert.equal(canvasNode("photo").getAttribute("alt"), "海辺で朝ヨガ");
@@ -937,7 +960,7 @@ test("photos unpublished in the CMS become placeholders after the editor reloads
     // エディター内の再読込で解決をやり直し、非公開になった写真をプレビューから外す。
     await click("最新の文書を再読込"); await settle();
     assert.equal(canvasNode("photo").hasAttribute("data-nw-missing-asset"), true); assert.equal(canvasNode("photo").getAttribute("src"), null);
-    await clickCanvas("photo"); assert.ok(document.querySelector('[aria-label="インスペクタ"]').textContent.includes("画像を表示できません"));
+    await clickCanvas("photo"); await editorTab("設定"); assert.ok(document.querySelector('[aria-label="インスペクタ"]').textContent.includes("画像を表示できません"));
     const html = await publicHtml(); assert.ok(!html.includes("/cms/yoga.png")); assert.ok(!html.includes('data-nw-node="photo"'));
     await tool("素材"); assert.equal(!!assetCard("朝ヨガ.png"), false);
   } finally { await app.cleanup(); }
@@ -983,7 +1006,7 @@ test("recently used assets are requested with recent, also while picking, and le
     await tool("素材"); assert.equal(button("最近使った").getAttribute("aria-pressed"), "false"); assert.equal("recent" in calls.lists.at(-1), false);
     await click("最近使った");
     assert.equal(button("最近使った").getAttribute("aria-pressed"), "true"); assert.equal(calls.lists.at(-1).recent, true); assert.deepEqual(cardNames(), ["朝ヨガ.png"]);
-    await tool("レイヤー"); await clickCanvas("photo"); await click("画像を置き換え");
+    await tool("レイヤー"); await clickCanvas("photo"); await editorTab("設定"); await click("画像を置き換え");
     assert.equal(button("最近使った").getAttribute("aria-pressed"), "true"); assert.equal(calls.lists.at(-1).recent, true); assert.equal(calls.lists.at(-1).kind, "image");
   } finally { await app.cleanup(); }
   const legacy = await setup({ assets: createMemoryAssetLibrary({ siteId: "demo", seed: [garden] }) });
@@ -1048,7 +1071,7 @@ test("autosave saves the scheduled target after the delay, waits for valid input
     assert.equal(app.calls.saves.length, 1); assert.deepEqual(app.calls.saves[0].target, homeTarget); assert.equal(app.calls.saves[0].expectedVersion, "v1"); assert.equal(app.calls.saves[0].trigger, "autosave");
     assert.equal(app.calls.saves[0].document.title, "自動で保存"); assert.match(status(), /^保存済み（\d{2}:\d{2}）$/);
     await press(toggle); assert.equal(toggle.getAttribute("aria-checked"), "false");
-    await click("a · link"); await change(input("リンク先 URL"), "/news"); await change(input("リンク先 URL"), "javascript:alert(1)");
+    await click("a · link"); await editorTab("設定"); await change(input("リンク先 URL"), "/news"); await change(input("リンク先 URL"), "javascript:alert(1)");
     assert.equal(status(), "入力を確認中");
     await press(toggle); await wait(300); assert.equal(app.calls.saves.length, 1, "no autosave while an invalid input is pending");
     await click("入力を取り消す"); await wait(300);

@@ -21,7 +21,7 @@ function declarations(values: StyleDeclarations, assets: ResolvedAssetMap): stri
 }
 const reduced = "@media (prefers-reduced-motion:no-preference)";
 const transitionNames: readonly [StateProperty, string][] = [["color", "color"], ["backgroundColor", "background-color"], ["borderColor", "border-color"], ["opacity", "opacity"],
-  ["translate", "translate"], ["rotate", "rotate"], ["scale", "scale"], ["textDecorationLine", "text-decoration-color"]];
+  ["translate", "translate"], ["rotate", "rotate"], ["scale", "scale"], ["skew", "transform"], ["textDecorationLine", "text-decoration-color"]];
 // 動き始めの姿だけを持つ。終わりは要素の通常の見た目なので、動かない環境では内容がそのまま見える。
 const keyframes: Record<AppearEffect, string> = { fade: "opacity:0", "fade-up": "opacity:0;translate:0 24px", "fade-down": "opacity:0;translate:0 -24px",
   "fade-left": "opacity:0;translate:24px 0", "fade-right": "opacity:0;translate:-24px 0", zoom: "opacity:0;scale:.92" };

@@ -20,6 +20,7 @@ const input = (text, root = document) => field(text, root)?.querySelector("input
 const frame = () => document.querySelector("iframe");
 const canvasCss = () => frame().contentDocument.querySelector("style[data-nw-style]").textContent;
 async function click(target) { assert.ok(target); await act(async () => target.click()); await flush(); }
+async function editorTab(name) { const target = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name); assert.ok(target, name); if (target.getAttribute("aria-selected") !== "true") await click(target); }
 async function canvasClick(selector) { const view = frame().contentWindow, target = view.document.querySelector(selector); assert.ok(target, selector); await act(async () => target.dispatchEvent(new view.MouseEvent("click", { bubbles: true, cancelable: true }))); await flush(); }
 async function type(target, value) {
   assert.ok(target);
@@ -83,7 +84,7 @@ test("a shared color is created, applied to two elements, recolored live and sav
 test("a tablet override is shown in the tier color, can be reset, and matches the published CSS after reload", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero")); await change(input("幅", right()), "80%");
+    await click(button("section · hero")); await editorTab("ボックス"); await change(input("幅", right()), "80%");
     const pressedTier = () => document.querySelector('[aria-label="編集する幅"] [aria-pressed="true"]').textContent;
     await change(document.querySelector('[aria-label="表示幅"]'), "375");
     assert.equal(pressedTier(), "基本", "表示幅を変えても編集する段は変わらない");
@@ -125,7 +126,7 @@ test("a tablet override is shown in the tier color, can be reset, and matches th
 test("invalid width and color values are rejected and the previous values are saved", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero")); await change(input("幅", right()), "50%");
+    await click(button("section · hero")); await editorTab("ボックス"); await change(input("幅", right()), "50%");
     await change(input("幅", right()), "abc");
     assert.equal(input("幅", right()).value, "abc"); assert.ok(field("幅", right()).querySelector('[role="alert"]'));
     assert.equal(button("下書き保存").disabled, true);
@@ -143,7 +144,7 @@ test("invalid width and color values are rejected and the previous values are sa
 test("switching margins between one value and four sides is undone in one step", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero")); await click(button("タブレット 768px〜", right()));
+    await click(button("section · hero")); await editorTab("ボックス"); await click(button("タブレット 768px〜", right()));
     assert.equal(input("外側の余白", right()).value, "0 auto");
     await click(button("外側の余白を上下左右で個別に指定", right()));
     assert.equal(input("外側の余白", right()), undefined);
@@ -172,7 +173,7 @@ test("business blocks show only the appearance fields they allow", async () => {
   };
   const app = await setup({ document: doc, props: { blocks } });
   try {
-    await click(button("お知らせ · notice"));
+    await click(button("お知らせ · notice")); await editorTab("ボックス");
     assert.ok(right().textContent.includes("このブロックで変更できる見た目だけを表示しています。"));
     for (const caption of ["文字色", "幅", "外側の余白", "右の外余白", "内側の余白", "配置の基準", "角丸", "テキストスタイル", "不透明度"]) assert.equal(field(caption, right()), undefined, caption);
     assert.ok(input("背景色", right())); assert.ok(input("上の外余白", right()));
@@ -180,7 +181,8 @@ test("business blocks show only the appearance fields they allow", async () => {
     await click(button("下書き保存"));
     const saved = app.calls.saves[0].document.body.at(-2);
     assert.deepEqual(saved.style.base, { backgroundColor: "#fff8e6", marginTop: 32 }); assert.deepEqual(saved.props, { heading: "表示名" });
-    await click(button("自由 · free")); assert.ok(input("文字色", right())); assert.ok(input("幅", right()));
+    await click(button("自由 · free")); await editorTab("テキスト"); assert.ok(input("文字色", right()));
+    await editorTab("ボックス"); assert.ok(input("幅", right()));
   } finally { await app.cleanup(); }
 });
 
@@ -214,7 +216,7 @@ test("text styles are applied from the style panel, shown as inherited values an
 test("editing only below the next tier keeps wider widths, is undone in one step and reaches the published CSS", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero"));
+    await click(button("section · hero")); await editorTab("ボックス");
     const direction = () => right().querySelector('[role="group"][aria-label="並ぶ向き"]');
     await click(direction().querySelector('[aria-label="横"]'));
     await click(button("〜767px だけ", right()));
@@ -227,7 +229,7 @@ test("editing only below the next tier keeps wider widths, is undone in one step
     assert.equal(right().querySelector('[aria-label="反映する範囲"] [aria-pressed="true"]').textContent, "〜767px だけ", "範囲は選択を変えても保つ");
     assert.doesNotMatch(canvasCss(), /@media \(min-width:768px\)\{[^}]*hero"\]\{[^}]*flex-direction/);
     await click(right().querySelector('[role="group"][aria-label="並ぶ向き"] [aria-label="縦"]'));
-    await click(button("p · lead")); await change(input("文字色", right()), "#ff0000");
+    await click(button("p · lead")); await editorTab("テキスト"); await change(input("文字色", right()), "#ff0000");
     assert.ok(field("文字色", right()).querySelector('[role="alert"]').textContent.includes("先に「768px 以上」で値を入れてください。"));
     await click(button("入力を取り消す", field("文字色", right())));
     await click(button("下書き保存"));

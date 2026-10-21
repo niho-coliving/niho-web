@@ -70,14 +70,14 @@ element と component の `style.textStyle` には存在する textStyles のキ
 
 | 項目 | 文書 | 値 |
 | --- | --- | --- |
-| 変形 | `translate` / `rotate` / `scale` / `transformOrigin`（base・responsive） | 移動は長さ 1〜2 個（px は ±1000、rem/em は ±64、% と vw/vh は ±100。数値は px）、回転は ±360deg（数値は deg）、拡大は 0〜5 の数 1〜2 個、原点は `left top` … `right bottom` と `center` の 9 値 |
+| 変形 | `translate` / `rotate` / `scale` / `skew` / `transformOrigin`（base・responsive） | 移動は長さ 1〜2 個（px は ±1000、rem/em は ±64、% と vw/vh は ±100。数値は px）、回転は ±360deg（数値は deg）、拡大・縮小は 0〜5 の数 1〜2 個、傾きは ±180deg（数値は deg、2 軸は空白区切り）、原点は `left top` … `right bottom` と `center` の 9 値 |
 | 遷移 | `transitionDuration` / `transitionDelay` / `transitionTimingFunction` | 0〜5s（`ms` 可、数値は ms）と `ease` `ease-in` `ease-out` `ease-in-out` `linear` |
-| 状態 | `style.states.hover` / `focus` / `active` | `color` `backgroundColor` `borderColor` `opacity` `textDecorationLine` `translate` `rotate` `scale` だけ（token 参照可） |
+| 状態 | `style.states.hover` / `focus` / `active` | `color` `backgroundColor` `borderColor` `opacity` `textDecorationLine` `translate` `rotate` `scale` `skew` だけ（color token 参照可） |
 | 登場 | `style.appear` | `effect`（`fade` `fade-up` `fade-down` `fade-left` `fade-right` `zoom`）、`trigger`（`load` / `view`）、`duration` 100〜3000ms、`delay` 0〜3000ms、任意の `easing` |
 | 幅別の非表示 | `style.hidden` | `{ minWidth, maxWidth? }` の配列。minWidth は 0 か 320〜3840、maxWidth はその範囲の最後の幅（含む）で minWidth より大きい整数。昇順・重なりなし・最大 12 |
 | 横スクロール | `overflowX` / `scrollSnapType` / `scrollSnapAlign` | `visible` `hidden` `auto` `scroll` / `none` `x mandatory` `x proximity` / `none` `start` `center` `end` |
 
-CSS はノード規則の後に、状態 → 遷移 → 登場 → 幅別の非表示の順で出力します。hover は `@media (hover:hover){<sel>:hover{…}}`、focus はキーボード操作で必ず見える `<sel>:focus-visible{…}`、active は `<sel>:active{…}` です。`transition-property` は文書に持たせず、そのノードの状態で使うプロパティ（`color` `background-color` `border-color` `opacity` `translate` `rotate` `scale` `text-decoration-color`）から生成します。状態スタイルの無いノードの遷移の指定は出力しません。
+CSS はノード規則の後に、状態 → 遷移 → 登場 → 幅別の非表示の順で出力します。hover は `@media (hover:hover){<sel>:hover{…}}`、focus はキーボード操作で必ず見える `<sel>:focus-visible{…}`、active は `<sel>:active{…}` です。`skew` は制限済み角度から `transform:skew(...)` を生成し、任意の transform 文字列は受け付けません。`transition-property` は文書に持たせず、そのノードの状態で使うプロパティ（`color` `background-color` `border-color` `opacity` `translate` `rotate` `scale` `transform` `text-decoration-color`）から生成します。状態スタイルの無いノードの遷移の指定は出力しません。
 
 登場の keyframes は文書 scope 付きの固定名（`<scope>-fade-up` 等）で、使われた効果だけを出力します。内容は動き始めの opacity と translate / scale だけで、レイアウトはずれません。`load` は `animation:<name> <duration>ms <easing> <delay>ms both`、`view` はさらに `@supports (animation-timeline: view())` の中で `animation-timeline:view(); animation-range:entry 0% entry 60%`（時間は auto、遅れは使わない）です。動きを減らす設定の利用者と未対応のブラウザでは animation 自体を適用しないため、内容はそのまま見えます。
 

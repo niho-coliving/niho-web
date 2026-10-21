@@ -62,6 +62,7 @@ const translatePart = (v: string) => {
 };
 const pair = (v: string, part: (value: string) => boolean) => { const parts = v.split(" "); return parts.length <= 2 && parts.every(part); };
 const scalePart = (v: string) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(v) && Number(v) <= 5;
+const skewPart = (v: string) => { const match = /^(-?(?:\d+(?:\.\d+)?|\.\d+))deg$/.exec(v); return !!match && Math.abs(Number(match[1])) <= 180; };
 const time = (v: string) => { const match = /^(\d+(?:\.\d+)?|\.\d+)(s|ms)$/.exec(v); return !!match && Number(match[1]) * (match[2] === "s" ? 1000 : 1) <= 5000; };
 export const easings: readonly MotionEasing[] = ["ease", "ease-in", "ease-out", "ease-in-out", "linear"];
 export const origins = ["left top", "center top", "right top", "left center", "center", "right center", "left bottom", "center bottom", "right bottom"] as const;
@@ -107,14 +108,14 @@ const specs: Record<StyleProperty, PropertySpec> = {
   fontStyle: { valid: oneOf("normal", "italic") }, textDecorationLine: { valid: oneOf("none", "underline", "line-through") },
   translate: { kind: "length", px: true, valid: (v) => pair(v, translatePart) },
   rotate: { unit: "deg", valid: (v) => { const match = /^(-?(?:\d+(?:\.\d+)?|\.\d+))deg$/.exec(v); return !!match && Math.abs(Number(match[1])) <= 360; } },
-  scale: { kind: "number", valid: (v) => pair(v, scalePart) },
+  scale: { kind: "number", valid: (v) => pair(v, scalePart) }, skew: { unit: "deg", valid: (v) => pair(v, skewPart) },
   transformOrigin: { valid: oneOf(...origins) },
   transitionDuration: { unit: "ms", valid: time }, transitionDelay: { unit: "ms", valid: time }, transitionTimingFunction: { valid: oneOf(...easings) },
   overflowX: { valid: oneOf("visible", "hidden", "auto", "scroll") },
   scrollSnapType: { valid: oneOf("none", "x mandatory", "x proximity") }, scrollSnapAlign: { valid: oneOf("none", "start", "center", "end") }
 };
 /** 状態スタイルで使えるプロパティ。 */
-export const stateProperties: readonly StateProperty[] = ["color", "backgroundColor", "borderColor", "opacity", "textDecorationLine", "translate", "rotate", "scale"];
+export const stateProperties: readonly StateProperty[] = ["color", "backgroundColor", "borderColor", "opacity", "textDecorationLine", "translate", "rotate", "scale", "skew"];
 export const stateNames: readonly StateName[] = ["hover", "focus", "active"];
 export const appearEffects: readonly AppearEffect[] = ["fade", "fade-up", "fade-down", "fade-left", "fade-right", "zoom"];
 /** 遷移の指定。通常の規則には出さず、状態スタイルを持つノードの動きの規則だけに出す。 */
@@ -267,6 +268,10 @@ export function parseTextStyles(value: unknown, tokens: Record<string, DesignTok
   return result;
 }
 export function declarationCss(property: StyleProperty, value: StyleValue): string {
+  if (property === "skew") {
+    const cssValue = typeof value === "object" ? `var(--nw-${value.token})` : literal(property, value, property);
+    return `transform:skew(${cssValue.split(" ").join(",")});`;
+  }
   const cssName = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
   const cssValue = typeof value === "object" ? `var(--nw-${value.token})` : literal(property, value, property);
   return `${cssName}:${cssValue};`;

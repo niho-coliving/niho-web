@@ -15,6 +15,19 @@ const { PageEditor } = await import("@niho/web/editor");
 const flush = async (turns = 3) => { for (let index = 0; index < turns; index++) await act(async () => new Promise((resolve) => setTimeout(resolve, 0))); };
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
+async function showInspector(value) {
+  const target = document.querySelector('select[aria-label="編集する対象"]'); assert.ok(target, "inspector selector");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(target, value);
+    target.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  await flush();
+}
+const showLocalization = () => showInspector("localization");
+const selectInspectorTab = async (value) => {
+  const target = [...document.querySelectorAll('[role="tab"]')].find((node) => node.textContent === value); assert.ok(target, value);
+  await act(async () => target.click()); await flush();
+};
 const tool = (text) => [...document.querySelectorAll(".e-tools button")].find((node) => node.querySelector("small")?.textContent === text);
 async function clickTool(text) { const target = tool(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
 const input = (text) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
@@ -232,7 +245,7 @@ test("same logical page switches locale through the dirty guard, saves real targ
     assert.equal(app.sites.kamakura.sourceDocument.body[0].children[0].children[0].text, "海辺で暮らす");
     assert.equal(app.sites.kamakura.targetDocument.body[0].children[0].children[0].text, "Edited target heading");
     assert.ok(app.calls.saves.at(-1).localization.expectedSourceVersion.startsWith("source-"));
-    await clickTool("レイヤー"); await click("a · details"); assert.equal(input("リンク先 URL").disabled, true); assert.ok(document.body.textContent.includes("共通デザインは原文側で編集"));
+    await clickTool("レイヤー"); await click("a · details"); await selectInspectorTab("設定"); assert.equal(input("リンク先 URL").disabled, true); assert.ok(document.body.textContent.includes("共通デザインは原文側で編集"));
     await change([...document.querySelectorAll('select[aria-label="編集するサイト"]')][0], "experience"); await flush(6);
     assert.ok(button("English（原文）")); assert.ok(button("日本語（訳文）")); assert.equal(input("ページタイトル").value, "Experience home");
   } finally { await app.cleanup(); }
@@ -250,7 +263,7 @@ test("source draft save refreshes site localization status once without waiting 
 test("URL画像の手修正は親bufferでcancel・離脱guard・409再試行を保ち、target canvasだけを更新する", async () => {
   const app = await setup({ conflictOnce: true });
   try {
-    await click("English（訳文）"); await flush(5); await click("翻訳");
+    await click("English（訳文）"); await flush(5); await showLocalization();
     const section = document.querySelector('[data-unit-id="page.node.urlPhoto.asset"]'); assert.ok(section);
     const url = [...section.querySelectorAll("label")].find((label) => label.querySelector("span")?.textContent === "言語別の画像 URL")?.querySelector("input");
     const save = [...section.querySelectorAll("button")].find((node) => node.textContent === "URLを保存"), cancel = [...section.querySelectorAll("button")].find((node) => node.textContent === "入力を取り消す");
@@ -300,7 +313,7 @@ test("a target is read-only only when its own snapshot carries the policy", asyn
     assert.equal(document.body.textContent.includes("読み取り専用"), false); assert.equal(input("ページタイトル").disabled, false);
     await click("English（訳文）"); await flush(7);
     assert.ok(document.body.textContent.includes("この言語（読み取り専用）")); assert.equal(input("ページタイトル").disabled, true); assert.equal(button("下書き保存").disabled, true);
-    await click("翻訳"); assert.equal(document.querySelector('[data-unit-id="page.title"] input, [data-unit-id="page.title"] textarea').disabled, true);
+    await showLocalization(); assert.equal(document.querySelector('[data-unit-id="page.title"] input, [data-unit-id="page.title"] textarea').disabled, true);
     await click("日本語（原文）"); await flush(7);
     assert.equal(document.body.textContent.includes("読み取り専用"), false); assert.equal(input("ページタイトル").disabled, false);
   } finally { await app.cleanup(); }
@@ -309,14 +322,14 @@ test("a target is read-only only when its own snapshot carries the policy", asyn
 test("candidate stays separate until adoption, command conflicts retry, failures are visible, and late target reads are ignored", async () => {
   const app = await setup({ conflictOnce: true });
   try {
-    await click("English（訳文）"); await flush(5); await click("翻訳");
+    await click("English（訳文）"); await flush(5); await showLocalization();
     assert.ok(document.body.textContent.includes("Manual Kamakura")); assert.ok(document.body.textContent.includes("Candidate Kamakura"));
     assert.ok(document.body.textContent.includes("翻訳に失敗しました"));
     await click("翻訳案を採用"); assert.ok(document.body.textContent.includes("409")); assert.equal(app.sites.kamakura.targetDocument.title, "Manual Kamakura");
     await click("翻訳案を採用"); await flush(5); assert.equal(app.sites.kamakura.targetDocument.title, "Candidate Kamakura");
-    await click("翻訳"); await click("現在の訳を確認済みにする");
+    await showLocalization(); await click("現在の訳を確認済みにする");
     assert.ok(app.sites.kamakura.overlay.entries.some((entry) => entry.reviewedSourceFingerprint));
-    await click("ページ"); await change(input("ページタイトル"), "Manual after review"); await click("下書き保存");
+    await showInspector("page"); await change(input("ページタイトル"), "Manual after review"); await click("下書き保存");
     assert.equal(app.sites.kamakura.overlay.entries.find((entry) => entry.unitId === "page.title").reviewedSourceFingerprint, undefined);
   } finally { await app.cleanup(); }
   const late = await setup({ delayedRead: true });
@@ -371,12 +384,12 @@ test("shared component units are shown once, manually edited, adopted, reviewed 
     assert.equal(app.components.components[0].root.children[0].children[0].text, "共有原文");
     assert.equal((canvasText().match(/Shared manual/g) ?? []).length, 2);
 
-    await click("翻訳");
+    await showLocalization();
     await act(async () => sectionButton("翻訳案を採用").click()); await flush(8);
     assert.equal((canvasText().match(/Shared candidate/g) ?? []).length, 2);
-    await click("翻訳");
+    await showLocalization();
     await act(async () => sectionButton("現在の訳を確認済みにする").click()); await flush(6);
-    await click("翻訳");
+    await showLocalization();
     assert.match(section().textContent, /確認済み/);
 
     const rich = document.querySelector('[data-unit-id="component.header.node.sharedRich.richText"]'), richEditor = rich.querySelector(".e-localization-rich");
@@ -386,21 +399,21 @@ test("shared component units are shown once, manually edited, adopted, reviewed 
     assert.deepEqual(app.calls.at(-1).value.children.filter((node) => node.type === "element").map((node) => node.id), ["sharedMark", "sharedLink"]);
     assert.equal(app.components.components[0].root.children[1].children[2].attrs.href, "/about");
 
-    await click("翻訳");
+    await showLocalization();
     const assetUnit = document.querySelector('[data-unit-id="component.header.node.sharedImage.asset"]'); assert.ok(assetUnit);
     await act(async () => [...assetUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
     const assetCard = document.querySelector(".e-asset-card"); assert.ok(assetCard); await act(async () => assetCard.click()); await flush(8);
     assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });
 
     // 訳文のソーシャルカバーも素材から選べる。
-    await click("翻訳");
+    await showLocalization();
     const ogUnit = document.querySelector('[data-unit-id="page.meta.ogImage.src"]'); assert.ok(ogUnit);
     await act(async () => [...ogUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
     const ogCard = document.querySelector(".e-asset-card"); assert.ok(ogCard); await act(async () => ogCard.click()); await flush(8);
     assert.equal(app.calls.at(-1).unitId, "page.meta.ogImage.src");
     assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });
 
-    await click("翻訳");
+    await showLocalization();
     const alt = document.querySelector('[data-unit-id="component.header.node.sharedImage.attr.alt"]');
     assert.ok(alt); assert.equal(alt.querySelector("textarea").value, "");
     await act(async () => [...alt.querySelectorAll("button")].find((item) => item.textContent === "手修正を保存").click()); await flush(7);
@@ -422,7 +435,7 @@ test("manual text input guards locale, site and inspector navigation, participat
   const titleSection = () => document.querySelector('[data-unit-id="page.title"]');
   const manual = () => titleSection()?.querySelector("input,textarea");
   try {
-    await click("English（訳文）"); await flush(5); await click("翻訳");
+    await click("English（訳文）"); await flush(5); await showLocalization();
     await change(manual(), "Keep this localized title");
     assert.equal(document.querySelector(".e-status").textContent, "入力を確認中");
     const unload = new dom.window.Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); assert.equal(unload.defaultPrevented, true);
@@ -431,14 +444,14 @@ test("manual text input guards locale, site and inspector navigation, participat
 
     await click("日本語（原文）"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
     assert.equal(manual().value, "Keep this localized title");
-    await click("ページ"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
+    await showInspector("page"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
     assert.equal(manual().value, "Keep this localized title");
     await change(document.querySelector('select[aria-label="編集するサイト"]'), "experience"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
     assert.equal(manual().value, "Keep this localized title");
 
     await click("日本語（原文）"); await click("変更を破棄して移動"); await flush(6);
     assert.equal(input("ページタイトル").value, "鎌倉ホーム");
-    await click("English（訳文）"); await flush(5); await click("翻訳");
+    await click("English（訳文）"); await flush(5); await showLocalization();
     assert.equal(manual().value, "Manual Kamakura");
   } finally { await app.cleanup(); }
 });
@@ -449,10 +462,10 @@ test("rich manual input guards node, page and inspector changes; discard is scop
   const richEditor = () => richSection()?.querySelector('.e-localization-rich');
   const sectionButton = (label) => [...richSection().querySelectorAll("button")].find((item) => item.textContent === label);
   try {
-    await click("English（訳文）"); await flush(6); await click("翻訳");
+    await click("English（訳文）"); await flush(6); await showLocalization();
     assert.equal(richEditor().getAttribute("role"), "textbox"); assert.equal(richEditor().getAttribute("aria-multiline"), "true");
     await act(async () => { richEditor().querySelector('[data-nw-node="sharedMark"]').textContent = "編集中"; richEditor().dispatchEvent(new dom.window.Event("input", { bubbles: true })); }); await flush();
-    await click("ページ"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
+    await showInspector("page"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
     assert.equal(richEditor().querySelector('[data-nw-node="sharedMark"]').textContent, "編集中");
 
     const otherSharedNode = document.querySelector("iframe")?.contentDocument?.querySelector('[data-nw-node="homeHeaderA--sharedText"]');
@@ -464,7 +477,7 @@ test("rich manual input guards node, page and inspector changes; discard is scop
     await act(async () => about.click()); await flush(); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける");
     assert.equal(richEditor().querySelector('[data-nw-node="sharedMark"]').textContent, "編集中");
     await act(async () => about.click()); await flush(); await click("変更を破棄して移動"); await flush(7);
-    await clickTool("ページ"); const home = [...document.querySelectorAll(".e-page")].find((item) => item.textContent.includes("ホーム")); await act(async () => home.click()); await flush(7); await click("翻訳");
+    await clickTool("ページ"); const home = [...document.querySelectorAll(".e-page")].find((item) => item.textContent.includes("ホーム")); await act(async () => home.click()); await flush(7); await showLocalization();
     assert.equal(richEditor().querySelector('[data-nw-node="sharedMark"]').textContent, "近く");
 
     const mark = richEditor().querySelector('[data-nw-node="sharedMark"]'); mark.removeAttribute("data-nw-node");
@@ -483,7 +496,7 @@ test("manual save keeps its buffer through 409 and rejection, reloads current co
   const manual = () => titleSection()?.querySelector("input,textarea");
   const manualButton = (label) => [...titleSection().querySelectorAll("button")].find((item) => item.textContent === label);
   try {
-    await click("English（訳文）"); await flush(5); await click("翻訳"); await change(manual(), "My conflict-safe value");
+    await click("English（訳文）"); await flush(5); await showLocalization(); await change(manual(), "My conflict-safe value");
     const beforeUnload = new dom.window.Event("beforeunload", { cancelable: true }); window.dispatchEvent(beforeUnload); assert.equal(beforeUnload.defaultPrevented, true);
     await act(async () => manualButton("手修正を保存").click()); await flush(10);
     assert.equal(manual().value, "My conflict-safe value"); assert.equal(document.querySelector(".e-status").textContent, "入力を確認中");
@@ -501,7 +514,7 @@ test("manual save keeps its buffer through 409 and rejection, reloads current co
 
   app = await setup({ rejectCommandOnce: true });
   try {
-    await click("English（訳文）"); await flush(5); await click("翻訳"); await change(manual(), "Keep after network rejection");
+    await click("English（訳文）"); await flush(5); await showLocalization(); await change(manual(), "Keep after network rejection");
     await act(async () => manualButton("手修正を保存").click()); await flush(5);
     assert.equal(manual().value, "Keep after network rejection"); assert.equal(document.querySelector(".e-status").textContent, "入力を確認中");
     assert.match(document.body.textContent, /入力は保持されています/);
