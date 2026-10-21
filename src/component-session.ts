@@ -145,14 +145,14 @@ export function parseRecoveredLibrary(stored: unknown, siteId: string, blocks: E
       ...(previousTokens === undefined ? {} : { baseTokens: previousTokens }), library: parsed, updatedAt } : null;
   } catch { return null; }
 }
-export type LibraryMerge = { library: ComponentLibrary | null; restored: LibraryChange[]; restoredTokens: string[]; conflicts: string[] };
+export type LibraryMerge = { library: ComponentLibrary | null; restored: LibraryChange[]; restoredTokens: string[]; conflicts: string[]; tokenConflicts: string[] };
 /**
  * 退避内容のうち、保存先（latest）でその後に変わっていない部品だけを latest に重ねる。
  * 変更前の version と latest の version が違う部品（追加した ID が latest で別の部品になっている場合を含む）は latest を残し、conflicts に名前を返す。
  * 重ねた結果を検証できなければ library は null。
  */
 export function mergeRecoveredLibrary(recovered: RecoveredLibrary, latest: ComponentLibrary, blocks: EditorBlockRegistry): LibraryMerge {
-  const own = byId(recovered.library), other = byId(latest), adopted = new Map<string, ComponentDefinition | null>(), restored: LibraryChange[] = [], restoredTokens: string[] = [], conflicts: string[] = [];
+  const own = byId(recovered.library), other = byId(latest), adopted = new Map<string, ComponentDefinition | null>(), restored: LibraryChange[] = [], restoredTokens: string[] = [], conflicts: string[] = [], tokenConflicts: string[] = [];
   for (const [id, base] of Object.entries(recovered.changed)) {
     const mine = own.get(id), theirs = other.get(id), named = mine ?? theirs;
     // どちらにも無い、または同じ内容なら重ねる必要が無い。
@@ -170,7 +170,7 @@ export function mergeRecoveredLibrary(recovered: RecoveredLibrary, latest: Compo
     for (const name of new Set([...Object.keys(recovered.baseTokens), ...Object.keys(recovered.library.tokens)])) {
       const before = recovered.baseTokens[name], mine = recovered.library.tokens[name], theirs = latest.tokens[name];
       if (sameToken(before, mine) || sameToken(theirs, mine)) continue;
-      if (!sameToken(theirs, before)) { conflicts.push(`スタイル「${name}」`); continue; }
+      if (!sameToken(theirs, before)) { tokenConflicts.push(name); continue; }
       if (mine === undefined) delete tokens[name]; else tokens[name] = structuredClone(mine);
       restoredTokens.push(name);
     }
@@ -180,11 +180,11 @@ export function mergeRecoveredLibrary(recovered: RecoveredLibrary, latest: Compo
   }
   let library: ComponentLibrary | null = null;
   try { library = parseComponentLibrary({ ...latest, tokens, components }, blocks); } catch { /* 重ねた結果が検証できない */ }
-  return { library, restored, restoredTokens, conflicts };
+  return { library, restored, restoredTokens, conflicts, tokenConflicts };
 }
 /** 提案する価値があるか。重ねられない・競合だけ・内容が変わる、のいずれか。 */
 export function hasRecoveredChanges(merge: LibraryMerge, latest: ComponentLibrary): boolean {
-  return !merge.library || merge.conflicts.length > 0 || libraryFingerprint(merge.library) !== libraryFingerprint(latest);
+  return !merge.library || merge.conflicts.length > 0 || merge.tokenConflicts.length > 0 || libraryFingerprint(merge.library) !== libraryFingerprint(latest);
 }
 
 const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();

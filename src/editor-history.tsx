@@ -285,7 +285,8 @@ export function LibraryRecoveryBanner({ offer, merge, disabled, restore, discard
     <p><strong>保存されていない部品の変更があります（{formatDateTime(offer.updatedAt)}）</strong>
       {merge.library && merge.restored.length > 0 && <span>復元する部品: {merge.restored.map((change) => `${change.name}（${changeLabels[change.change]}）`).join("、")}</span>}
       {merge.library && merge.restoredTokens.length > 0 && <span>復元するスタイル: {merge.restoredTokens.join("、")}</span>}
-      {merge.conflicts.length > 0 && <span>ほかの保存で変更されたため復元しない部品・スタイル: {merge.conflicts.join("、")}</span>}
+      {merge.conflicts.length > 0 && <span>ほかの保存で変更されたため復元しない部品: {merge.conflicts.join("、")}</span>}
+      {merge.tokenConflicts.length > 0 && <span>ほかの保存で変更されたため復元しないスタイル: {merge.tokenConflicts.join("、")}</span>}
       {!merge.library && <span>最新の共通部品と合わないため、復元できません。</span>}</p>
     <div className="e-recovery-actions">{merge.library && (merge.restored.length > 0 || merge.restoredTokens.length > 0) && <button type="button" className="e-small e-primary" disabled={disabled} onClick={restore}>復元する</button>}
       <button type="button" className="e-small" onClick={discard}>破棄</button></div>

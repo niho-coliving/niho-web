@@ -234,5 +234,5 @@ export function LibraryReloadDialogBody({ plan, close, apply }: { plan: LibraryR
     {plan.detached.length > 0 && <><p>編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。</p><ul className="e-part-usage">{plan.detached.map((name) => <li key={name}><span>{name}</span><small>解除</small></li>)}</ul></>}
     {plan.problem && <p className="e-help e-problem" role="alert">{plan.problem}</p>}
     <div className="e-actions"><button type="button" autoFocus onClick={close}>閉じて編集を続ける</button>
-      {!plan.problem && <button type="button" className={plan.discarded.length || plan.discardedTokens.length ? "e-danger" : "e-primary"} onClick={apply}>{plan.discarded.length || plan.discardedTokens.length ? "最新の部品を読み込む（未保存の変更を破棄）" : "最新の部品を読み込む"}</button>}</div></>;
+      {!plan.problem && <button type="button" className={plan.discarded.length || plan.discardedTokens.length ? "e-danger" : "e-primary"} onClick={apply}>{plan.discarded.length && plan.discardedTokens.length ? "最新の部品を読み込む（部品とスタイルの変更を破棄）" : plan.discarded.length ? "最新の部品を読み込む（部品の変更を破棄）" : plan.discardedTokens.length ? "最新の部品を読み込む（スタイルの変更を破棄）" : "最新の部品を読み込む"}</button>}</div></>;
 }

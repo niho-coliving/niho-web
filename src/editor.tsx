@@ -803,7 +803,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     else { setSelection(null); setSlotChoice(null); setInspector("page"); setDraft(null); setFieldEpoch((value) => value + 1); }
     if (problemRef.current === "library-conflict") setProblem(null);
     refreshUsage(current.siteId);
-    setNotice(["最新の共通部品を読み込みました。", state.plan.discarded.length || state.plan.discardedTokens.length ? "保存していなかった部品・スタイルの変更は破棄しました。" : "",
+    setNotice(["最新の共通部品を読み込みました。", state.plan.discarded.length && state.plan.discardedTokens.length ? "保存していなかった部品とスタイルの変更は破棄しました。" : state.plan.discarded.length ? "保存していなかった部品の変更は破棄しました。" : state.plan.discardedTokens.length ? "保存していなかったスタイルの変更は破棄しました。" : "",
       state.plan.detached.length ? `このページの「${state.plan.detached.join("」「")}」は、部品を解除して通常の要素にしました。` : ""].join(""));
   }
   async function saveAndNavigate(next: Navigation) {

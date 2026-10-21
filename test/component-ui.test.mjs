@@ -574,8 +574,8 @@ test("部品を読み直す keeps the page content when the page uses a discarde
     await click("下書き保存"); assert.equal(status(), "部品が競合しています");
     await click("部品を読み直す");
     assert.ok(dialog().textContent.includes("編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。"));
-    assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["紹介セクション追加", "紹介セクション解除"]);
-    await click(button("最新の部品を読み込む（部品の変更を破棄）", dialog()));
+    assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["紹介セクション追加", "ink変更", "bodyFont変更", "space変更", "紹介セクション解除"]);
+    await click(button("最新の部品を読み込む（部品とスタイルの変更を破棄）", dialog()));
     assert.ok(text().includes("このページの「紹介セクション」は、部品を解除して通常の要素にしました。"));
     assert.ok(button("section · hero")); assert.equal(rendered("n2").textContent, "海のそばで過ごす");
     assert.ok(!canvas().contentDocument.body.textContent.includes("別の人の部品"), "the page does not silently show someone else's component");
@@ -616,7 +616,7 @@ test("unsaved component changes are kept on the device per site and offered agai
     await openPanel(); await renameCard("予備の帯", "端末の帯");
     await wait(900);
     const stored = JSON.parse(storage.data.get(key));
-    assert.deepEqual(Object.keys(stored), ["v", "siteId", "baseVersion", "changed", "library", "updatedAt"]);
+    assert.deepEqual(Object.keys(stored), ["v", "siteId", "baseVersion", "changed", "baseTokens", "library", "updatedAt"]);
     assert.deepEqual([stored.siteId, stored.baseVersion, stored.changed], ["demo", "lib-1", { spare: 1 }]);
     assert.ok(stored.library.components.some((component) => component.name === "端末の帯"));
   } finally { await first.cleanup(); }
