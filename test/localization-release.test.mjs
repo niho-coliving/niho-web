@@ -55,6 +55,37 @@ test("visibility projection preserves exposed shared href bindings and unrelated
   assert.deepEqual(rolled.pages.map((entry) => entry.pageId), ["home"]);
 });
 
+test("revocation filters URL contracts without deleting text that resembles a removed route", async () => {
+  const blocks = { Card: { props: { label: { type: "string", required: true }, href: { type: "url" } } } };
+  const shared = library("propLinks");
+  shared.components[0].root.children.push({ type: "element", id: "routeLabel", tag: "p", children: [{ type: "text", text: "Label" }] });
+  shared.components[0].props = { label: { label: "Label", node: "routeLabel", field: "text" } };
+  const home = page("propLinks", "home", "ja-JP", "Home");
+  home.body.push({ type: "component", id: "card", block: "Card", props: { label: "/about/", href: "/about/" } });
+  home.body.push({ type: "instance", id: "textProp", component: "header", props: { label: "/about/" } });
+  const snapshot = await createPublishedSiteLocaleSnapshot({ config: config("propLinks", "ja"), locale: "ja", releaseId: "r1", version: "v1",
+    pages: [{ path: "/", document: home }, { path: "/about/", document: page("propLinks", "about", "ja-JP", "About") }],
+    publicPageIds: ["home", "about"], components: shared, navigation: [], manifest: manifest(), supportedBlocks: ["Card"],
+    completeness: { reviewedPageIds: [], sharedReviewed: false, unresolvedIssues: [] } }, { blocks });
+  const visibility = { eligiblePageIds: ["home"], revokedPageIds: ["about"], origins: [] };
+  const projected = await projectCurrentPublishedSiteLocaleSnapshot({ snapshot, visibility }, { blocks });
+  assert.deepEqual(projected.pages[0].document.body.find((node) => node.id === "card").props, { label: "/about/" });
+  assert.equal(projected.pages[0].document.body.find((node) => node.id === "textProp").props.label, "/about/");
+  assert.deepEqual(snapshot.pages[0].document.body.find((node) => node.id === "card").props, { label: "/about/", href: "/about/" });
+  const required = { Card: { props: { ...blocks.Card.props, href: { type: "url", required: true } } } };
+  await assert.rejects(() => projectCurrentPublishedSiteLocaleSnapshot({ snapshot, visibility }, { blocks: required }), /required/);
+});
+
+test("stored snapshots reject trailing slash collisions even with a recomputed digest", async () => {
+  const snapshot = await release({ entries: [{ pageId: "home", path: "/about", title: "Home" }, { pageId: "about", path: "/other", title: "About" }] });
+  snapshot.pages[1].sourcePath = snapshot.pages[1].path = "/about/";
+  snapshot.routes[1].sourcePath = snapshot.routes[1].path = "/about/";
+  const { contentDigest: ignored, ...payload } = snapshot;
+  snapshot.contentDigest = await contentDigest(payload);
+  assert.throws(() => parsePublishedSiteLocaleSnapshot(snapshot), /duplicate route path/);
+  await assert.rejects(() => verifyPublishedSiteLocaleSnapshot(snapshot), /duplicate route path/);
+});
+
 test("document noindex cannot be overridden by a route indexability flag", async () => {
   const document = page("noindex", "home", "en-US", "Private search visibility"); document.meta.noindex = true;
   const snapshot = await createPublishedSiteLocaleSnapshot({ config: config("noindex", "en"), locale: "en", releaseId: "r1", version: "v1",

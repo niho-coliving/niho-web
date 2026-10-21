@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
@@ -221,6 +222,11 @@ export type EditorBlockRegistry = Readonly<Record<string, BlockDefinition & {
   lockedProps?: Readonly<Record<string, string>>;
   /** 変更を許す見た目。"textStyle" は文字スタイルの適用、"states" は状態スタイル、"appear" は登場、"hidden" は幅別の非表示。省略時はすべて。props はスタイル操作から変えない。 */
   styleProperties?: readonly (StyleProperty | "textStyle" | "states" | "appear" | "hidden")[];
+  /**
+   * エディターのキャンバスと部品の縮小表示だけで使う描画。省略時は component。公開の描画（PageRenderer・SSR）は常に component を使う。
+   * データの取得・課金・予約・保存などの副作用を起こさず、表示領域（data-nw-slot）の付け方は component と同じにし、現実的な見本を複数件（一覧なら 3 件ほど）表示する。
+   */
+  preview?: ComponentType<Record<string, PublicPropValue>>;
 }>>;
 /** 編集する幅の段。minWidth は 320〜3840 の整数・昇順。 */
 export type EditorBreakpoint = { minWidth: number; label: string };
