@@ -22,7 +22,7 @@ import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSe
 import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
-import type { ComponentUsageEntry, EditorBlockRegistry, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
+import type { ComponentUsageEntry, EditorBlockRegistry, EditorCanvasPreviewProps, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
@@ -78,7 +78,7 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, assets, motionCss, replay, rendered, origins, openInstance }: {
+function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, previewComponent: PreviewComponent, mode, baseVersion, historyRevision, assets, motionCss, replay, rendered, origins, openInstance }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; selectedNodeId?: string; select: (path: NodePath | null, nodeId?: string, slot?: string | null) => void;
   canEditNode?: (nodeId: string) => boolean;
   slot: string | null;
@@ -90,10 +90,13 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
   reportError: (message: string) => void; editable: boolean; structureEditable: boolean; locks: readonly EditorLock[]; preview: boolean; assets: ResolvedAssetMap;
   /** 状態の強制表示と動きの停止。replay が変わると描画を作り直し、登場をもう一度見せる。 */
   motionCss: string; replay: string;
+  previewComponent?: PageEditorProps["previewComponent"]; mode: "edit" | "preview" | "history";
+  baseVersion: string; historyRevision?: EditorCanvasPreviewProps["historyRevision"];
   /** 描画する展開済みの文書と、展開したノードの出所。選択・ドラッグ等は document のノードで扱う。 */
   rendered: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin>; openInstance: (instanceId: string, nodeId: string) => void;
 }) {
   const [body, setBody] = useState<HTMLElement | null>(null), frame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => { if (body) body.ownerDocument.documentElement.lang = rendered.locale; }, [body, rendered.locale]);
   const [editingId, setEditingId] = useState<string | null>(null), [dropPlace, setDropPlace] = useState<DropPlace | null>(null);
   const [handleRect, setHandleRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const resizing = useRef<{ element: HTMLElement; path: NodePath; x: number; y: number; width: number; height: number; inlineWidth: string; inlineHeight: string } | null>(null);
@@ -218,8 +221,9 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
     format("createLink", linkHref); setLinkOpen(false); setLinkError("");
     const element = body?.querySelector<HTMLElement>(`[data-nw-node="${editingId}"]`); element?.focus();
   }
+  const defaultPreview = <StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" />;
   return <><iframe ref={frame} title="ページのライブキャンバス" sandbox="allow-same-origin" style={{ width }}
-    srcDoc={'<!doctype html><html lang="ja"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
+    srcDoc={'<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
     onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
     {body && createPortal(<div onClickCapture={(event) => {
       if (preview) { event.preventDefault(); event.stopPropagation(); return; }
@@ -253,7 +257,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#34a66d;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#34a66d22;outline:2px dashed #198558;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#258858;box-shadow:0 0 0 1px #245b3f;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
       <style>{canvasAssetCss}</style>
-      <PreviewBoundary document={rendered}><StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" /></PreviewBoundary>
+      <PreviewBoundary document={rendered}>{PreviewComponent ? <PreviewComponent document={rendered} baseVersion={baseVersion} {...(historyRevision ? { historyRevision } : {})} width={width} breakpoint={breakpoint} mode={mode} readOnly={!editable || preview}>{defaultPreview}</PreviewComponent> : defaultPreview}</PreviewBoundary>
       <style>{motionCss}</style>
       {dropPlace && <div aria-hidden className={`nw-drop-marker${dropPlace.marker.inside ? " inside" : ""}`} style={{ left: dropPlace.marker.left, top: dropPlace.marker.top, width: dropPlace.marker.width, height: dropPlace.marker.height }} />}
       {canResize && handleRect && resizePath && <button type="button" className="nw-resize-handle" aria-label="ドラッグして要素のサイズを変更" title={`${Math.round(handleRect.width)} × ${Math.round(handleRect.height)} px`} style={{ left: handleRect.left + handleRect.width - 7, top: handleRect.top + handleRect.height - 7 }}
@@ -273,7 +277,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
 }
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
+export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
   const adapterRef = useRef(adapter); adapterRef.current = adapter;
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
@@ -1115,7 +1119,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : session?.hasSavedDraft === false ? publishHold : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
         rollback={session?.readOnly || session?.hasSavedDraft === false || viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+{document && session && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
         motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ">{versions.open ? <VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : session.readOnly ? session.readOnly.reason : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /> : <><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => requestInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => requestInspector("page")}>{masterId ? "部品" : "ページ"}</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => requestInspector("site")}>サイト</button>{targetMode && <button type="button" role="tab" aria-selected={inspector === "localization"} onClick={() => requestInspector("localization")}>翻訳</button>}</div>
       {inspector === "site" && <section className="e-inspector-content">{targetMode ? <p className="e-help">サイト共通設定とデザインは原文側で編集してください。</p> : <SiteSettingsPanel site={site} state={siteSettings} />}</section>}
