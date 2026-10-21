@@ -150,7 +150,7 @@ async function setupSharedComponents() {
       { type: "element", id: "sharedImage", tag: "img", asset: { provider: "uploads", id: "shared-source" }, attrs: { alt: "" }, children: [] }
     ] }
   }] };
-  const source = (pageId, title) => ({ schemaVersion: 1, siteId: "shared", pageId, locale: "ja-JP", revision: 1, title, tokens: {}, body: [
+  const source = (pageId, title) => ({ schemaVersion: 1, siteId: "shared", pageId, locale: "ja-JP", revision: 1, title, meta: { ogImage: { asset: { provider: "uploads", id: "og-source" }, alt: "" } }, tokens: {}, body: [
     { type: "instance", id: `${pageId}HeaderA`, component: "header" }, { type: "element", id: `${pageId}Main`, tag: "main", children: [] }, { type: "instance", id: `${pageId}HeaderB`, component: "header" }
   ] });
   const pages = new Map();
@@ -390,6 +390,14 @@ test("shared component units are shown once, manually edited, adopted, reviewed 
     const assetUnit = document.querySelector('[data-unit-id="component.header.node.sharedImage.asset"]'); assert.ok(assetUnit);
     await act(async () => [...assetUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
     const assetCard = document.querySelector(".e-asset-card"); assert.ok(assetCard); await act(async () => assetCard.click()); await flush(8);
+    assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });
+
+    // 訳文のソーシャルカバーも素材から選べる。
+    await click("翻訳");
+    const ogUnit = document.querySelector('[data-unit-id="page.meta.ogImage.src"]'); assert.ok(ogUnit);
+    await act(async () => [...ogUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
+    const ogCard = document.querySelector(".e-asset-card"); assert.ok(ogCard); await act(async () => ogCard.click()); await flush(8);
+    assert.equal(app.calls.at(-1).unitId, "page.meta.ogImage.src");
     assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });
 
     await click("翻訳");

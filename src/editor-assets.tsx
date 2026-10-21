@@ -7,10 +7,20 @@ import {
   type AssetFolder, type AssetKind, type AssetLibraryAdapter, type AssetListQuery, type AssetProvider, type AssetQuota, type AssetRejectReason, type AssetUpdateRequest,
   type AssetUploadPolicy, type AssetUsage, type LibraryAsset, type ResolvedAsset, type ResolvedAssetMap
 } from "./assets.js";
+import { metaLimits } from "./document.js";
 import { nodeAt, walkNodes, type EditorOperation, type NodePath } from "./editor-model.js";
 import type { AssetReference, ElementNode, PageDocument, StyleDeclarations, StyleProperty, StyleValue } from "./types.js";
 
-export type AssetPicker = { purpose: "image"; path: NodePath } | { purpose: "background"; path: NodePath; breakpoint: number | "base" } | { purpose: "replace"; from: AssetReference };
+/** ogImage = ページのソーシャルカバー。siteOgImage = サイト設定のソーシャルカバー（文書ではなくサイト設定の入力へ入れる）。 */
+export type AssetPicker = { purpose: "image"; path: NodePath } | { purpose: "background"; path: NodePath; breakpoint: number | "base" } | { purpose: "replace"; from: AssetReference }
+  | { purpose: "ogImage" } | { purpose: "siteOgImage" };
+/** SNS のリンクプレビューが表示できる形式。AVIF は多くのサービスで表示されない。 */
+export const SOCIAL_IMAGE_TYPES = Object.freeze(["image/jpeg", "image/png", "image/webp", "image/gif"] as const);
+export function socialImageProblem(asset: Pick<LibraryAsset, "mimeType">): string | undefined {
+  return (SOCIAL_IMAGE_TYPES as readonly string[]).includes(asset.mimeType) ? undefined : "ソーシャルカバーに使えるのは JPEG・PNG・WebP・GIF の画像です。";
+}
+/** 素材の代替テキストの初期値。公開情報の上限を超える場合は今の説明を残す。 */
+export const coverAlt = (asset: Pick<LibraryAsset, "alt">, current: string): string => asset.alt && asset.alt.length <= metaLimits.altLength ? asset.alt : current;
 export type AssetAction = "replace" | "background" | "insert" | "pick";
 export type AssetLibraryPanelProps = {
   adapter: AssetLibraryAdapter; siteId: string; mode: "library" | "pick"; pickTitle?: string | undefined;
@@ -27,9 +37,18 @@ export type AssetLibraryPanelProps = {
 };
 
 /** 配置先と素材から文書操作を作る。ページに追加は選択要素の中（子を持てない場合は直後）、選択なしは末尾。 */
-export function assetPlacement(document: PageDocument, asset: LibraryAsset, target: AssetPicker | { purpose: "insert"; selection: NodePath | null }): { operation: EditorOperation; select?: NodePath; notice?: string } {
+export function assetPlacement(document: PageDocument, asset: LibraryAsset, target: Exclude<AssetPicker, { purpose: "siteOgImage" }> | { purpose: "insert"; selection: NodePath | null }): { operation: EditorOperation; select?: NodePath; notice?: string } {
   const reference: AssetReference = { provider: asset.provider, id: asset.id };
-  if (target.purpose === "replace") return { operation: { type: "replaceAsset", from: target.from, to: reference }, notice: "このページの使用箇所を置き換えました。" };
+  if (target.purpose === "replace") {
+    const cover = document.meta?.ogImage, problem = cover && "asset" in cover && assetKey(cover.asset) === assetKey(target.from) ? socialImageProblem(asset) : undefined;
+    if (problem) throw new Error(`この画像はソーシャルカバーにも使われています。${problem}`);
+    return { operation: { type: "replaceAsset", from: target.from, to: reference }, notice: "このページの使用箇所を置き換えました。" };
+  }
+  if (target.purpose === "ogImage") {
+    const problem = socialImageProblem(asset);
+    if (problem) throw new Error(problem);
+    return { operation: { type: "meta", field: "ogImage", value: { asset: reference, alt: coverAlt(asset, document.meta?.ogImage?.alt ?? "") } }, notice: "ソーシャルカバーを設定しました。画像の説明を確認してください。" };
+  }
   if (target.purpose === "background") return { operation: { type: "background", path: target.path, breakpoint: target.breakpoint, asset: reference } };
   if (target.purpose === "image") {
     const node = nodeAt(document, target.path), current = node.type === "element" && typeof node.attrs?.alt === "string" ? node.attrs.alt : "";
@@ -95,13 +114,15 @@ const fromKey = (key: string): AssetReference => ({ provider: key.slice(0, key.i
 /**
  * 文書が参照する素材のうち未取得のものだけを解決し、接続先とサイトごとに保持する。返らなかった参照は再要求しない。
  * epoch（文書の再読込・公開のたびに増える値）が変わったら全件を取り直し、非公開化・削除された素材をプレビューから外す。
+ * extra は文書の外の参照（サイト設定のソーシャルカバー等）。
  */
-export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, siteId: string | undefined, document: PageDocument | undefined, epoch = 0): { map: ResolvedAssetMap; failed: boolean; retry: () => void } {
+export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, siteId: string | undefined, document: PageDocument | undefined, epoch = 0, extra: readonly AssetReference[] = []): { map: ResolvedAssetMap; failed: boolean; retry: () => void } {
   const [state, setState] = useState(emptyResolved);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const current = adapter && siteId && state.adapter === adapter && state.siteId === siteId ? state : emptyResolved, revalidate = current.epoch !== epoch;
-  const request = adapter && siteId && document
-    ? uniqueAssetReferences(document).map(assetKey).filter((key) => revalidate || !Object.hasOwn(current.map, key) && !current.settled.includes(key)).join(" ") : "";
+  const request = adapter && siteId
+    ? [...new Set([...(document ? uniqueAssetReferences(document) : []), ...extra].map(assetKey))].sort()
+      .filter((key) => revalidate || !Object.hasOwn(current.map, key) && !current.settled.includes(key)).join(" ") : "";
   useEffect(() => {
     if (!adapter || !siteId || !request) return;
     const controller = new AbortController(), wanted = request.split(" ");

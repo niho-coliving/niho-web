@@ -48,6 +48,16 @@ test("asset references are collected from images and every background breakpoint
   assert.deepEqual(missingAssetReferences(parsePageDocument(fixture), {}), []);
 });
 
+test("the social cover asset is listed first so usage, deletion and publish checks include it", () => {
+  const document = parsePageDocument({ ...structuredClone(fixture), meta: { ogImage: { asset: { provider: "cms", id: "cover" }, alt: "表紙" } } });
+  assert.deepEqual(collectAssetReferences(document), [{ reference: { provider: "cms", id: "cover" }, target: "ogImage" }]);
+  assert.deepEqual(uniqueAssetReferences(document).map(assetKey), ["cms:cover"]);
+  assert.deepEqual(missingAssetReferences(document, {}).map(assetKey), ["cms:cover"]);
+  assert.deepEqual(missingAssetReferences(document, parseResolvedAssets({ "cms:cover": { src: "/cover.jpg" } })), []);
+  const withUrl = parsePageDocument({ ...structuredClone(fixture), meta: { ogImage: { src: "/cover.jpg", alt: "" } } });
+  assert.deepEqual(collectAssetReferences(withUrl), []);
+});
+
 test("library responses reject other sites, unsafe thumbnails, duplicates and unknown fields", () => {
   const result = parseAssetListResult(listing({ quota: { usedBytes: 12, limitBytes: 10 }, upload: { accept: ["image/png"], maxBytes: 1 }, nextCursor: "60" }), "demo");
   assert.deepEqual(result.assets[0], asset());

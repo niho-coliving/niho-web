@@ -130,8 +130,28 @@ test("画像URL検証、review reset、source保持とlayout/href境界を閉じ
   assert.equal(retained.document.body[0].children.at(-1).attrs.src, "/target.webp"); assert.equal(retained.document.body[0].children.at(-1).attrs.srcSet, undefined);
   const target = retained.document; target.body[0].children.at(-1).attrs.width = 999;
   await assert.rejects(() => validateLocalizedDocumentSave(config(), changedSource, target, options()), /common structure/);
-  assert.throws(() => editLocalizedValue(overlay, changed, { unitId: "page.meta.ogImage.src", value: { kind: "asset", asset: { provider: "uploads", id: "og" } }, expectedVersion: overlay.version }), /requires a URL/);
+  assert.doesNotThrow(() => editLocalizedValue(overlay, changed, { unitId: "page.meta.ogImage.src", value: { kind: "asset", asset: { provider: "uploads", id: "og" } }, expectedVersion: overlay.version }));
   assert.throws(() => editLocalizedValue(overlay, changed, { unitId: "page.meta.ogImage.src", value: { kind: "image-url", src: "/og.webp", srcset: "/ignored.webp" }, expectedVersion: overlay.version }), /does not support srcset/);
+});
+
+test("素材のOG画像は素材参照のまま翻訳単位になり、言語別にURLか素材へ差し替えられる", async () => {
+  const source = page(); source.meta.ogImage = { asset: { provider: "uploads", id: "og-source" }, alt: "海" };
+  const collection = await collectLocalizationUnits(config(), source, "en", options());
+  assert.deepEqual(byId(collection, "page.meta.ogImage.src").sourceValue, { kind: "asset", asset: { provider: "uploads", id: "og-source" } });
+  const untouched = await materializeLocalizedPage(config(), source, collection, createLocalizationOverlay(collection), options());
+  assert.deepEqual(untouched.document.meta.ogImage, { asset: { provider: "uploads", id: "og-source" }, alt: "海" });
+  for (const [value, expected] of [
+    [{ kind: "image-url", src: "/og-en.webp" }, { src: "/og-en.webp", alt: "Sea" }],
+    [{ kind: "asset", asset: { provider: "uploads", id: "og-en" } }, { asset: { provider: "uploads", id: "og-en" }, alt: "Sea" }]
+  ]) {
+    let overlay = createLocalizationOverlay(collection);
+    overlay = editLocalizedValue(overlay, collection, { unitId: "page.meta.ogImage.alt", value: "Sea", expectedVersion: overlay.version });
+    overlay = editLocalizedValue(overlay, collection, { unitId: "page.meta.ogImage.src", value, expectedVersion: overlay.version });
+    const materialized = await materializeLocalizedPage(config(), source, collection, overlay, options());
+    assert.deepEqual(materialized.document.meta.ogImage, expected);
+    assert.deepEqual(parsePageDocument(materialized.document, blocks, { components: parseComponentLibrary(library(), blocks) }).meta.ogImage, expected);
+  }
+  assert.deepEqual(source.meta.ogImage, { asset: { provider: "uploads", id: "og-source" }, alt: "海" });
 });
 
 test("a source layout change rematerializes the target while only changed content units require review", async () => {

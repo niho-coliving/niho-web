@@ -1,3 +1,4 @@
+import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
 import { metaLimits, parsePageMeta } from "./document.js";
 import type { ElementNode, PageDocument, PageImage, PageMeta, PageNode } from "./types.js";
 import { fail, isSafeHttpsOrigin, isSafePublicUrl, keys, line, localeCode, record, string } from "./validation-utils.js";
@@ -41,7 +42,8 @@ export type PageMetadata = {
     siteName?: string;
     /** Open Graph の形式（ja-JP は ja_JP）。 */
     locale: string;
-    image?: { url: string; alt: string };
+    /** width / height は素材の寸法が分かる場合だけ。 */
+    image?: { url: string; alt: string; width?: number; height?: number };
   };
   icon?: string;
   structuredData: string[];
@@ -178,7 +180,10 @@ export function parseSiteSettings(input: unknown): SiteSettings {
 }
 
 const ogLocale = (locale: string): string => locale.replace(/^([a-z]{2,3})-([A-Za-z]{2})$/, (_, language: string, region: string) => `${language}_${region.toUpperCase()}`);
-/** ページの値が無い項目はサイト設定で補い、プレビュー・非公開・noindex では canonical を出さない。 */
+/**
+ * ページの値が無い項目はサイト設定で補い、プレビュー・非公開・noindex では canonical を出さない。
+ * 素材参照の OG 画像は assets で解決できた場合だけ出す。解決できないページの画像はサイトの画像で補い、それも無ければ og:image を出さない。
+ */
 export function resolvePageMetadata(input: {
   document: Pick<PageDocument, "title" | "locale" | "meta">;
   site?: SiteSettings | undefined;
@@ -186,6 +191,8 @@ export function resolvePageMetadata(input: {
   path?: string | undefined;
   visibility?: PageVisibility | undefined;
   preview?: boolean | undefined;
+  /** ホストが公開を許可して解決した素材。parseResolvedAssets と同じ規則で検証する。 */
+  assets?: ResolvedAssetMap | undefined;
 }): PageMetadata {
   const source = record(input, "$"), document = record(source.document, "$.document");
   const title = string(document.title, "$.document.title", 300);
@@ -193,15 +200,22 @@ export function resolvePageMetadata(input: {
   const locale = localeCode(document.locale, "$.document.locale");
   const meta = document.meta === undefined ? {} : parsePageMeta(document.meta, "$.document.meta");
   const site = source.site === undefined ? undefined : parseSiteSettings(source.site);
+  const assets = source.assets === undefined ? {} : parseResolvedAssets(source.assets);
   const { domain, path, visibility, preview } = source;
   if (domain !== undefined && !isSafeHttpsOrigin(domain)) fail("$.domain", "invalid origin");
   if (path !== undefined && validatePagePath(path) !== null) fail("$.path", "invalid page path");
   if (visibility !== undefined && visibility !== "public" && visibility !== "private") fail("$.visibility", "invalid visibility");
   if (preview !== undefined && typeof preview !== "boolean") fail("$.preview", "expected boolean");
-  const description = meta.description ?? site?.description, image = meta.ogImage ?? site?.ogImage, icon = meta.favicon ?? site?.favicon;
+  const absolute = (value: string) => typeof domain === "string" && value.startsWith("/") ? `${domain}${value}` : value;
+  const imageOf = (value: PageImage | undefined): NonNullable<PageMetadata["openGraph"]["image"]> | undefined => {
+    if (!value) return undefined;
+    if ("src" in value) return { url: absolute(value.src), alt: value.alt };
+    const resolved = resolvedAsset(assets, value.asset);
+    return resolved && { url: absolute(resolved.src), alt: value.alt, ...(resolved.width && resolved.height ? { width: resolved.width, height: resolved.height } : {}) };
+  };
+  const description = meta.description ?? site?.description, image = imageOf(meta.ogImage) ?? imageOf(site?.ogImage), icon = meta.favicon ?? site?.favicon;
   const noindex = preview === true || visibility === "private" || !!meta.noindex || !!site?.noindex;
   const url = typeof domain === "string" && typeof path === "string" ? pageUrl(domain, path) : undefined;
-  const absolute = (value: string) => typeof domain === "string" && value.startsWith("/") ? `${domain}${value}` : value;
   return {
     title,
     ...(description === undefined ? {} : { description }),
@@ -214,7 +228,7 @@ export function resolvePageMetadata(input: {
       ...(url ? { url } : {}),
       ...(site ? { siteName: site.title } : {}),
       locale: ogLocale(locale),
-      ...(image ? { image: { url: absolute(image.src), alt: image.alt } } : {})
+      ...(image ? { image } : {})
     },
     ...(icon === undefined ? {} : { icon: absolute(icon) }),
     structuredData: [...(meta.structuredData ?? [])]
@@ -251,6 +265,12 @@ export function renderPageHead(metadata: PageMetadata): string {
   meta("property", "og:locale", text(og.locale, "$.metadata.openGraph.locale", 40));
   if (image) {
     meta("property", "og:image", href(image.url, "$.metadata.openGraph.image.url", false) ?? fail("$.metadata.openGraph.image.url", "image URL is required"));
+    const size = (value: unknown, path: string) => {
+      if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)) fail(path, "invalid image size");
+      return value === undefined ? undefined : String(value);
+    };
+    const width = size(image.width, "$.metadata.openGraph.image.width"), height = size(image.height, "$.metadata.openGraph.image.height");
+    if (width && height) { meta("property", "og:image:width", width); meta("property", "og:image:height", height); }
     const alt = text(image.alt, "$.metadata.openGraph.image.alt", metaLimits.altLength);
     if (alt) meta("property", "og:image:alt", alt);
     meta("name", "twitter:card", "summary_large_image");

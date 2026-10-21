@@ -244,6 +244,8 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
         if (declarations?.backgroundImage && same(declarations.backgroundImage.asset)) { declarations.backgroundImage = { asset: structuredClone(to) }; count++; }
       }
     }
+    const cover = draft.meta?.ogImage;
+    if (cover && "asset" in cover && same(cover.asset)) { cover.asset = structuredClone(to); count++; }
     if (!count) throw new Error("置き換える素材がこのページにありません。");
   } else if (operation.type === "token") {
     styleName(operation.name);

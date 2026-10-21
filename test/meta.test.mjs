@@ -19,6 +19,16 @@ test("page meta is copied in a stable key order without retaining input referenc
   assert.equal(parseFromRoot, parsePageMeta);
 });
 
+test("the social cover can reference a library asset instead of a URL", () => {
+  const input = { ...doc(), meta: { ogImage: { alt: "海辺のリビング", asset: { id: "ast_01", provider: "uploads" } } } };
+  const result = parsePageDocument(input);
+  assert.deepEqual(result.meta.ogImage, { asset: { provider: "uploads", id: "ast_01" }, alt: "海辺のリビング" });
+  assert.deepEqual(Object.keys(result.meta.ogImage), ["asset", "alt"]);
+  input.meta.ogImage.asset.id = "changed";
+  assert.equal(result.meta.ogImage.asset.id, "ast_01");
+  assert.deepEqual(parsePageMeta({ ogImage: { asset: { provider: "cms", id: "photo-1" }, alt: "" } }), { ogImage: { asset: { provider: "cms", id: "photo-1" }, alt: "" } });
+});
+
 test("empty meta and empty values are omitted from the document", () => {
   assert.equal("meta" in parsePageDocument({ ...doc(), meta: {} }), false);
   assert.equal("meta" in parsePageDocument({ ...doc(), meta: { noindex: false, structuredData: [] } }), false);
@@ -39,6 +49,11 @@ test("page meta rejects unsafe URLs, anchors, multi-line text, duplicates and un
     [{ ogImage: { src: "/a.jpg" } }, "$.meta.ogImage.alt"],
     [{ ogImage: { src: "/a.jpg", alt: "a".repeat(301) } }, "$.meta.ogImage.alt"],
     [{ ogImage: { src: "/a.jpg", alt: "", width: 1200 } }, "$.meta.ogImage"],
+    [{ ogImage: { alt: "" } }, "$.meta.ogImage"],
+    [{ ogImage: { src: "/a.jpg", asset: { provider: "uploads", id: "cover" }, alt: "" } }, "$.meta.ogImage"],
+    [{ ogImage: { asset: { provider: "uploads", id: "../cover" }, alt: "" } }, "$.meta.ogImage.asset.id"],
+    [{ ogImage: { asset: { provider: "uploads", id: "cover", src: "/a.jpg" }, alt: "" } }, "$.meta.ogImage.asset"],
+    [{ ogImage: { asset: { provider: "uploads", id: "cover" } } }, "$.meta.ogImage.alt"],
     [{ structuredData: ["organization", "organization"] }, "$.meta.structuredData"],
     [{ structuredData: ["1bad"] }, "$.meta.structuredData[0]"],
     [{ structuredData: Array.from({ length: 17 }, (_, index) => `type${index}`) }, "$.meta.structuredData"],

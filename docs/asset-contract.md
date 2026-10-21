@@ -17,6 +17,7 @@
 - `asset` を持てるのは `img` だけです。`asset` と `attrs.src` は併用できません。`attrs.alt` は必須です（装飾画像は空文字）。
 - `provider` はホストが決める素材の出所の名前（英字始まりの英数字・`_`・`-`、最大80文字）です。#11 の段階ではサイトへのアップロードだけを扱い、例では `uploads` を使います。
 - `id` はホストが採番する不変の opaque ID です。英数字始まりの英数字・`.`・`_`・`~`・`-` で最大128文字です。同じ ID の内容を差し替えず、別の画像は別の ID にしてください。
+- ページのソーシャルカバー（`meta.ogImage`）とサイト設定の `ogImage` も、`src` の代わりに `{ "asset": { "provider": "…", "id": "…" }, "alt": "…" }` を持てます。解決と出力は[ページ契約](page-contract.md)の `resolvePageMetadata` を正とします。favicon は URL だけです（理由は同契約）。
 - 背景画像は style の `backgroundImage` に `{ "asset": { "provider": "…", "id": "…" } }` だけを指定できます。文字列 URL・token は指定できません。`backgroundSize`（`auto` / `cover` / `contain`）、`backgroundPosition`（`center` / `top` / `bottom` / `left` / `right` と2語の組合せ）、`backgroundRepeat`（`no-repeat` / `repeat` / `repeat-x` / `repeat-y`）は通常の style として幅別に指定できます。
 
 従来の `attrs.src` による URL 画像はそのまま描画できます。素材参照へ移す場合は、ホストが既存の公開 URL を素材として登録し、文書の `attrs.src` を `asset` に置き換えた新しい revision を保存します。エディターのインスペクタでも、URL 画像を選んで「画像を選ぶ」から素材へ切り替えられます。逆に「URL で指定」から URL 画像へ戻すこともできます。
@@ -44,6 +45,8 @@ const assets: ResolvedAssetMap = Object.fromEntries((await host.publicAssets(doc
 解決できない参照（削除済み・非公開・他サイト・権限外）の画像は描画しません。背景画像も該当の宣言だけを出しません。公開前に `missingAssetReferences(document, assets)` で未解決の参照を確認し、公開を止めるか警告してください。公開ページに許可していない画像を残さないため、描画のたびに最新の許可状態から解決することを推奨します。キャッシュする場合は、素材の削除・非公開化と同時に無効化してください。
 
 エディターのプレビューは `adapter.resolveAssets` で同じ形の map を取得し、未解決の画像を破線の枠で表示します。
+
+`collectAssetReferences(document)` は本文の画像（`target: "image"`）・背景（`"background"`）に加えて、`meta.ogImage` の素材を `{ reference, target: "ogImage" }`（`nodeId` を持たない）として返します。`uniqueAssetReferences` と `missingAssetReferences` も同じ一覧から作るため、OG 画像の素材も解決・公開前確認の対象です。`<head>` を描画するときは同じ map を `resolvePageMetadata({ ..., assets })` にも渡してください。
 
 ## ホスト adapter
 
@@ -104,7 +107,7 @@ HTTP の 403 / 413 / 415 / 507 / 409 を例外の `status` として投げた場
 
 `updateAsset` と `deleteAsset` は `expectedVersion` を受け取り、ストレージ側で原子的に比較します。競合は `{ status: "conflict" }` です。自動上書き・自動 merge はしません。
 
-削除は、どのページの下書き・公開版からも、共通部品のライブラリ（`componentAssetReferences(library)`）からも参照されていない素材だけに許可してください。ホストは削除処理の中で使用状況を再確認し、使用中なら `{ status: "in-use", usages }` を返します。公開版で使われている素材を消すと公開ページの画像が失われるためです。エディターも、編集中の文書（未保存の変更を含む）で使っている素材の削除ボタンを無効にし、このページの使用箇所を別の画像へまとめて置き換える操作を案内します。他ページの使用箇所は、そのページを開いて置き換え、公開した後に削除します。
+削除は、どのページの下書き・公開版からも（ソーシャルカバーを含む）、共通部品のライブラリ（`componentAssetReferences(library)`）からも、サイト設定の下書き・公開中の `ogImage.asset` からも参照されていない素材だけに許可してください。ホストは削除処理の中で使用状況を再確認し、使用中なら `{ status: "in-use", usages }` を返します。公開版で使われている素材を消すと公開ページの画像が失われるためです。エディターも、編集中の文書（未保存の変更を含む）で使っている素材の削除ボタンを無効にし、このページの使用箇所を別の画像へまとめて置き換える操作を案内します。他ページの使用箇所は、そのページを開いて置き換え、公開した後に削除します。
 
 undo で削除済み素材の参照が戻ることがあります。その画像はプレビューで未解決の枠になり、公開時には描画されません。保存・公開 API でも参照先の存在と所属を検証してください。
 
@@ -157,7 +160,7 @@ CMS 画像は、ホストが認可した参照（`{ provider, id }`）だけを�
 
 ## 文書の保存・公開時の検証
 
-ホストは保存・公開のたびに `collectAssetReferences(document)`（共通部品のライブラリを保存するときは `componentAssetReferences(library)`）で参照を列挙し、すべてが同じサイトに属し、利用者が使ってよい素材であることを確認してください。文書の `siteId` と異なるサイトの素材、他プロジェクトの素材、存在しない ID を含む文書は保存を拒否します。公開前の差分（`prepareRelease`）には、追加・削除される素材の名前を含めると確認しやすくなります。
+ホストは保存・公開のたびに `collectAssetReferences(document)`（共通部品のライブラリを保存するときは `componentAssetReferences(library)`、サイト設定を保存するときは `settings.ogImage.asset`）で参照を列挙し、すべてが同じサイトに属し、利用者が使ってよい素材であることを確認してください。文書の `siteId` と異なるサイトの素材、他プロジェクトの素材、存在しない ID を含む文書は保存を拒否します。公開前の差分（`prepareRelease`）には、追加・削除される素材の名前を含めると確認しやすくなります。
 
 ## 動作例と検証
 

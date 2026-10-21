@@ -178,7 +178,8 @@ export function localizedOperationProblem(document: PageDocument, operation: Edi
   if (operation.type === "meta") {
     if (operation.field === "description") return unitForField(collection, "meta.description") ? undefined : denied;
     if (operation.field === "ogImage" && operation.value && document.meta?.ogImage) {
-      const source = document.meta.ogImage, srcChanged = operation.value.src !== source.src, altChanged = operation.value.alt !== source.alt;
+      const source = document.meta.ogImage, next = operation.value, altChanged = next.alt !== source.alt;
+      const srcChanged = "asset" in next ? !("asset" in source) || next.asset.provider !== source.asset.provider || next.asset.id !== source.asset.id : !("src" in source) || next.src !== source.src;
       if ((!srcChanged || unitForField(collection, "meta.ogImage.src")) && (!altChanged || unitForField(collection, "meta.ogImage.alt"))) return undefined;
     }
     return denied;
@@ -359,7 +360,7 @@ export function LocalizationPanel({ context, document, disabled, selectedUnit, r
       <ManualValueEditor unit={unit} value={displayedValue} accepted={currentValue} disabled={disabled || manualPending && !buffer?.pending} pending={!!buffer?.pending} invalid={!!buffer?.invalid}
         change={(value, invalid = false) => setManualBuffer(!invalid && sameValue(value, currentValue) ? null : { target: { ...context.target }, unitId: unit.unitId, value, pending: true, ...(invalid ? { invalid: true } : {}) })}
         cancel={() => setManualBuffer(null)} save={(value) => manual(unit, entry, value)}
-        {...(unit.kind === "asset" && unit.field.endsWith(".asset") && pickAsset ? { pickAsset: () => pickAsset(unit) } : {})} />
+        {...(unit.kind === "asset" && pickAsset ? { pickAsset: () => pickAsset(unit) } : {})} />
       <div className="e-actions">{entry?.candidate && currentCandidate && <button type="button" disabled={disabled || manualPending} onClick={() => void command("adopt-candidate", unit, entry)}>翻訳案を採用</button>}
         {entry?.draftValue !== undefined && <button type="button" disabled={disabled || manualPending} onClick={() => void command("review-current", unit, entry)}>現在の訳を確認済みにする</button>}</div>
     </section>;
