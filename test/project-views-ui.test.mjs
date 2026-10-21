@@ -29,22 +29,27 @@ async function search(value) {
   await act(async () => { Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }); await flush();
 }
 const cards = () => [...document.querySelectorAll(".pv-card")];
+const rows = () => [...document.querySelectorAll(".pv-directory-list tbody tr")];
 
 test("directory is independent from management and supports two Projects, search, sort and scoped routes", async () => {
   const app = await setup(ProjectDirectory, { adapter: directoryAdapter() });
   try {
     assert.equal(document.querySelector(".nw-project-manager"), null);
     assert.equal(cards().length, 2); assert.ok(cards()[0].textContent.includes("twoの"));
+    assert.equal(rows().length, 2); assert.ok(rows()[0].textContent.includes("twoの"));
+    assert.ok(rows()[0].textContent.includes("最終アクセス 未取得"));
+    assert.equal(document.body.textContent.includes("プラン"), false);
     assert.ok(document.body.textContent.includes("共通参加者（架空）"));
     assert.equal(document.querySelectorAll("textarea").length, 0);
     await click("作成"); assert.equal(app.calls.creates, 1);
     await click(`${project("two").name}（${project("two").site.name}）のダッシュボード`); assert.deepEqual(app.calls.dashboards[0], project("two"));
     await act(async () => cards()[0].querySelectorAll(".pv-actions button")[1].click()); assert.equal(app.calls.editors[0].site.id, "site_two");
-    await search("one.example.test"); assert.equal(cards().length, 1); assert.ok(cards()[0].textContent.includes("oneの"));
+    await act(async () => rows()[0].querySelectorAll(".pv-actions button")[1].click()); assert.equal(app.calls.editors[1].site.id, "site_two");
+    await search("one.example.test"); assert.equal(cards().length, 1); assert.equal(rows().length, 1); assert.ok(cards()[0].textContent.includes("oneの"));
     await search("存在しない名前"); assert.ok(document.body.textContent.includes("条件に一致する"));
-    await click("検索解除"); assert.equal(cards().length, 2);
+    await click("検索解除"); assert.equal(cards().length, 2); assert.equal(rows().length, 2);
     const select = document.querySelector("select"); await act(async () => { select.value = "name"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-    assert.ok(cards()[0].textContent.includes("oneの"));
+    assert.ok(cards()[0].textContent.includes("oneの")); assert.ok(rows()[0].textContent.includes("oneの"));
     const open = button(`${project().name}（${project().site.name}）のダッシュボード`); open.focus(); assert.equal(document.activeElement, open);
     assert.ok([...document.querySelectorAll("button")].every((node) => node.type === "button"));
     const img = cards()[0].querySelector("img"); assert.ok(img.alt); await act(async () => img.dispatchEvent(new Event("error")));
@@ -93,11 +98,11 @@ test("returning to the directory restores focus after delayed loading, once per 
   const app = await setup(ProjectDirectory, { adapter: directoryAdapter(async () => new Promise((resolve) => { finish = resolve; })), initialFocusProjectId: "project_two" });
   try {
     await act(async () => finish(directory())); await flush();
-    assert.equal(document.activeElement.getAttribute("aria-label"), `${project("two").name}（${project("two").site.name}）のダッシュボード`);
+    assert.equal(document.activeElement.getAttribute("aria-label"), `${project("two").name}（${project("two").site.name}）の一覧行を開く`);
     document.querySelector("input").focus(); await search("one");
     assert.equal(document.activeElement, document.querySelector("input"));
     await app.rerender({ adapter: directoryAdapter(), initialFocusProjectId: "project_absent" });
-    assert.equal(document.activeElement.classList.contains("pv-open"), false);
+    assert.equal(document.activeElement.classList.contains("pv-list-open"), false);
   } finally { await app.cleanup(); }
 });
 
@@ -108,14 +113,21 @@ test("dashboard shows only selected Site facts, zero versus unknown, analytic da
     assert.deepEqual(requests, [{ projectId: selected.id, siteId: selected.site.id }]);
     assert.ok(document.body.textContent.includes("公開中")); assert.ok(document.body.textContent.includes("合成ページを更新"));
     assert.equal(document.querySelector(".pv-stats dd").textContent, "7"); assert.equal(document.querySelectorAll(".pv-stats dd")[1].textContent, "未取得");
+    const summary = document.querySelector(".pv-analytics-summary");
+    assert.deepEqual([...summary.querySelectorAll("dd")].map((node) => node.textContent), ["0", "未取得"]);
+    assert.ok(summary.textContent.includes("対象期間")); assert.ok(summary.textContent.includes("解析取得日時"));
     assert.equal(document.querySelector('a.pv-link').href, "https://one.example.test/");
-    await click("エディター"); assert.deepEqual(app.calls.editors[0], selected);
-    await click("サイト設定"); assert.deepEqual(app.calls.settings[0], [selected, "site"]);
-    await click("アクセス解析"); assert.equal(button("アクセス解析").getAttribute("aria-current"), "page");
+    assert.deepEqual([...document.querySelectorAll(".pv-global-nav button")].map((node) => node.textContent), ["ホーム", "アナリティクス", "設定"]);
+    assert.deepEqual([...document.querySelectorAll(".pv-home-nav button")].map((node) => node.textContent), ["ダッシュボード", "プロジェクト設定", "メンバー"]);
+    await click("デザインエディタ"); assert.deepEqual(app.calls.editors[0], selected);
+    await click("プロジェクト設定"); assert.deepEqual(app.calls.settings[0], [selected, "site"]);
+    await click("アナリティクス"); assert.equal(button("アナリティクス").getAttribute("aria-current"), "page");
     assert.equal(document.querySelector(".pv-stats dd").textContent, "0"); assert.equal(document.querySelectorAll(".pv-stats dd")[1].textContent, "未取得");
     assert.ok(document.body.textContent.includes("対象期間")); assert.ok(document.body.textContent.includes("解析取得日時")); assert.ok(document.querySelectorAll("time[datetime]").length >= 4);
     await click("解析接続設定"); assert.deepEqual(app.calls.settings[1], [selected, "analytics"]);
-    await click("‹ プロジェクト一覧"); assert.equal(app.calls.backs, 1);
+    await click("ダッシュボード"); await click("アクセス解析を見る"); assert.equal(button("アナリティクス").getAttribute("aria-current"), "page");
+    await click("メンバー"); assert.ok(document.body.textContent.includes("メンバー（1名）")); assert.ok(document.body.textContent.includes("共通参加者（架空）"));
+    await click("プロジェクト一覧へ戻る"); assert.equal(app.calls.backs, 1);
     for (const text of ["CMS", "フォーム", "課金"]) assert.equal(document.body.textContent.includes(text), false);
   } finally { await app.cleanup(); }
 });
@@ -125,15 +137,32 @@ test("dashboard unpublished, empty changes, disconnected Analytics, and partial 
   const app = await setup(ProjectDashboard, { project: project(), adapter: dashboardAdapter(async () => input) });
   try {
     assert.ok(document.body.textContent.includes("未公開")); assert.ok(document.body.textContent.includes("直近の変更はありません")); assert.equal(document.querySelector("a"), null);
-    await click("アクセス解析"); assert.ok(document.body.textContent.includes("まだ接続されていません")); assert.equal(document.querySelector(".pv-stats"), null);
+    assert.ok(document.querySelector(".pv-analytics-summary").textContent.includes("まだ接続されていません"));
+    await click("アナリティクス"); assert.ok(document.body.textContent.includes("まだ接続されていません")); assert.equal(document.querySelector(".pv-stats"), null);
     await click("解析接続設定"); assert.equal(app.calls.settings[0][1], "analytics");
     const partial = dashboard(); partial.overview = { status: "unavailable" };
     await app.rerender({ adapter: dashboardAdapter(async () => partial) });
-    assert.ok(document.body.textContent.includes("公開情報を取得できませんでした")); assert.ok(button("エディター"));
-    await click("アクセス解析"); assert.equal(document.querySelector(".pv-stats dd").textContent, "0");
+    assert.ok(document.body.textContent.includes("公開情報を取得できませんでした")); assert.ok(button("デザインエディタ"));
+    assert.deepEqual([...document.querySelectorAll(".pv-analytics-summary dd")].map((node) => node.textContent), ["0", "未取得"]);
+    await click("アナリティクス"); assert.equal(document.querySelector(".pv-stats dd").textContent, "0");
     partial.analytics = { status: "unavailable" };
-    await app.rerender({ adapter: dashboardAdapter(async () => partial) }); await click("アクセス解析");
+    await app.rerender({ adapter: dashboardAdapter(async () => partial) }); await click("アナリティクス");
     assert.ok(document.body.textContent.includes("アクセス解析を取得できませんでした")); assert.ok(button("再試行"));
+    await click("ダッシュボード"); assert.ok(document.querySelector(".pv-analytics-summary [role=alert]"));
+  } finally { await app.cleanup(); }
+});
+
+test("dashboard members are read-only with empty, multiple and long-name states", async () => {
+  const selected = project(); selected.members = [];
+  const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(async () => dashboard(selected)) });
+  try {
+    await click("メンバー"); assert.ok(document.body.textContent.includes("メンバー（0名）")); assert.ok(document.body.textContent.includes("メンバーはいません"));
+    assert.equal(document.querySelector(".pv-member-list"), null);
+    const next = project(); next.members = [{ userId: "first", displayName: "長い参加者名".repeat(18) }, { userId: "second", displayName: "二人目" }];
+    await app.rerender({ project: next, adapter: dashboardAdapter(async () => dashboard(next)) });
+    await click("メンバー"); assert.equal(document.querySelectorAll(".pv-member-list li").length, 2);
+    assert.ok(document.body.textContent.includes(next.members[0].displayName)); assert.ok(document.body.textContent.includes("メンバー（2名）"));
+    assert.equal(document.querySelector(".pv-member-list button"), null);
   } finally { await app.cleanup(); }
 });
 
@@ -143,11 +172,11 @@ test("dashboard mismatch, failure and permission loss clear all sensitive facts 
   try {
     for (const field of ["projectId", "siteId"]) {
       result = dashboard(); result[field] = "mismatch"; await click(button("再読込") ? "再読込" : "再試行");
-      assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.equal(button("エディター"), undefined); assert.equal(document.querySelector("a"), null);
+      assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.equal(button("デザインエディタ"), undefined); assert.equal(document.querySelector("a"), null);
     }
-    result = dashboard(); await click("再試行"); assert.ok(button("エディター"));
+    result = dashboard(); await click("再試行"); assert.ok(button("デザインエディタ"));
     result = { status: "forbidden", projectId: "project_one", siteId: "site_one" }; await click("再読込");
-    assert.ok(document.body.textContent.includes("権限がありません")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(button("サイト設定"), undefined);
+    assert.ok(document.body.textContent.includes("権限がありません")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(button("設定"), undefined);
     fail = true; await click("再試行"); assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.equal(document.body.textContent.includes("secret"), false);
   } finally { await app.cleanup(); }
 });
@@ -162,7 +191,7 @@ test("dashboard Project/Site switching, adapter replacement and unmount discard 
     await act(async () => pending[0].resolve(dashboard(selected))); await flush();
     assert.ok(document.body.textContent.includes(next.name)); assert.equal(document.body.textContent.includes(selected.name), false);
     await app.rerender({ adapter: dashboardAdapter(async () => ({ status: "forbidden", projectId: next.id, siteId: next.site.id })) });
-    assert.equal(button("エディター"), undefined);
+    assert.equal(button("デザインエディタ"), undefined);
     await app.rerender({ adapter }); const last = pending.at(-1); await app.cleanup(); assert.equal(last.signal.aborted, true);
     await act(async () => last.resolve(dashboard(next))); await flush();
   } catch (error) { await app.cleanup(); throw error; }
@@ -174,6 +203,8 @@ test("long Japanese names and URLs remain complete and the stylesheet defines 32
   const app = await setup(ProjectDirectory, { adapter: directoryAdapter(async () => input) });
   try {
     assert.ok(document.body.textContent.includes(input.entries[0].project.name)); assert.ok(document.body.textContent.includes(input.entries[0].project.site.domains[0]));
-    const css = document.querySelector("style").textContent; assert.ok(css.includes("overflow-wrap:anywhere")); assert.ok(css.includes("@media(max-width:600px)")); assert.ok(css.includes("grid-template-columns:86px minmax(0,1fr)")); assert.ok(css.includes(":focus-visible"));
+    assert.ok(rows()[1].textContent.includes(input.entries[0].project.name));
+    const css = [...document.querySelectorAll("style")].map((style) => style.textContent ?? "").join("\n"); assert.ok(css.includes("overflow-wrap:anywhere")); assert.ok(css.includes("@media(max-width:600px)")); assert.ok(css.includes("grid-template-columns:86px minmax(0,1fr)")); assert.ok(css.includes(":focus-visible")); assert.ok(css.includes(".pv-dashboard-content{width:min(100%,992px)"));
+    assert.ok(css.includes(".pv-grid{display:none}")); assert.ok(css.includes(".pv-directory-list tr{padding:12px 14px"));
   } finally { await app.cleanup(); }
 });
