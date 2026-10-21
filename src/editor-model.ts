@@ -154,6 +154,8 @@ function preserveRange(original: PageDocument, before: ElementNode | ComponentNo
 const styleName = (name: string) => { if (!/^[a-z][A-Za-z0-9-]*$/.test(name)) throw new Error("名前は英小文字で始まる英数字と - で指定してください。"); };
 function eachDeclarations(document: PageDocument, visit: (declarations: Declarations) => void): void {
   for (const { node } of walkNodes(document)) if (node.type !== "text" && node.style) [node.style.base, ...(node.style.responsive ?? []).map((entry) => entry.declarations), ...Object.values(node.style.states ?? {})].forEach((values) => values && visit(values as Declarations));
+  // 業務ブロックの表示領域も同じ参照を持てる（共通の値の削除では今の値へ置き換える）。
+  for (const { node } of walkNodes(document)) if (node.type === "component") for (const style of Object.values(node.slots ?? {})) [style.base, ...(style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => values && visit(values as Declarations));
   for (const style of Object.values(document.textStyles ?? {})) [style.base, ...(style.responsive ?? []).map((entry) => entry.declarations)].forEach((values) => visit(values));
 }
 /** 見た目を変えずに文字スタイルを外す。ノードの値が効く幅（同じ段以下）に無いプロパティだけをコピーする。 */

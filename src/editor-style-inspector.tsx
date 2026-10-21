@@ -40,6 +40,8 @@ export type StyleInspectorProps = {
   /** 編集中の状態。通常以外では状態に使える見た目だけを表示し、キャンバスに強制表示する。 */
   styleState?: StyleState;
   setStyleState?: (state: StyleState) => void;
+  /** slot: 業務ブロックの表示領域。base / responsive だけを持つため、テキストスタイル・状態・演出・幅別の非表示・背景画像を出さない。 */
+  scope?: "node" | "slot";
 };
 
 const textTags = new Set("h1 h2 h3 h4 h5 h6 p span a li strong em small blockquote figcaption time".split(" "));
@@ -77,8 +79,8 @@ type Ui = {
 export function StyleInspector(props: StyleInspectorProps) {
   const { document, node, path, blocks, tiers, tier, apply, preview, pending, fieldKey, disabled, reason, notify } = props;
   const uid = useId();
-  const allowed = node.type === "component" ? blocks[node.block]?.styleProperties : undefined;
-  const can = (property: StyleProperty | "textStyle" | "states" | "appear" | "hidden") => !allowed || allowed.includes(property);
+  const allowed = node.type === "component" ? blocks[node.block]?.styleProperties : undefined, slot = props.scope === "slot";
+  const can = (property: StyleProperty | "textStyle" | "states" | "appear" | "hidden") => !(slot && ["textStyle", "states", "appear", "hidden"].includes(property)) && (!allowed || allowed.includes(property));
   const styleState = props.styleState ?? "normal", normal = styleState === "normal";
   const index = Math.max(0, tiers.findIndex((entry) => entry.key === tier)), current = tiers[index] ?? { key: "base" as const, start: 0, end: null, label: "基本" };
   const tone = index === 0 ? 0 : (index - 1) % 2 + 1, higher = tiers.slice(index + 1), next = higher[0];
@@ -161,7 +163,8 @@ export function StyleInspector(props: StyleInspectorProps) {
     : `${span}に適用。${higher.length ? current.key === "base" ? "上の幅で上書きした項目を除きます。" : `${higher.map(tierName).join("・")} で上書きした項目を除きます。` : ""}`;
   const outside = props.width < current.start || only && props.width >= next!.start;
   const target = props.width < current.start ? current.start : current.start === 0 ? Math.min(375, next!.start - 1) : current.start;
-  const motionVisible = (["states", "appear", "hidden", "translate", "rotate", "scale", "transformOrigin", "transitionDuration"] as const).some(can);
+  const motionVisible = !slot && (["states", "appear", "hidden", "translate", "rotate", "scale", "transformOrigin", "transitionDuration"] as const).some(can);
+  const appearanceExtra = slot ? undefined : props.appearanceExtra;
   return <div className="e-inspector" data-tone={tone}>
     {normal && <div className="e-tierbar">
       <Segmented label="編集する幅" value={String(tier)} options={tiers.map((entry) => ({ value: String(entry.key), text: tierName(entry) }))} disabled={disabled || props.tierLocked}
@@ -173,7 +176,7 @@ export function StyleInspector(props: StyleInspectorProps) {
         <button type="button" className="e-small" onClick={() => props.setWidth(target)}>{target}px で表示</button></p>}
       {shown.key !== current.key && <button type="button" className="e-small e-follow" disabled={disabled || props.tierLocked} onClick={() => chooseTier(shown.key)}>表示中の幅（{tierName(shown)}）の段を編集</button>}
     </div>}
-    {normal && allowed && <p className="e-help">このブロックで変更できる見た目だけを表示しています。</p>}
+    {normal && allowed && <p className="e-help">{slot ? "この領域で変更できる見た目だけを表示しています。" : "このブロックで変更できる見た目だけを表示しています。"}</p>}
     {normal && textual && (can("textStyle") || textStyleProperties.some(can) || can("color") || can("textAlign")) && <section className="e-sec"><h3>テキスト</h3>
       {can("textStyle") && <Row caption="テキストスタイル" htmlFor={`${uid}-ts`} status={{ unsaved: (saved?.style?.textStyle ?? "") !== (node.style?.textStyle ?? ""), lock: reason("style.textStyle") }}>
         <span className="e-inline"><select id={`${uid}-ts`} aria-label="テキストスタイル" value={node.style?.textStyle ?? ""} disabled={disabled || !!reason("style.textStyle")}
@@ -191,10 +194,10 @@ export function StyleInspector(props: StyleInspectorProps) {
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
     </section>}
     {normal && <Layout ui={ui} />}
-    {normal && element && <Flow ui={ui} flex={flex} grid={grid} />}
-    {normal && (!!props.appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
+    {normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
-      {props.appearanceExtra}
+      {appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
       <div className="e-grid2">{ui.unit("borderWidth", "枠線の太さ", { units: ["px", "rem", "em"] })}{ui.select("borderStyle", "枠線の種類", borders)}</div>
       {color("borderColor", "枠線の色")}
@@ -213,7 +216,7 @@ export function StyleInspector(props: StyleInspectorProps) {
       {ui.unit("flexBasis", "基準サイズ", { keywords: sizes })}
       <div className="e-grid2">{ui.unit("gridColumn", "グリッドの列位置", { units: [] })}{ui.unit("gridRow", "グリッドの行位置", { units: [] })}</div>
       {ui.select("alignSelf", "自身の揃え", selfAligns)}
-      {element?.tag === "img" && ui.select("objectFit", "画像の収まり", fits)}
+      {(element?.tag === "img" || slot) && ui.select("objectFit", "画像の収まり", fits)}
     </Collapse>}
     {motionVisible && <Collapse key={`${fieldKey}-motion`} title="演出" initial={!normal}>
       <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
