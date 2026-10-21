@@ -39,7 +39,7 @@ import { documentLocaleFor, localizationLocaleFor, validateLocalizedDocumentSave
 
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
-type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; hasSavedDraft?: boolean; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
+type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; hasSavedDraft?: boolean | undefined; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
 type Inspector = "element" | "page" | "site" | "localization";
 type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorTarget } | { type: "reload" }
   | { type: "inspector"; inspector: Inspector } | { type: "node"; path: NodePath; canvasId?: string }
