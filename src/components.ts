@@ -7,7 +7,7 @@ import { isElementTag, parseNode, parsePageDocument, reservedPropNames, type Com
 import { collectAssetReferences, type AssetPlacement } from "./assets.js";
 import { findInternalLinks, linkTarget, rewriteInternalLinks, validatePagePath } from "./pages.js";
 import { parseTokens } from "./style-values.js";
-import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, record } from "./validation-utils.js";
+import { DocumentValidationError, fail, identifier, isSafePublicLink, keys, record } from "./validation-utils.js";
 
 export { COMPONENT_LIMITS, type ResolvedOrigin } from "./component-expand.js";
 
@@ -181,7 +181,7 @@ function rewriteInstances<T extends { body: PageNode[] }>(container: T, library:
     const value = instance.props?.[name], target = typeof value === "string" ? linkTarget(value, domains) : undefined;
     if (!instance.props || target?.path !== wanted) continue;
     const href = `${to}${target.rest}`;
-    if (!isSafePublicUrl(href)) fail(`$.body.${instance.id}.props.${name}`, "rewritten link is not a safe URL");
+    if (!isSafePublicLink(href)) fail(`$.body.${instance.id}.props.${name}`, "rewritten link is not a safe URL");
     instance.props[name] = href;
   }
   return copy;
