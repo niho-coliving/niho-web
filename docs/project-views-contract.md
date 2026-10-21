@@ -55,6 +55,7 @@ const adapter: ProjectDirectoryAdapter = {
 - 画像は安全なHTTPS URLまたは `/` から始まる同一originの公開・素材URLで、さらに `isThumbnailUrlAllowed` が同期的に許可したものだけを描画します。任意URLへのアクセス確認・画像生成・スクリーンショット取得はしません。資格情報付きURL、data、javascript、protocol relative、fragmentは拒否し、許可外・画像失敗時はプレビューなし表示です。ホストは非公開原稿や閲覧不能な素材、内部サービスのURLを許可しないでください。
 - 公開URLは `published` のときだけ設定でき、Projectの `site.domains` のHTTPS originに所属する必要があります。設定ドメイン自体は公開の証明として扱いません。
 - 0件と検索結果0件を区別し、作成・検索解除の導線を提供します。作成・メンバー管理のフォームは日常一覧に置きません。
+- プレビューカードの下に同じ検索結果・並び順のコンパクトな一覧を表示します。一覧はProject名・Site名、公開状態・設定ドメイン、メンバー数と名前、最終更新・最終アクセスを読み取り専用で表示し、DashboardとEditorを別々に開けます。プランや請求情報はProject契約に無いため表示しません。狭い画面では一覧行へ集約します。
 
 ## ProjectDashboard
 
@@ -102,6 +103,9 @@ const adapter: ProjectDashboardAdapter = {
 - 数値は非負のsafe integerまたは `null` です。`null` を0へ変換せず「未取得」と表示します。0はホストが確認した実際の0件です。公開状態が不明なら「公開状態未取得」を表示します。
 - 日時はtimezone付きISO timestampです。解析対象期間の開始・終了、解析取得日時、Dashboard取得日時を表示します。表示は日本時間です。期間の逆転を拒否します。
 - 公開情報と解析の部分失敗を別々に表示します。未公開サイトに公開リンクを出しません。直近変更0件と取得失敗も別の状態です。変更はホストが返した順に最大20件表示します。
+- 概要には解析の要約（訪問者数、ページ表示数、対象期間、解析取得日時）とアクセス解析画面への導線を表示します。解析が未接続・取得失敗の場合はそれぞれの状態を表示し、公開情報の成否とは独立させます。`null` は未取得、`0` は実数値として表示します。
+- メンバー画面は選択Projectの `members` の表示名と人数を読み取り専用で表示します。0名は空状態として表示し、追加・解除の操作は既存 `ProjectManager` が担います。
+- DashboardはSTUDIOを参考に、サイト名・公開ドメイン、上部のホーム／アナリティクス／設定／デザインエディタ、ホーム配下のダッシュボード／プロジェクト設定／メンバーという階層で表示します。CMS・フォーム・課金などホストに機能がない導線は表示しません。ホーム本文は公開状態・ドメイン・ページ数・直近の変更と解析概要を表示し、メンバーは専用画面で読み取り専用表示します。デスクトップではホームメニューを左に、本文列を最大992px（内側の余白を除く本文は最大920px）で中央に配置し、幅900px以下ではメニューを横並びにして本文の上に置きます。
 
 ## 非同期・接続切替・画面遷移
 
@@ -109,7 +113,7 @@ const adapter: ProjectDashboardAdapter = {
 
 再読込を始めると直前のデータとEditor・設定・公開サイトの操作を隠します。adapter交換・Project切替・unmountは進行中のsignalをabortし、世代照合によってabortを無視したadapterの遅延応答も捨てます。取得失敗・ID不一致・権限なしの場合は以前の値を残しません。ホストのpush通知や認証監視自体は実装しません。
 
-ホストは一覧・Dashboard・Editorを別の画面として切り替え、スマホで一覧の下にDashboardや作成フォームを積まないでください。遷移後の見出しへのfocus・scroll復元、Editorの未保存内容の保持または確認もホストの責務です。一覧へ戻るときは任意の `initialFocusProjectId` を指定すると、読込後に対象行へ一度だけfocusを戻し、行を表示範囲へ入れます。未指定・該当Projectなしの場合はfocusを移しません。各操作はnative button/link、検索はlabel、focus-visibleを持ちます。320pxではサムネイル付きの行を1つの一覧面にまとめ、名前とURLを折り返します。
+ホストは一覧・Dashboard・Editorを別の画面として切り替え、スマホで一覧の下にDashboardや作成フォームを積まないでください。遷移後の見出しへのfocus・scroll復元、Editorの未保存内容の保持または確認もホストの責務です。一覧へ戻るときは任意の `initialFocusProjectId` を指定すると、読込後に対象の一覧行のボタンへ一度だけfocusを戻し、行を表示範囲へ入れます。未指定・該当Projectなしの場合はfocusを移しません。各操作はnative button/link、検索はlabel、focus-visibleを持ちます。320pxでは表を縦の一覧行に変え、カードを隠して名前とURLを折り返します。
 
 CSSはpackage内にscopeし、既存packageと同じfont・余白・緑系surfaceの慣習を使います。ホストが定義している場合は `--niho-text` / `--niho-text-sub` / `--niho-border` / `--niho-surface` / `--niho-surface-subtle` / `--niho-primary-bg` / `--niho-primary-ink` を使い、未定義ならpackage内のfallbackで描画します。NIHOappへのimportはありません。
 

@@ -40,6 +40,15 @@ function Analytics({ result, connect, retry, settingsAction }: { result: ReadyDa
     <dl className="pv-stats"><div><dt>訪問者数</dt><dd>{numberLabel(result.data.uniqueVisitors)}</dd></div><div><dt>ページ表示数</dt><dd>{numberLabel(result.data.pageViews)}</dd></div></dl>
     <p className="pv-fetched">解析取得日時 <Timestamp value={result.data.fetchedAt} /></p><div className="pv-actions">{settingsButton}</div></>;
 }
+function AnalyticsSummary({ result, open }: { result: ReadyDashboard["analytics"]; open: () => void }) {
+  return <section className="pv-panel pv-analytics-summary"><h3>アクセス解析</h3>
+    {result.status === "ready" ? <><dl className="pv-stats"><div><dt>訪問者数</dt><dd>{numberLabel(result.data.uniqueVisitors)}</dd></div><div><dt>ページ表示数</dt><dd>{numberLabel(result.data.pageViews)}</dd></div></dl>
+      <p className="pv-period">対象期間 <time dateTime={result.data.period.start}>{dateLabel(result.data.period.start)}</time> 〜 <time dateTime={result.data.period.end}>{dateLabel(result.data.period.end)}</time></p>
+      <p className="pv-fetched">解析取得日時 <Timestamp value={result.data.fetchedAt} /></p></>
+      : <p role={result.status === "unavailable" ? "alert" : undefined}>{result.status === "disconnected" ? "アクセス解析はまだ接続されていません。" : "アクセス解析を取得できませんでした。"}</p>}
+    <div className="pv-actions"><button type="button" onClick={open}>アクセス解析を見る</button></div>
+  </section>;
+}
 
 export function ProjectDashboard(props: ProjectDashboardProps) {
   const [source, setSource] = useState({ adapter: props.adapter, project: props.project, generation: 0 });
@@ -56,20 +65,44 @@ function DashboardSession({ project: inputProject, adapter, onBackToProjects, on
     return parseProjectDashboardResult(response, project);
   }, [adapter, project]);
   const { state, reload } = useProjectRead(reader);
-  const [view, setView] = useState<"overview" | "analytics">("overview");
+  const [view, setView] = useState<"overview" | "analytics" | "members">("overview");
   const result = state.status === "complete" && state.value.status === "ready" ? state.value : null;
-  return <section className="nw-project-view" aria-label="プロジェクトダッシュボード"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
-    <button type="button" className="pv-back" onClick={onBackToProjects}>‹ プロジェクト一覧</button>
-    <header className="pv-header"><div className="pv-heading"><h1>{result && project ? project.name : "ダッシュボード"}</h1>{result && project && <p className="pv-muted">{project.site.name}</p>}</div>{result && project && <button type="button" className="pv-primary" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button>}</header>
+  return <section className="nw-project-view nw-project-dashboard" aria-label="プロジェクトダッシュボード"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
+    <header className="pv-project-bar">
+      <button type="button" className="pv-project-back" onClick={onBackToProjects} aria-label="プロジェクト一覧へ戻る">‹</button>
+      <div className="pv-project-identity" data-publication={result?.overview.status === "ready" ? result.overview.data.publicationStatus : "unknown"}>
+        <h1>{result && project ? project.name : "プロジェクトダッシュボード"}</h1>
+        {result && project && <span><i aria-hidden="true" />{project.site.domains[0] ?? project.site.name}</span>}
+      </div>
+      {result && project && <>
+        <nav className="pv-global-nav" aria-label="サイト機能">
+          <button type="button" aria-current={view !== "analytics" ? "page" : undefined} onClick={() => setView("overview")}>ホーム</button>
+          <button type="button" aria-current={view === "analytics" ? "page" : undefined} onClick={() => setView("analytics")}>アナリティクス</button>
+          <button type="button" onClick={() => onOpenSettings(project, "site")} disabled={settingsAction === "disabled"}>{settingsAction === "disabled" ? "設定（準備中）" : "設定"}</button>
+        </nav>
+        <button type="button" className="pv-editor-link" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "デザインエディタ"}</button>
+      </>}
+    </header>
     {state.status !== "complete" ? <ReadNotice status={state.status} noun="ダッシュボード" retry={reload} />
       : state.value.status === "forbidden" ? <ReadNotice status="forbidden" noun="ダッシュボード" retry={reload} />
       : result && project && <>
-        <nav className="pv-nav" aria-label="プロジェクト操作"><button type="button" aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}>概要</button><button type="button" aria-current={view === "analytics" ? "page" : undefined} onClick={() => setView("analytics")}>アクセス解析</button><button type="button" onClick={() => onOpenSettings(project, "site")} disabled={settingsAction === "disabled"}>{settingsAction === "disabled" ? "サイト設定（準備中）" : "サイト設定"}</button></nav>
-        {view === "analytics" ? <section className="pv-panel"><h2>アクセス解析</h2><Analytics result={result.analytics} connect={() => onOpenSettings(project, "analytics")} retry={reload} settingsAction={settingsAction} /></section>
-          : <div className="pv-sections"><section className="pv-panel"><h2>公開情報</h2>{result.overview.status === "ready" ? <Overview overview={result.overview.data} /> : <><p role="alert">公開情報を取得できませんでした。</p><button type="button" onClick={reload}>再試行</button></>}</section>
-            <section className="pv-panel"><h2>直近の変更</h2>{result.overview.status === "unavailable" ? <p role="alert">変更履歴を取得できませんでした。</p> : result.overview.data.recentChanges.length === 0 ? <p className="pv-muted">直近の変更はありません。</p> : <ul className="pv-changes">{result.overview.data.recentChanges.map((change) => <li key={change.id}>{change.label}<Timestamp value={change.changedAt} /></li>)}</ul>}</section>
-          </div>}
-        <div className="pv-footer"><p className="pv-fetched">ダッシュボード取得日時 <Timestamp value={result.fetchedAt} /></p><button type="button" onClick={reload}>再読込</button></div>
+        <div className="pv-dashboard-layout">
+          <nav className="pv-home-nav" aria-label="ホームメニュー">
+            <button type="button" aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}>ダッシュボード</button>
+            <button type="button" onClick={() => onOpenSettings(project, "site")} disabled={settingsAction === "disabled"}>{settingsAction === "disabled" ? "プロジェクト設定（準備中）" : "プロジェクト設定"}</button>
+            <button type="button" aria-current={view === "members" ? "page" : undefined} onClick={() => setView("members")}>メンバー</button>
+          </nav>
+          <main className="pv-dashboard-content">
+            <h2 className="pv-page-title">{view === "overview" ? "ダッシュボード" : view === "analytics" ? "アナリティクス" : "メンバー"}</h2>
+            {view === "analytics" ? <section className="pv-panel"><h3>アクセス解析</h3><Analytics result={result.analytics} connect={() => onOpenSettings(project, "analytics")} retry={reload} settingsAction={settingsAction} /></section>
+              : view === "members" ? <section className="pv-panel"><h3>メンバー（{project.members.length}名）</h3>{project.members.length === 0 ? <p className="pv-muted">メンバーはいません。</p> : <ul className="pv-member-list">{project.members.map((member) => <li key={member.userId}>{member.displayName}</li>)}</ul>}</section>
+              : <div className="pv-sections"><section className="pv-panel"><h3>公開情報</h3>{result.overview.status === "ready" ? <Overview overview={result.overview.data} /> : <><p role="alert">公開情報を取得できませんでした。</p><button type="button" onClick={reload}>再試行</button></>}</section>
+                <section className="pv-panel"><h3>直近の変更</h3>{result.overview.status === "unavailable" ? <p role="alert">変更履歴を取得できませんでした。</p> : result.overview.data.recentChanges.length === 0 ? <p className="pv-muted">直近の変更はありません。</p> : <ul className="pv-changes">{result.overview.data.recentChanges.map((change) => <li key={change.id}>{change.label}<Timestamp value={change.changedAt} /></li>)}</ul>}</section>
+                <AnalyticsSummary result={result.analytics} open={() => setView("analytics")} />
+              </div>}
+            <div className="pv-footer"><p className="pv-fetched">ダッシュボード取得日時 <Timestamp value={result.fetchedAt} /></p><button type="button" onClick={reload}>再読込</button></div>
+          </main>
+        </div>
       </>}
   </section>;
 }

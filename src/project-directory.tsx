@@ -42,7 +42,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("updated");
   const entries = state.status === "complete" && state.value.status === "ready" ? state.value.entries : null;
-  const list = useRef<HTMLUListElement>(null), focusRestored = useRef(false);
+  const list = useRef<HTMLDivElement>(null), focusRestored = useRef(false);
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("ja-JP");
     return (entries ?? []).filter(({ project }) => [project.name, project.site.name, ...project.site.domains].some((value) => value.toLocaleLowerCase("ja-JP").includes(needle))).slice().sort((a, b) => {
@@ -54,7 +54,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
   useEffect(() => {
     if (!entries || !initialFocusProjectId || focusRestored.current) return;
     focusRestored.current = true;
-    const row = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button.pv-open") ?? []).find((node) => node.dataset.projectId === initialFocusProjectId);
+    const row = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button.pv-list-open") ?? []).find((node) => node.dataset.projectId === initialFocusProjectId);
     row?.focus(); row?.scrollIntoView?.({ block: "nearest" });
   }, [entries, initialFocusProjectId]);
   return <section className="nw-project-view" aria-label="プロジェクト一覧"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
@@ -68,15 +68,22 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
       </div><p className="pv-muted" role="status">{visible.length}件</p>
       {entries?.length === 0 ? <div className="pv-notice"><p>{createAction === "disabled" ? "参加中のプロジェクトはまだありません。管理者に参加を依頼してください。" : "参加中のプロジェクトはまだありません。作成するか、管理者に参加を依頼してください。"}</p></div>
         : visible.length === 0 ? <div className="pv-notice"><p>条件に一致するプロジェクトがありません。</p><button type="button" onClick={() => setQuery("")}>検索解除</button></div>
-        : <ul className="pv-grid" ref={list}>{visible.map(({ project, summary }) => <li className="pv-card" key={project.id}>
+        : <><ul className="pv-grid" aria-label="プロジェクトのプレビュー">{visible.map(({ project, summary }) => <li className="pv-card" key={project.id}>
           <button type="button" className="pv-open" data-project-id={project.id} onClick={() => onOpenDashboard(project)} aria-label={`${project.name}（${project.site.name}）のダッシュボード`}><Thumbnail thumbnail={summary.thumbnail} /><span className="pv-card-title"><strong>{project.name}</strong><span>{project.site.name}</span></span></button>
           <div className="pv-card-body"><PublicationBadge status={summary.publicationStatus} />
             <div>{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</div>
-            {memberDetails === "visible" && <p className="pv-muted">参加者 {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>}
+            {memberDetails === "visible" && <p className="pv-muted">メンバー {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>}
             <dl className="pv-meta"><div><dt>最終更新</dt><dd><Timestamp value={summary.updatedAt} /></dd></div><div><dt>最終アクセス</dt><dd><Timestamp value={summary.lastAccessedAt} /></dd></div></dl>
             <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{(typeof editorAction === "function" ? editorAction(project) : editorAction) === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
           </div>
-        </li>)}</ul>}
+        </li>)}</ul>
+        <div className="pv-directory-list" ref={list}><h2>一覧表示</h2><table><thead><tr><th scope="col">プロジェクト / サイト</th><th scope="col">公開状態・ドメイン</th><th scope="col">メンバー</th><th scope="col">最終更新 / 最終アクセス</th><th scope="col">開く</th></tr></thead><tbody>{visible.map(({ project, summary }) => <tr key={project.id}>
+          <th scope="row" data-label="プロジェクト / サイト"><button type="button" className="pv-list-open" data-project-id={project.id} onClick={() => onOpenDashboard(project)} aria-label={`${project.name}（${project.site.name}）の一覧行を開く`}>{project.name}</button><span className="pv-muted">{project.site.name}</span></th>
+          <td data-label="公開状態・ドメイン"><PublicationBadge status={summary.publicationStatus} /><span className="pv-list-domains">{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</span></td>
+          <td data-label="メンバー">{memberDetails === "visible" ? <><span>{project.members.length}名</span>{project.members.length > 0 && <span className="pv-muted pv-list-members">{project.members.map((member) => member.displayName).join("、")}</span>}</> : <span className="pv-muted">未取得</span>}</td>
+          <td data-label="日時"><span>最終更新 <Timestamp value={summary.updatedAt} /></span><span>最終アクセス <Timestamp value={summary.lastAccessedAt} /></span></td>
+          <td data-label="開く"><div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button></div></td>
+        </tr>)}</tbody></table></div></>}
       </>}
   </section>;
 }
