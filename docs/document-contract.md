@@ -45,6 +45,7 @@ tokens は最大 128 件です。名前は小文字英字から始まる英数�
 
 | プロパティ | 値 |
 | --- | --- |
+| `fontVariantEastAsian` | `normal` / `proportional-width` |
 | `fontStyle` | `normal` / `italic` |
 | `textDecorationLine` | `none` / `underline` / `line-through` |
 
@@ -53,7 +54,7 @@ node の `style` は `base` と `responsive` の宣言を持ちます。base を
 
 ## 文字スタイル
 
-`textStyles` は名前付きの文字の見た目（STUDIO のテキストスタイル相当）で、最大 64 件です。名前は token と同じ規則です。各スタイルは任意の `label`、必須の `base`、任意の `responsive` を持ちます。使えるプロパティは `fontFamily` / `fontSize` / `fontWeight` / `lineHeight` / `letterSpacing` / `fontStyle` / `textDecorationLine` だけです。色は含めず、カラーの token で共通化します。値・token 参照の型と解決値の検証、`responsive` の規則（320〜3840px、昇順、重複なし、最大 12 個）は node style と同じです。
+`textStyles` は名前付きの文字の見た目（STUDIO のテキストスタイル相当）で、最大 64 件です。名前は token と同じ規則です。各スタイルは任意の `label`、必須の `base`、任意の `responsive` を持ちます。使えるプロパティは `fontFamily` / `fontSize` / `fontWeight` / `lineHeight` / `letterSpacing` / `fontVariantEastAsian` / `fontStyle` / `textDecorationLine` だけです。色は含めず、カラーの token で共通化します。値・token 参照の型と解決値の検証、`responsive` の規則（320〜3840px、昇順、重複なし、最大 12 個）は node style と同じです。
 
 ```json
 {

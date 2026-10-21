@@ -5,7 +5,7 @@ export type TokenReference = { token: string };
 export type StyleValue = string | number | TokenReference;
 export type StyleProperty =
   | "color" | "backgroundColor" | "borderColor"
-  | "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "textAlign"
+  | "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "fontVariantEastAsian" | "textAlign"
   | "width" | "height" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight"
   | "margin" | "marginTop" | "marginRight" | "marginBottom" | "marginLeft"
   | "padding" | "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft"
@@ -25,7 +25,7 @@ export type AssetReference = { provider: string; id: string };
 export type BackgroundImageValue = { asset: AssetReference };
 export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>> & { backgroundImage?: BackgroundImageValue };
 /** 文字スタイルで共通化できる見た目。色はカラーの token で共通化する。 */
-export type TextStyleProperty = "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "fontStyle" | "textDecorationLine";
+export type TextStyleProperty = "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "fontVariantEastAsian" | "fontStyle" | "textDecorationLine";
 export type TextStyleDeclarations = Partial<Record<TextStyleProperty, StyleValue>>;
 export type TextStyle = {
   label?: string;

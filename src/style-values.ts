@@ -86,7 +86,8 @@ const specs: Record<StyleProperty, PropertySpec> = {
   fontFamily: { kind: "fontFamily", valid: fontFamily }, fontSize: nonnegative,
   fontWeight: { kind: "number", valid: (v) => ["normal", "bold"].includes(v) || /^\d+$/.test(v) && +v >= 1 && +v <= 1000 },
   lineHeight: { kind: "number", valid: (v) => v === "normal" || positiveLength(v) || unitNumber(v) },
-  letterSpacing: { kind: "length", px: true, valid: length }, textAlign: { valid: oneOf("left", "right", "center", "start", "end", "justify") },
+  letterSpacing: { kind: "length", px: true, valid: (v) => length(v) || v === "normal" },
+  fontVariantEastAsian: { valid: oneOf("normal", "proportional-width") }, textAlign: { valid: oneOf("left", "right", "center", "start", "end", "justify") },
   width: dimension, height: dimension, minWidth: dimension, maxWidth: dimension, minHeight: dimension, maxHeight: dimension,
   margin, marginTop: offset, marginRight: offset, marginBottom: offset, marginLeft: offset,
   padding, paddingTop: nonnegative, paddingRight: nonnegative, paddingBottom: nonnegative, paddingLeft: nonnegative,
@@ -128,7 +129,7 @@ export const appearEffects: readonly AppearEffect[] = ["fade", "fade-up", "fade-
 /** 遷移の指定。通常の規則には出さず、状態スタイルを持つノードの動きの規則だけに出す。 */
 export const motionProperties: readonly StyleProperty[] = ["transitionDuration", "transitionDelay", "transitionTimingFunction"];
 export const isStyleProperty = (value: unknown): value is StyleProperty => typeof value === "string" && Object.hasOwn(specs, value);
-export const textStyleProperties: readonly TextStyleProperty[] = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "fontStyle", "textDecorationLine"];
+export const textStyleProperties: readonly TextStyleProperty[] = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "fontVariantEastAsian", "fontStyle", "textDecorationLine"];
 /** token を参照できるプロパティの型。参照できなければ undefined。 */
 export const styleTokenKind = (property: StyleProperty): TokenKind | undefined => specs[property].kind;
 /** 数値だけの指定を px として扱うプロパティ。 */
