@@ -1,5 +1,6 @@
 import { normalizePageChange, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
-import type { EditorAdapter, EditorComponentAdapter, EditorLocalizationAdapter, EditorLocalizationCommand, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
+import { parseEditorLocaleReleaseApplyResult, parseEditorLocaleReleasePlan, parseEditorLocaleReleaseState } from "./editor-locale-release.js";
+import type { EditorAdapter, EditorComponentAdapter, EditorLocaleReleaseApplyRequest, EditorLocaleReleasePrepareRequest, EditorLocalizationAdapter, EditorLocalizationCommand, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
 import { parseRevisionEntry, parseRevisionPage } from "./history.js";
 import { parseSiteSettings } from "./pages.js";
 import { parseProject, type Project } from "./projects.js";
@@ -33,6 +34,25 @@ function releaseRequest(request: EditorReleaseRequest, target: EditorTarget): Ed
     ...(request.revision === undefined ? {} : { revision: request.revision }),
     ...(request.componentsVersion === undefined ? {} : { componentsVersion: request.componentsVersion })
   };
+}
+
+function releaseValue(value: unknown, name: string, max = 200): string {
+  if (typeof value !== "string" || !value || value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error(`${name}が正しくありません。`);
+  return value;
+}
+function localeReleasePrepareRequest(request: EditorLocaleReleasePrepareRequest, site: EditorSite): EditorLocaleReleasePrepareRequest {
+  if (request.siteId !== site.id || request.locale !== "ja" && request.locale !== "en" || request.action !== "publish" && request.action !== "rollback") throw new Error("プロジェクト外の言語版は操作できません。");
+  if (request.action === "rollback" !== (request.rollbackReleaseId !== undefined)) throw new Error("言語版の復元対象が正しくありません。");
+  return { siteId: site.id, locale: request.locale, action: request.action, expectedSiteVersion: releaseValue(request.expectedSiteVersion, "サイト版"),
+    expectedCurrentVersion: request.expectedCurrentVersion === null ? null : releaseValue(request.expectedCurrentVersion, "現在の公開版"),
+    ...(request.rollbackReleaseId === undefined ? {} : { rollbackReleaseId: releaseValue(request.rollbackReleaseId, "復元対象") }) };
+}
+function localeReleaseApplyRequest(request: EditorLocaleReleaseApplyRequest, site: EditorSite): EditorLocaleReleaseApplyRequest {
+  if (request.siteId !== site.id || request.locale !== "ja" && request.locale !== "en") throw new Error("プロジェクト外の言語版は操作できません。");
+  return { siteId: site.id, locale: request.locale, confirmationToken: releaseValue(request.confirmationToken, "確認情報", 512),
+    expectedCurrentVersion: request.expectedCurrentVersion === null ? null : releaseValue(request.expectedCurrentVersion, "現在の公開版"),
+    optimisticVersion: releaseValue(request.optimisticVersion, "確認用の版"), preparedReleaseId: releaseValue(request.preparedReleaseId, "準備した公開版"),
+    preparedVersion: releaseValue(request.preparedVersion, "準備した版") };
 }
 
 /** 既知の任意項目だけを検証して渡す。 */
@@ -139,6 +159,22 @@ function localizationForProject(localization: EditorLocalizationAdapter, site: E
     ...(localization.requestSiteTranslation ? { async requestSiteTranslation(request, signal) {
       if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトは翻訳できません。");
       return localization.requestSiteTranslation!({ siteId: site.id, targetLocale: request.targetLocale, expectedVersion: request.expectedVersion }, signal);
+    } } : {}),
+    ...(localization.readRelease ? { async readRelease(request, signal) {
+      if (request.siteId !== site.id || request.locale !== "ja" && request.locale !== "en") throw new Error("プロジェクト外の言語版は参照できません。");
+      return parseEditorLocaleReleaseState(structuredClone(await localization.readRelease!({ siteId: site.id, locale: request.locale }, signal)), site.id, request.locale);
+    } } : {}),
+    ...(localization.prepareRelease ? { async prepareRelease(request, signal) {
+      const checked = localeReleasePrepareRequest(request, site);
+      return parseEditorLocaleReleasePlan(structuredClone(await localization.prepareRelease!(checked, signal)), checked, site.domains);
+    } } : {}),
+    ...(localization.applyRelease ? { async applyRelease(request, signal) {
+      const checked = localeReleaseApplyRequest(request, site);
+      return parseEditorLocaleReleaseApplyResult(structuredClone(await localization.applyRelease!(checked, signal)), { siteId: checked.siteId, locale: checked.locale, prepared: { releaseId: checked.preparedReleaseId, version: checked.preparedVersion } });
+    } } : {}),
+    ...(localization.rollbackRelease ? { async rollbackRelease(request, signal) {
+      const checked = localeReleaseApplyRequest(request, site);
+      return parseEditorLocaleReleaseApplyResult(structuredClone(await localization.rollbackRelease!(checked, signal)), { siteId: checked.siteId, locale: checked.locale, prepared: { releaseId: checked.preparedReleaseId, version: checked.preparedVersion } });
     } } : {})
   };
 }

@@ -16,6 +16,7 @@
 - 鎌倉接続：[niho-app #19245](https://github.com/niho-coliving/niho-app/issues/19245)
 - Experience接続：[niho-experience #59](https://github.com/niho-coliving/niho-experience/issues/59)
 - Experienceの体験紹介・予約UI文言：[niho-app #19249](https://github.com/niho-coliving/niho-app/issues/19249)
+- 実サイト編集の補完（URL画像・原稿の読み取り専用表示）：[niho-web #50](https://github.com/niho-coliving/niho-web/issues/50)
 
 原文言語を設定しない状態を日本語として補完しない。Experienceのサイト原稿は英語→日本語とする。業務ブロック内の商品・体験等については、その実体の原稿言語と既存の翻訳を尊重し、サイト設定で元データの言語を変更しない。
 
@@ -181,10 +182,10 @@ LocalizedRelease
 
 | サイト | 既存の原文URL | 追加言語URL |
 | --- | --- | --- |
-| NIHOkamakura（日本語原文） | `https://kamakura.niho.life/about/` | `https://kamakura.niho.life/en/about/` |
-| NIHO experience（英語原文） | `〈Experienceの公開origin〉/about/` | `〈Experienceの公開origin〉/ja/about/` |
+| NIHOkamakura（日本語原文） | `https://kamakura.niho.life/catering` | `https://kamakura.niho.life/en/catering` |
+| NIHO experience（英語原文） | `〈Experienceの公開origin〉/help` | `〈Experienceの公開origin〉/ja/help` |
 
-上記パスは設計例。既存URLは移行時に実際の公開ルートと照合する。
+上記は既存ルートに沿った設計例。既存URLの末尾スラッシュ有無をそのまま保ち、移行時に実際の公開ルートと照合する。鎌倉の新サイト確認用originを本番originと同一視しない。
 
 - 原文URLを保ち、追加言語に `/en/` または `/ja/` を付ける。初期版のslugは言語間で共通とし、自動翻訳しない。
 - `/en`・`/ja` と既存ページパス／テンプレートパスの衝突を初回設定で検出する。

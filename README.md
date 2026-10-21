@@ -41,10 +41,13 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/history` | 文書の差分（`diffDocuments`）、版履歴の項目の検証、端末内の緊急復元ストア。React不要 |
 | `@niho/web/analytics` | GA4 / Search Console を分けて示す読取専用画面、型付きadapter、応答検証 |
 | `@niho/web/localization` | 明示的な日英設定、安定IDの翻訳単位、候補・手編集・確認、共通構造からの文書生成。React不要 |
+| `@niho/web/localization-release` | 言語単位の不変snapshot、route・内部リンク・SEO、prepare/apply/rollback検証。React不要 |
 
 React は optional peer dependency です。API サーバーなど React を入れない利用先では `import { parsePageDocument } from '@niho/web/core'` を使います。root と `/react` は React runtime を import します。
 
 多言語coreは共通構造を保ったまま、明示的な `sourceLocale` とlocale mapping、安定IDの翻訳単位、非同期candidate、手編集、確認、target文書生成を扱います。翻訳provider・認可・永続化・公開snapshotはホスト責務です。詳細は [多言語core契約](docs/localization-contract.md) を参照してください。
+
+言語別公開は `@niho/web/localization-release` で、ページ・共通部品・ナビ・スタイル・外部resource hash・route・SEOを1つの完成版として検証します。token、認可、永続化、CAS、CDNと実サイト描画はhostが所有します。詳細は [言語別公開・ルート・SEO契約](docs/localization-release.md) を参照してください。
 
 ## 文書の形
 

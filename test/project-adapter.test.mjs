@@ -133,6 +133,42 @@ test("localization methods remain project-scoped and preserve optimistic command
   await wrapped.localization.requestSiteTranslation({ siteId: "demo", targetLocale: "en", expectedVersion: "site-1" }, signal());
   await assert.rejects(() => wrapped.localization.requestSiteTranslation({ siteId: "other", targetLocale: "en", expectedVersion: "site-1" }, signal()), /プロジェクト外/);
 });
+test("whole-locale publication stays project/domain scoped and rejects malformed or mismatched host replies", async () => {
+  const now = "2026-10-21T00:00:00.000Z", current = { releaseId: "en-1", version: "release-v1", label: "English 1", publishedAt: now, pages: 1, sharedResources: 1 };
+  const calls = { apply: [] };
+  const base = {
+    readSite: async (siteId) => ({ config: { siteId }, pages: [], version: "site-2" }), readPage: async () => ({}), command: async () => ({ status: "conflict" }),
+    readRelease: async ({ siteId, locale }) => ({ siteId, locale, current, history: [] }),
+    prepareRelease: async (request) => ({ ...request, confirmationToken: "one-use", domain: "https://example.test", expiresAt: "2030-01-01T00:00:00.000Z", optimisticVersion: "live-deps-2", previous: current,
+      prepared: { ...current, releaseId: "en-2", version: "release-v2", label: "English 2" }, pages: [{ pageId: "home", title: "Home", path: "/en/", complete: true, reasons: [] }],
+      sharedResources: [{ id: "navigation", label: "Main navigation", kind: "navigation", complete: true, reasons: [] }], incompleteReasons: [], complete: true }),
+    applyRelease: async (request) => { calls.apply.push(structuredClone(request)); return { status: "applied", siteId: request.siteId, locale: request.locale, current: { ...current, releaseId: request.preparedReleaseId, version: request.preparedVersion, label: "English 2" } }; },
+    rollbackRelease: async () => ({ status: "conflict" })
+  };
+  const { wrapped } = setup({ localization: base });
+  assert.equal((await wrapped.localization.readRelease({ siteId: "demo", locale: "en" }, signal())).current.version, "release-v1");
+  await assert.rejects(() => wrapped.localization.readRelease({ siteId: "other", locale: "en" }, signal()), /プロジェクト外/);
+  const request = { siteId: "demo", locale: "en", action: "publish", expectedSiteVersion: "site-2", expectedCurrentVersion: "release-v1" };
+  const plan = await wrapped.localization.prepareRelease(request, signal());
+  const apply = { confirmationToken: plan.confirmationToken, siteId: "demo", locale: "en", expectedCurrentVersion: "release-v1", optimisticVersion: plan.optimisticVersion,
+    preparedReleaseId: plan.prepared.releaseId, preparedVersion: plan.prepared.version };
+  assert.equal((await wrapped.localization.applyRelease(apply, signal())).status, "applied"); assert.deepEqual(calls.apply[0], apply);
+  await assert.rejects(() => wrapped.localization.applyRelease({ ...apply, siteId: "other" }, signal()), /プロジェクト外/);
+  const evil = setup({ localization: { ...base, prepareRelease: async (value) => ({ ...(await base.prepareRelease(value)), domain: "https://evil.example.test" }) } }).wrapped;
+  await assert.rejects(() => evil.localization.prepareRelease(request, signal()), /mismatch/);
+  const malformed = setup({ localization: { ...base, prepareRelease: async (value) => { const plan = await base.prepareRelease(value); return { ...plan, pages: [...plan.pages, { ...plan.pages[0], pageId: "other" }] }; } } }).wrapped;
+  await assert.rejects(() => malformed.localization.prepareRelease(request, signal()), /duplicate locale release page/);
+  const duplicateResource = setup({ localization: { ...base, prepareRelease: async (value) => { const plan = await base.prepareRelease(value); return { ...plan, prepared: { ...plan.prepared, sharedResources: 2 }, sharedResources: [...plan.sharedResources, { ...plan.sharedResources[0] }] }; } } }).wrapped;
+  await assert.rejects(() => duplicateResource.localization.prepareRelease(request, signal()), /duplicate shared release resource/);
+  const inconsistent = setup({ localization: { ...base, prepareRelease: async (value) => { const plan = await base.prepareRelease(value); return { ...plan, pages: [{ ...plan.pages[0], complete: true, reasons: ["unfinished"] }] }; } } }).wrapped;
+  await assert.rejects(() => inconsistent.localization.prepareRelease(request, signal()), /completeness mismatch/);
+  const wrongApply = setup({ localization: { ...base, applyRelease: async () => ({ status: "applied", siteId: "demo", locale: "en", current: { ...current, releaseId: "wrong", version: "wrong" } }) } }).wrapped;
+  await assert.rejects(() => wrongApply.localization.applyRelease(apply, signal()), /mismatch/);
+  const foreignApply = setup({ localization: { ...base, applyRelease: async () => ({ status: "applied", siteId: "other", locale: "en", current: { ...current, releaseId: "en-2", version: "release-v2" } }) } }).wrapped;
+  await assert.rejects(() => foreignApply.localization.applyRelease(apply, signal()), /invalid/);
+  const unknownApply = setup({ localization: { ...base, applyRelease: async () => ({ status: "maybe" }) } }).wrapped;
+  await assert.rejects(() => unknownApply.localization.applyRelease(apply, signal()), /invalid/);
+});
 test("page changes and site settings are limited to the project site and re-validated", async () => {
   const calls = { pageChanges: [], applies: [], settings: [], settingsSaves: [] };
   const { wrapped } = setup(pageHostMethods(calls));
