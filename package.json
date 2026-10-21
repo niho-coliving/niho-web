@@ -71,6 +71,10 @@
       "types": "./dist/site-analytics.d.ts",
       "import": "./dist/site-analytics.js"
     },
+    "./site-apps": {
+      "types": "./dist/site-apps.d.ts",
+      "import": "./dist/site-apps.js"
+    },
     "./analytics": {
       "types": "./dist/analytics.d.ts",
       "import": "./dist/analytics.js"

@@ -39,7 +39,7 @@ import { documentLocaleFor, localizationLocaleFor, validateLocalizedDocumentSave
 
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
-type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
+type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; hasSavedDraft?: boolean | undefined; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
 type Inspector = "element" | "page" | "site" | "localization";
 type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorTarget } | { type: "reload" }
   | { type: "inspector"; inspector: Inspector } | { type: "node"; path: NodePath; canvasId?: string }
@@ -47,6 +47,13 @@ type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorT
 const message = (error: unknown) => error instanceof DocumentValidationError ? publicInfoMessage(error) ??
   (/nesting|parent|void element/.test(error.message) ? "この場所には要素を配置できません。別のセクションかボックスを選んでください。" : "文書のルールに合いません。URL・単位・親要素を確認してください。") :
   error instanceof Error ? error.message : "入力を適用できません。";
+const releasePreparationNotice = (error: unknown): string => {
+  const status = error && typeof error === "object" && "status" in error ? error.status : null;
+  if (status === 409) return "公開する下書きの状態が変わりました。編集内容を保持しています。最新の文書を確認してから再試行してください。";
+  if (status === 401) return "認証を確認してから、公開前の確認をやり直してください。編集内容は保持しています。";
+  if (status === 403) return "公開する権限がありません。管理者に確認してください。編集内容は保持しています。";
+  return "公開先と差分を確認できませんでした。接続を確認して再試行してください。編集内容は保持しています。";
+};
 const label = (node: PageNode, blocks: EditorBlockRegistry, names?: ReadonlyMap<string, string>) => node.type === "text" ? `文字: ${node.text.slice(0, 24) || "（空）"}` : node.type === "component" ? `${blocks[node.block]?.label ?? node.block} · ${node.id}` : node.type === "instance" ? names?.get(node.component) ?? "共通部品" : `${node.tag} · ${node.id}`;
 const partGlyph = (node: PageNode | undefined) => node?.type === "instance" && <span className="e-part-glyph" aria-hidden="true">◇ </span>;
 const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
@@ -54,8 +61,9 @@ const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
 function sessionFrom(snapshot: EditorSnapshot, target: EditorTarget, blocks: EditorBlockRegistry, components?: ComponentLibrary): Session {
   const document = parsePageDocument(snapshot.document, blocks, components ? { components } : {});
   if (!sameTarget(document, target) || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("読込対象が一致しません。");
+  if (snapshot.hasSavedDraft !== undefined && typeof snapshot.hasSavedDraft !== "boolean") throw new Error("公開状態が正しくありません。");
   const readOnly = parseEditorReadOnly(snapshot.readOnly);
-  return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [], ...(readOnly ? { readOnly } : {}) };
+  return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [], ...(snapshot.hasSavedDraft === undefined ? {} : { hasSavedDraft: snapshot.hasSavedDraft }), ...(readOnly ? { readOnly } : {}) };
 }
 
 class PreviewBoundary extends Component<{ document: PageDocument; children: ReactNode }, { failed: boolean }> {
@@ -567,7 +575,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
       const latest = sessionRef.current;
       if (latest && sameTarget(latest.target, current.target) && latest.version === current.version) {
         const acknowledged = acceptSavedRevision(latest.history, document, result.revision);
-        replace({ ...latest, ...acknowledged, version: result.version });
+        replace({ ...latest, ...acknowledged, version: result.version, hasSavedDraft: true });
       }
       if (sameSession()) { setProblem(null); setSavedAt(new Date()); setConflictView(0); }
       if (localized) localization.reloadPage();
@@ -587,7 +595,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   }
   async function prepare(actionType: "publish" | "rollback", revision = Number(rollbackRevision)) {
     const current = sessionRef.current, site = sites.find((site) => site.id === current?.target.siteId);
-    if (!current || current.readOnly || !site || action.current || blocked || dirty || libraryDirty || masterId || hasInput || targetMode || !localizationReady || (actionType === "rollback" && !current.releases.some((release) => release.revision === revision))) return;
+    if (!current || current.readOnly || !site || action.current || blocked || dirty || libraryDirty || masterId || hasInput || targetMode || !localizationReady || current.hasSavedDraft === false || (actionType === "rollback" && !current.releases.some((release) => release.revision === revision))) return;
     const controller = new AbortController(); action.current = controller; setBusy("公開差分を取得中"); setNotice("");
     // 確認 token を、表示している部品ライブラリの version にも結び付ける。
     const input: EditorReleaseRequest = { target: current.target, expectedVersion: current.version, action: actionType,
@@ -596,12 +604,12 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
       const result = await adapter.prepareRelease(input, controller.signal);
       if (controller.signal.aborted) return;
       const reviewed = structuredClone(result); validateReleasePlan(reviewed, input, site); setPlan(reviewed); setConfirmed(false);
-    } catch { if (!controller.signal.aborted) setNotice("対象ドメインと差分を確認できませんでした。保存状態と権限を確認して再試行してください。"); }
+    } catch (error) { if (!controller.signal.aborted) setNotice(releasePreparationNotice(error)); }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
   }
   async function release() {
     const current = sessionRef.current;
-    if (!current || current.readOnly || !plan || !confirmed || action.current || busy || dirty || libraryDirty || hasInput || targetMode || !localizationReady) return;
+    if (!current || current.readOnly || current.hasSavedDraft === false || !plan || !confirmed || action.current || busy || dirty || libraryDirty || hasInput || targetMode || !localizationReady) return;
     const controller = new AbortController(); action.current = controller; setBusy("公開を反映中");
     try {
       const result = await adapter.release(plan, controller.signal);
@@ -714,7 +722,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     }
     const rebase = (document: PageDocument): PageDocument => ({ ...document, revision: latest.revision });
     const history = { past: current.history.past.map(rebase), present: rebase(current.history.present), future: current.history.future.map(rebase) };
-    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
+    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), hasSavedDraft: snapshot.hasSavedDraft, locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
     setConflictView(0); setProblem(null);
     if (fingerprint(history.present) === fingerprint(latest)) { setNotice("最新の保存内容と同じ内容です。"); return; }
     void save("manual");
@@ -998,7 +1006,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   const recoveryStale = !!recoveryState.offer && !!session && recoveryState.offer.baseVersion !== session.version;
   const viewed = versions.viewing?.entry, viewedRelease = viewed && (viewed.kind === "publish" || viewed.kind === "rollback") && session?.releases.some((release) => release.revision === viewed.revision) ? viewed.revision : undefined;
   const activeHistory = masterId ? library?.history : session?.history;
-  const publishHold = libraryDirty ? "部品の変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : undefined;
+  const publishHold = libraryDirty ? "部品の変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : session?.hasSavedDraft === false ? "文字や画像を編集し、下書きを保存してから公開・復元を確認してください。" : undefined;
   const rawSelected = document && selection ? nodeAt(document, selection) : undefined;
   const rawSelectedOwner = document && rawSelected?.type === "text" && selection && selection.length > 1 ? nodeAt(document, selection.slice(0, -1)) : rawSelected;
   const canvasSelectedNodeId = selectedCanvasNode ?? (rawSelectedOwner && rawSelectedOwner.type !== "text" ? rawSelectedOwner.id : undefined);
@@ -1019,7 +1027,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
       {targetMode ? localePublication ? <button className="e-primary" title={session?.readOnly?.reason ?? "この言語の全ページと共通内容をまとめて確認します"} onClick={() => void prepareLocaleRelease("publish")}
         disabled={!localeRelease || localeReleaseLoading || !session || !!session.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>言語全体の公開確認</button>
         : <button className="e-primary" title="このサイトでは訳文の公開を利用できません。管理者に確認してください。" disabled>公開前の確認</button>
-        : <button className="e-primary" title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={!session || !!session.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
+        : <button className="e-primary" title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={!session || !!session.readOnly || session.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
       {publishHold && !targetMode && <small className="e-hold">{publishHold}</small>}
       {targetMode && !localePublication && <small className="e-hold">このサイトでは訳文の公開を利用できません。管理者に確認してください。</small>}
     </header>
@@ -1076,16 +1084,16 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
           {!targetMode && (availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">{components ? "このサイトの業務ブロックはまだ登録されていません。" : "このサイトの部品はまだ登録されていません。"}</p>)}</section>
         {targetMode ? <details className="e-history"><summary>以前の言語全体版へ戻す</summary>{localePublication ? <><label className="e-field"><span>戻す言語全体版</span><select aria-label="戻す言語全体版" value={localeRollbackId} disabled={blocked || localeReleaseLoading || !!session?.readOnly} onChange={(event) => setLocaleRollbackId(event.target.value)}><option value="">版を選択</option>{localeRelease?.history.map((release) => <option key={release.releaseId} value={release.releaseId}>{release.label}（{release.pages}ページ）</option>)}</select></label>
           <button disabled={!localeRollbackId || !!session?.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady} onClick={() => void prepareLocaleRelease("rollback")}>言語全体の復元内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "ページ単位ではなく、当時のページ・共通部品・ナビ・スタイルをまとめて復元します。現在非公開のページは復元されません。"}</small></> : <small className="e-help">このサイトでは訳文の復元を利用できません。管理者に確認してください。</small>}</details>
-          : <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked || !!session?.readOnly} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || !!session?.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "未保存の変更がある間は実行できません。"}</small>{publishHold && <small className="e-help">{publishHold}</small>}</details>}
+          : <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked || !!session?.readOnly} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={!rollbackRevision || !!session?.readOnly || session?.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "未保存の変更がある間は実行できません。"}</small>{publishHold && <small className="e-help">{publishHold}</small>}</details>}
       </div>
     </aside>
     <section className="e-canvas" aria-label="ライブプレビュー">{masterComponent && <ComponentBanner name={masterComponent.name} count={usageSummary?.get(masterComponent.id)?.rows.length} back={leaveComponent} />}<div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}{document && <button type="button" className="e-small e-motion-toggle" aria-pressed={motion || preview} disabled={preview} title={preview ? "プレビュー中は動きを再生します" : "登場や状態の変化の動きを再生します"}
         onClick={() => { setMotion((value) => !value); if (!motion) setReplay((value) => value + 1); }}>動きを再生</button>}</div>
       {recoveryState.offer && session && !session.readOnly && <RecoveryBanner offer={recoveryState.offer} stale={recoveryStale} disabled={!localizationReady || historyMode || (blocked && busy !== "保存中") || !!masterId} compare={() => setRecoveryCompare(true)}
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
-      <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
-        rollback={session?.readOnly || viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && session && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+      <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : session?.hasSavedDraft === false ? publishHold : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
+        rollback={session?.readOnly || session?.hasSavedDraft === false || viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
+{document && session && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
         motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ">{versions.open ? <VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : session.readOnly ? session.readOnly.reason : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /> : <><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => requestInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => requestInspector("page")}>{masterId ? "部品" : "ページ"}</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => requestInspector("site")}>サイト</button>{targetMode && <button type="button" role="tab" aria-selected={inspector === "localization"} onClick={() => requestInspector("localization")}>翻訳</button>}</div>
       {inspector === "site" && <section className="e-inspector-content">{targetMode ? <p className="e-help">サイト共通設定とデザインは原文側で編集してください。</p> : <SiteSettingsPanel site={site} state={siteSettings} />}</section>}

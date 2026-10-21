@@ -113,7 +113,7 @@ HTTP 409 は adapter で `{ status: 'conflict' }` へ変換します。`status: 
 
 ### サイト全体の共通表示を差し込む
 
-`PageEditor` の任意prop `previewComponent` は `EditorCanvasPreviewProps` を受けるReactコンポーネントです。展開済みの現在の文書（編集中の訳と未保存の変更を含む）、幅、breakpoint、`mode`（edit / preview / history）、`readOnly`、編集の基準版 `baseVersion`、履歴の選択版 `historyRevision`、従来の描画結果 `children` を、既存Canvasと同じiframe・error boundary内で受け取ります。コンポーネントの参照は安定させて渡してください。React contextも引き継ぎ、iframeの言語は表示中の文書のlocaleへ合わせます。
+`PageEditor` の任意prop `previewComponent` は `EditorCanvasPreviewProps` を受けるReactコンポーネントです。展開済みの現在の文書（編集中の訳と未保存の変更を含む）、幅、breakpoint、`mode`（edit / preview / history）、`readOnly`、編集の基準版 `baseVersion`、履歴の選択版 `historyRevision`、従来の描画結果 `children` を、既存Canvasと同じiframe・error boundary内で受け取ります。共有部品の編集中は合成文書と部品ライブラリの版を渡し、それ以外はページ下書きの版を渡します。コンポーネントの参照は安定させて渡してください。React contextも引き継ぎ、iframeの言語は表示中の文書のlocaleへ合わせます。
 
 コード管理ページではホスト所有の版固定表示部品を返し、通常の編集文書は `children` をそのまま返せます。未指定なら既存描画を維持します。渡された文書を直接変更せず、保存・翻訳・公開・予約などの副作用を起こさないでください。プレビューと履歴の読み取り専用状態、フォーム送信・リンク移動の抑制は従来のCanvasが扱います。
 
@@ -206,7 +206,7 @@ const blocks = {
 
 ## 公開 / rollback の二段階確認
 
-公開操作は保存済みの文書だけに許可します。prepareRelease は現在の公開内容と保存済み下書きの差分をホスト側で計算し、人が理解できる `path/before/after` の文字列配列として返してください。rollback の場合は指定した公開版を反映した結果との差分にします。UI は plan をコピーして保持します。
+公開操作は保存済みの文書だけに許可します。ホストは初回など保存済み下書きがない snapshot に `hasSavedDraft: false` を返すと、公開前確認を無効化して下書き保存を案内できます。省略した既存ホストの挙動は変わりません。保存成功後はエディターがこの状態を true に進め、再読込時はホストの現在値を使います。ホストは公開 API 側でも保存済み下書きを再確認してください。prepareRelease は現在の公開内容と保存済み下書きの差分をホスト側で計算し、人が理解できる `path/before/after` の文字列配列として返してください。rollback の場合は指定した公開版を反映した結果との差分にします。UI は plan をコピーして保持します。
 
 plan の target、expectedVersion、action、rollback revision が要求と一致し、domain が listSites の許可済み HTTPS origin に含まれることを確認してからダイアログを開きます。origin は `https://example.com` の形式で、パス・資格情報・末尾 `/` を含めません。対象ドメインと差分を表示し、明示チェック後だけ実行ボタンを有効にします。確認中は背後の編集を無効化します。
 

@@ -118,6 +118,8 @@ export type EditorSnapshot = {
   document: unknown;
   /** ホストが発行する opaque な楽観ロック値。 */
   version: string;
+  /** false の場合、初回など保存済み下書きがなく公開確認を開始できない。省略時は従来の動作。 */
+  hasSavedDraft?: boolean;
   locks?: readonly EditorLock[];
   releases?: readonly { revision: number; label: string }[];
   /** 省略時は従来どおり編集可能。ブラウザ退避や履歴からは復元せず、毎回ホストの現在値を使う。 */
@@ -237,7 +239,7 @@ export type EditorBreakpoint = { minWidth: number; label: string };
 /** 同じiframeへ表示する、ホスト所有の同期Reactプレビュー。文書を直接変更しない。 */
 export type EditorCanvasPreviewProps = {
   document: PageDocument;
-  /** 未保存編集の基準となる、読み込み済み下書きの楽観lock版。 */
+  /** 未保存編集の基準版。共有部品の編集中は部品ライブラリの版、それ以外はページ下書きの版。 */
   baseVersion: string;
   /** 履歴表示で選択した版。ホストが同じ版の関連表示資源を選ぶために使う。 */
   historyRevision?: EditorRevisionEntry;
