@@ -79,6 +79,10 @@
       "types": "./dist/analytics.d.ts",
       "import": "./dist/analytics.js"
     },
+    "./analytics-data": {
+      "types": "./dist/analytics-data.d.ts",
+      "import": "./dist/analytics-data.js"
+    },
     "./localization": {
       "types": "./dist/localization.d.ts",
       "import": "./dist/localization.js"
