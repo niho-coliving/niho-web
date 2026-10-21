@@ -8,8 +8,8 @@ import { StyleLibrary, type StyleLibraryProps } from "./editor-style-library.js"
 import type { SiteSettingsState } from "./editor-pages.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorPage } from "./editor-types.js";
 import type { ComponentLibrary, PageDocument } from "./types.js";
-import { detachRemovedSiteStyles, parseSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
-import { textStyleUsage, tokenUsage } from "./style-model.js";
+import { detachRemovedSiteStyles, parseSiteStyles, type SiteStyles } from "./site-styles.js";
+import { affectedBySiteStyles } from "./style-model.js";
 
 type Promotion = { kind: "token" | "textStyle"; name: string; styles: SiteStyles; document: PageDocument; collisions: string[] };
 type Props = StyleLibraryProps & {
@@ -19,21 +19,6 @@ type Props = StyleLibraryProps & {
 };
 type Impact = { key: string; affected: string[]; failed: boolean };
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-
-function usedChanges(document: PageDocument, before: SiteStyles, after: SiteStyles): boolean {
-  const detached = detachRemovedSiteStyles(document, before, after);
-  if (!equal(detached.body, document.body) || !equal(detached.textStyles, document.textStyles)) return true;
-  const previous = resolvePageStyles(document, before), next = resolvePageStyles(detached, after);
-  for (const name of new Set([...Object.keys(previous.tokens), ...Object.keys(next.tokens)])) {
-    if (equal(previous.tokens[name], next.tokens[name])) continue;
-    const usage = tokenUsage(previous, name);
-    if (usage.nodes.length || usage.textStyles.some((entry) => textStyleUsage(previous, entry.name).length)) return true;
-  }
-  for (const name of new Set([...Object.keys(previous.textStyles ?? {}), ...Object.keys(next.textStyles ?? {})])) {
-    if (!equal(previous.textStyles?.[name], next.textStyles?.[name]) && textStyleUsage(previous, name).length) return true;
-  }
-  return false;
-}
 
 /** サイトとページの所有権・変更の影響・移行の確認を共通ライブラリの上に表示する。 */
 export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, allowSite, state, rawDocument, pageDirty, migrate, ...props }: Props) {
@@ -53,7 +38,7 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
       if (!sameTarget(document, page)) throw new Error("page mismatch");
       const candidate = detachRemovedSiteStyles(document, before, after);
       parsePageDocument(candidate, blocks, { ...(components ? { components } : {}), siteStyles: after });
-      return usedChanges(document, before, after) ? `${page.title} · ${page.locale}` : null;
+      return affectedBySiteStyles(document, before, after, components) ? `${page.title} · ${page.locale}` : null;
     })).then((affected) => { if (!controller.signal.aborted) setImpact({ key: impactKey, affected: affected.filter((name): name is string => name !== null), failed: false }); })
       .catch(() => { if (!controller.signal.aborted) setImpact({ key: impactKey, affected: [], failed: true }); });
     return () => controller.abort();

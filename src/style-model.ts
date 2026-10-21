@@ -1,6 +1,9 @@
+import { expandDocument, instancesOf } from "./component-expand.js";
 import { inheritedStyle, walkNodes, type InheritedStyle, type NodePath } from "./editor-model.js";
 import type { EditorBreakpoint } from "./editor-types.js";
-import type { ComponentNode, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, StateName, StyleDeclarations, StyleProperty, StyleValue, TextStyleProperty } from "./types.js";
+import { detachRemovedSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
+import type { ComponentLibrary, ComponentNode, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, StateName, StyleDeclarations, StyleProperty, StyleValue, TextStyleProperty } from "./types.js";
+import { fail } from "./validation-utils.js";
 
 /** 編集 UI の段の計算・使用状況・表示用の整形。React を使わない純粋関数。 */
 export type TierKey = "base" | number;
@@ -93,6 +96,28 @@ export function rangesForTiers(tiers: readonly EditorTier[], hiddenKeys: readonl
 export const hiddenAt = (node: { style?: NodeStyle | undefined }, width: number) => (node.style?.hidden ?? []).some((range) => range.minWidth <= width && (range.maxWidth === undefined || width <= range.maxWidth));
 export function textStyleUsage(document: PageDocument, name: string): { nodeId: string; path: NodePath }[] {
   return walkNodes(document).flatMap(({ node, path }) => node.type !== "text" && node.style?.textStyle === name ? [{ nodeId: node.id, path }] : []);
+}
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * サイト共通スタイルを before から after へ変えると、検証済みの文書の参照または見た目が変わるか。
+ * インスタンスは公開時と同じく部品を展開して比べ（tokens はページ > サイト共通 > ライブラリ）、部品の中だけで使う値の変化も含める。
+ * library はインスタンスを含まない文書でだけ省略できる。
+ */
+export function affectedBySiteStyles(document: PageDocument, before: SiteStyles, after: SiteStyles, library?: ComponentLibrary): boolean {
+  if (!library && instancesOf(document.body).length) fail("$.body", "component instance requires a component library");
+  const detached = detachRemovedSiteStyles(document, before, after);
+  if (!same(detached.body, document.body) || !same(detached.textStyles, document.textStyles)) return true;
+  const resolve = (page: PageDocument, styles: SiteStyles) => { const resolved = resolvePageStyles(page, styles); return library ? expandDocument(resolved, library).document : resolved; };
+  const previous = resolve(document, before), next = resolve(detached, after);
+  for (const name of new Set([...Object.keys(previous.tokens), ...Object.keys(next.tokens)])) {
+    if (same(previous.tokens[name], next.tokens[name])) continue;
+    const usage = tokenUsage(previous, name);
+    if (usage.nodes.length || usage.textStyles.some((entry) => textStyleUsage(previous, entry.name).length)) return true;
+  }
+  for (const name of new Set([...Object.keys(previous.textStyles ?? {}), ...Object.keys(next.textStyles ?? {})])) {
+    if (!same(previous.textStyles?.[name], next.textStyles?.[name]) && textStyleUsage(previous, name).length) return true;
+  }
+  return false;
 }
 export function nextName(existing: Iterable<string>, prefix: string): string {
   const used = new Set(existing);
