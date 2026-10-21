@@ -133,6 +133,35 @@ test("rendered head escapes every value, omits JSON-LD and only adds the Twitter
     assert.throws(() => renderPageHead(metadata), DocumentValidationError);
 });
 
+test("asset social covers use the host-resolved URL and are omitted when the host does not resolve them", () => {
+  const cover = { asset: { provider: "uploads", id: "cover" }, alt: "海辺のリビング" }, base = { domain: "https://example.test", path: "/about" };
+  const assets = { "uploads:cover": { src: "/media/cover.jpg", width: 1200, height: 630 }, "cms:site": { src: "https://cdn.example.test/site.jpg" } };
+  const resolved = resolvePageMetadata({ document: { ...document, meta: { ogImage: cover } }, ...base, assets });
+  assert.deepEqual(resolved.openGraph.image, { url: "https://example.test/media/cover.jpg", alt: "海辺のリビング", width: 1200, height: 630 });
+  const head = renderPageHead(resolved);
+  assert.ok(head.includes('<meta property="og:image" content="https://example.test/media/cover.jpg">'));
+  assert.ok(head.includes('<meta property="og:image:width" content="1200">') && head.includes('<meta property="og:image:height" content="630">'));
+  assert.ok(head.includes('<meta name="twitter:card" content="summary_large_image">'));
+  // 解決できない素材は og:image も Twitter card も出さない。
+  for (const missing of [undefined, {}, { "uploads:other": { src: "/other.jpg" } }]) {
+    const metadata = resolvePageMetadata({ document: { ...document, meta: { ogImage: cover } }, ...base, ...(missing ? { assets: missing } : {}) });
+    assert.equal(metadata.openGraph.image, undefined);
+    const html = renderPageHead(metadata);
+    assert.ok(!html.includes("og:image") && !html.includes("twitter:card"), JSON.stringify(missing));
+  }
+  // ページの素材が解決できなければサイトの画像で補う。サイトの素材も解決できた場合だけ出す。
+  assert.equal(resolvePageMetadata({ document: { ...document, meta: { ogImage: cover } }, site, ...base, assets: {} }).openGraph.image.url, "https://example.test/og.jpg");
+  const siteAsset = { ...site, ogImage: { asset: { provider: "cms", id: "site" }, alt: "サイト" } };
+  assert.deepEqual(resolvePageMetadata({ document, site: siteAsset, ...base, assets }).openGraph.image, { url: "https://cdn.example.test/site.jpg", alt: "サイト" });
+  assert.equal(resolvePageMetadata({ document, site: siteAsset, ...base }).openGraph.image, undefined);
+  assert.deepEqual(parseSiteSettings(siteAsset).ogImage, { asset: { provider: "cms", id: "site" }, alt: "サイト" });
+  // 解決済み map もホストの値として検証する。
+  for (const invalid of [{ "uploads:cover": { src: "javascript:alert(1)" } }, { "uploads:cover": { src: "/a.jpg", width: 0 } }, { "bad key": { src: "/a.jpg" } }, []])
+    assert.throws(() => resolvePageMetadata({ document: { ...document, meta: { ogImage: cover } }, ...base, assets: invalid }), DocumentValidationError, JSON.stringify(invalid));
+  for (const image of [{ ...resolved.openGraph.image, width: 0 }, { ...resolved.openGraph.image, height: "630" }])
+    assert.throws(() => renderPageHead({ ...resolved, openGraph: { ...resolved.openGraph, image } }), DocumentValidationError);
+});
+
 test("sitemap includes only public, published, indexable normal pages with a path", () => {
   const base = page("about", "/about");
   assert.equal(shouldIncludeInSitemap({ page: base }), true);

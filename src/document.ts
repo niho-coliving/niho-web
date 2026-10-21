@@ -1,3 +1,4 @@
+import { mergeSiteStyles, parseSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type {
   BlockContract, BlockContracts, BlockSlot, ComponentLibrary, ComponentPropField, DesignToken, ElementAttributes, ElementTag, NodeStyle, PageDocument, PageImage, PageMeta, PageNode, PropRule, PublicPropValue, TextStyle
 } from "./types.js";
@@ -80,10 +81,13 @@ export const metaLimits = { descriptionLength: 500, altLength: 300, structuredDa
 function assetUrl(value: unknown, path: string): string {
   return publicImageUrl(value, path);
 }
+/** src（URL）か asset（素材参照）のどちらか一方を持つ。 */
 export function parsePageImage(input: unknown, path: string): PageImage {
   const source = record(input, path);
-  keys(source, ["src", "alt"], path);
-  return { src: assetUrl(source.src, `${path}.src`), alt: line(source.alt, `${path}.alt`, metaLimits.altLength, true) };
+  keys(source, ["src", "asset", "alt"], path);
+  if ((source.src === undefined) === (source.asset === undefined)) fail(path, "image uses either src or asset");
+  const alt = line(source.alt, `${path}.alt`, metaLimits.altLength, true);
+  return source.asset === undefined ? { src: assetUrl(source.src, `${path}.src`), alt } : { asset: parseAssetReference(source.asset, `${path}.asset`), alt };
 }
 /** 公開メタ情報を検証して新しいオブジェクトを返す。false・空配列は保存しない。 */
 export function parsePageMeta(input: unknown, path = "$.meta"): PageMeta {
@@ -255,6 +259,8 @@ export function parseNode(raw: unknown, at: string, context: NodeContext, depth 
 export type PageParseOptions = {
   /** parseComponentLibrary で検証済みの同じサイトのライブラリ。インスタンスを含む文書の検証に必須。 */
   components?: ComponentLibrary;
+  /** 同じサイトの設定。継承値は返すページ JSON に混ぜない。 */
+  siteStyles?: SiteStyles;
 };
 /**
  * 外部 JSON を検証し、未知フィールドを捨てずに拒否して新しい文書を返す。
@@ -272,15 +278,17 @@ export function parsePageDocument(input: unknown, blocks: BlockContracts = {}, o
   if (!title.trim()) fail("$.title", "title is required");
   const meta = source.meta === undefined ? {} : parsePageMeta(source.meta, "$.meta");
   const tokens = parseTokens(source.tokens, "$.tokens");
-  const textStyles = source.textStyles === undefined ? undefined : parseTextStyles(source.textStyles, tokens, "$.textStyles");
+  const effectiveTokens = { ...parseSiteStyles(options.siteStyles ?? {}).tokens, ...tokens };
+  const textStyles = source.textStyles === undefined ? undefined : parseTextStyles(source.textStyles, effectiveTokens, "$.textStyles");
+  const effective = mergeSiteStyles({ tokens, ...(textStyles ? { textStyles } : {}) }, options.siteStyles);
   const context: NodeContext = {
-    blocks, tokens, ...(textStyles ? { textStyles } : {}), instanceTokens: library ? { ...library.tokens, ...tokens } : tokens, components: library && componentShapes(library),
+    blocks, ...effective, instanceTokens: library ? { ...library.tokens, ...effective.tokens } : effective.tokens, components: library && componentShapes(library),
     ids: new Set(), htmlIds: new Set(), usage: { nodes: 0, text: 0 }
   };
   const document: PageDocument = { schemaVersion: 1, siteId, pageId, locale, revision: source.revision, title, ...(Object.keys(meta).length ? { meta } : {}), tokens, ...(textStyles ? { textStyles } : {}), body: parseNodes(source.body, "$.body", context) };
   if (library && instancesOf(document.body).length) {
     try {
-      parsePageDocument(expandDocument(document, library).document, blocks);
+      parsePageDocument(expandDocument(resolvePageStyles(document, options.siteStyles), library).document, blocks, options.siteStyles ? { siteStyles: options.siteStyles } : {});
     } catch (error) {
       if (error instanceof DocumentValidationError) throw new DocumentValidationError(`$.resolved${error.path.slice(1)}`, error.reason);
       throw error;

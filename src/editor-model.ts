@@ -1,3 +1,4 @@
+import { resolvePageStyles, retainPageStyles, type SiteStyles } from "./site-styles.js";
 import { detachInstance } from "./component-model.js";
 import { parsePageDocument } from "./document.js";
 import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
@@ -197,8 +198,8 @@ function assertStyleProperties(node: ElementNode | ComponentNode | InstanceNode,
   if (allowed && properties.some((property) => !(allowed as readonly string[]).includes(property))) throw new Error("このブロックでは変更できない見た目です。");
 }
 /** components はインスタンスを含む文書の検証に使う、同じサイトの検証済みライブラリ。 */
-export function editDocument(document: PageDocument, operation: EditorOperation, blocks: EditorBlockRegistry = {}, locks: readonly EditorLock[] = [], components?: ComponentLibrary): PageDocument {
-  const draft = structuredClone(document), allLocks = effectiveLocks(document, locks, blocks);
+export function editDocument(document: PageDocument, operation: EditorOperation, blocks: EditorBlockRegistry = {}, locks: readonly EditorLock[] = [], components?: ComponentLibrary, siteStyles?: SiteStyles): PageDocument {
+  const draft = structuredClone(resolvePageStyles(document, siteStyles)), allLocks = effectiveLocks(document, locks, blocks);
   const parentChildren = (path: NodePath): PageNode[] => siblingsAt(draft, path);
   const targetChildren = (id: string | null): PageNode[] => {
     if (id === null) return draft.body;
@@ -244,6 +245,8 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
         if (declarations?.backgroundImage && same(declarations.backgroundImage.asset)) { declarations.backgroundImage = { asset: structuredClone(to) }; count++; }
       }
     }
+    const cover = draft.meta?.ogImage;
+    if (cover && "asset" in cover && same(cover.asset)) { cover.asset = structuredClone(to); count++; }
     if (!count) throw new Error("置き換える素材がこのページにありません。");
   } else if (operation.type === "token") {
     styleName(operation.name);
@@ -349,7 +352,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
         : operation.type === "resize" ? { width: Math.round(operation.width), height: Math.round(operation.height) } : operation.values;
       const until = operation.type === "styleRange" ? operation.until : operation.type === "resize" ? operation.until : undefined;
       assertStyleProperties(node, Object.keys(values), blocks);
-      if (until !== undefined) preserveRange(document, nodeAt(document, operation.path) as ElementNode | ComponentNode | InstanceNode, node, operation.breakpoint, until, values);
+      if (until !== undefined) preserveRange(resolvePageStyles(document, siteStyles), nodeAt(document, operation.path) as ElementNode | ComponentNode | InstanceNode, node, operation.breakpoint, until, values);
       const declarations = declarationsAt(node, operation.breakpoint);
       for (const [property, value] of Object.entries(values) as [StyleProperty, StyleValue | undefined][]) if (value === undefined) delete declarations[property]; else declarations[property] = value;
       pruneResponsive(node);
@@ -399,9 +402,13 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       destination.splice(operation.index, 0, node);
     }
   }
-  const result = parsePageDocument(draft, blocks, components ? { components } : {});
-  assertLocks(document, result, allLocks);
-  return result;
+  const result = resolvePageStyles(parsePageDocument(draft, blocks, { ...(components ? { components } : {}), ...(siteStyles ? { siteStyles } : {}) }), siteStyles);
+  assertLocks(resolvePageStyles(document, siteStyles), result, allLocks);
+  const ownership = operation.type === "restore" ? operation.document : operation.type === "token" && operation.token ? { ...document, tokens: { ...document.tokens, [operation.name]: operation.token } }
+    : operation.type === "textStyle" && operation.style ? { ...document, textStyles: { ...document.textStyles, [operation.name]: operation.style } } : { ...document };
+  if (operation.type === "token" && !operation.token) { ownership.tokens = { ...ownership.tokens }; delete ownership.tokens[operation.name]; }
+  if (operation.type === "textStyle" && !operation.style && ownership.textStyles) { ownership.textStyles = { ...ownership.textStyles }; delete ownership.textStyles[operation.name]; }
+  return siteStyles ? parsePageDocument(retainPageStyles(result, ownership, siteStyles), blocks, { ...(components ? { components } : {}), siteStyles }) : result;
 }
 export function commitHistory(history: EditorHistory, document: PageDocument): EditorHistory {
   if (fingerprint(document) === fingerprint(history.present)) return history;
@@ -416,11 +423,11 @@ export function acceptSavedRevision(history: EditorHistory, submitted: PageDocum
     saved: fingerprint(rebase(submitted))
   };
 }
-export function travelHistory(history: EditorHistory, direction: "undo" | "redo", blocks: EditorBlockRegistry, locks: readonly EditorLock[], components?: ComponentLibrary): EditorHistory {
+export function travelHistory(history: EditorHistory, direction: "undo" | "redo", blocks: EditorBlockRegistry, locks: readonly EditorLock[], components?: ComponentLibrary, siteStyles?: SiteStyles): EditorHistory {
   const target = direction === "undo" ? history.past.at(-1) : history.future[0];
   if (!target) return history;
-  parsePageDocument(target, blocks, components ? { components } : {});
-  assertLocks(history.present, target, effectiveLocks(history.present, locks, blocks));
+  parsePageDocument(target, blocks, { ...(components ? { components } : {}), ...(siteStyles ? { siteStyles } : {}) });
+  assertLocks(resolvePageStyles(history.present, siteStyles), resolvePageStyles(target, siteStyles), effectiveLocks(history.present, locks, blocks));
   return direction === "undo" ? { past: history.past.slice(0, -1), present: target, future: [history.present, ...history.future] }
     : { past: [...history.past, history.present], present: target, future: history.future.slice(1) };
 }

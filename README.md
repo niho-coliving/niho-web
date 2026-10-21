@@ -37,6 +37,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | `@niho/web/project-editor` | 既存 `EditorAdapter` をProjectの唯一のSiteへ限定するwrapper |
 | `@niho/web/pages` | ページのパス検証・ツリー・内部リンク影響、公開メタ情報（title / description / OG画像 / robots / canonical）の解決と `<head>` 出力。React不要 |
 | `@niho/web/site-analytics` | GA4 / Search Console の接続状態・所有確認・変更計画の型と境界検証。React不要 |
+| `@niho/web/site-apps` | サイト設定の `SiteApps`。計測タグ・所有権確認・レポート接続を分け、変更確認・再試行・解除を提供（[接続方法](docs/site-apps.md)） |
 | `@niho/web/assets` | 素材参照の列挙・解決済み素材 map の検証、素材ライブラリ adapter の型と応答検証。React不要 |
 | `@niho/web/history` | 文書の差分（`diffDocuments`）、版履歴の項目の検証、端末内の緊急復元ストア（ページ・サイトごとの共通部品）。React不要 |
 | `@niho/web/analytics` | GA4 / Search Console を分けて示す読取専用画面、型付きadapter、応答検証 |
@@ -212,3 +213,17 @@ npm pack --dry-run
 ```
 
 テストは文書検証、拒否すべき URL / 属性 / CSS、レイアウト、スコープ分離、ブロック契約、React SSR と HTML helper の出力を確認します。public GitHub Actions は secrets・外部 API・非公開リポジトリに依存せず同じ確認を実行します。
+
+## サイト共通のカラー・文字スタイル
+
+`SiteSettings` に任意の `tokens` / `textStyles` を持たせると、サイト全ページで同じスタイルを参照できます。ページの同名定義は優先され、既存のページ JSON と `schemaVersion: 1` はそのまま使えます。
+
+```tsx
+const settings = parseSiteSettings(siteSettingsJson);
+const page = parsePageDocument(pageJson, blocks, { siteStyles: settings });
+<PageRenderer document={page} blocks={blocks} siteStyles={settings} />;
+// Astro / SSR
+renderPageToHtml(page, blocks, { siteStyles: settings });
+```
+
+`parseSiteSettings` は `@niho/web/pages`、`resolvePageStyles` / `detachRemovedSiteStyles` は `@niho/web/core` から利用できます。共通スタイルの保存は既存の `readSiteSettings` / `saveSiteSettings` に接続します。設定を省略したホストはページのスタイルだけで動作します。参照の厳格検証・scope・移行確認・削除時の原子的な切り離し・公開 snapshot の詳細は [文書契約](docs/document-contract.md#サイト共通スタイル) と [サイト設定の契約](docs/page-contract.md#サイト共通スタイルの保存と削除) を参照してください。

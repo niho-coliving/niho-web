@@ -1,5 +1,5 @@
 import type { EditorTarget } from "./editor-types.js";
-import type { ComponentLibrary, ComponentNode, ElementNode, InstanceNode, NodeStyle, PageDocument, PageNode } from "./types.js";
+import type { ComponentLibrary, ComponentNode, DesignToken, ElementNode, InstanceNode, NodeStyle, PageDocument, PageImage, PageNode } from "./types.js";
 
 /** 人が読む差分。path は日本語の箇所名、before / after は表示用の文字列。 */
 export type DocumentChange = { path: string; before: string; after: string };
@@ -98,7 +98,11 @@ export function diffDocuments(before: PageDocument, after: PageDocument, options
   push("ページタイトル", before.title, after.title);
   const oldMeta = before.meta ?? {}, newMeta = after.meta ?? {};
   push("説明文", oldMeta.description, newMeta.description);
-  push("ソーシャルカバー", oldMeta.ogImage, newMeta.ogImage, (value) => value && typeof value === "object" ? show(`${(value as { src: string }).src}（${(value as { alt: string }).alt}）`) : none);
+  push("ソーシャルカバー", oldMeta.ogImage, newMeta.ogImage, (value) => {
+    if (!value || typeof value !== "object") return none;
+    const image = value as PageImage;
+    return show(`${"asset" in image ? `素材 ${image.asset.provider}:${image.asset.id}` : image.src}（${image.alt}）`);
+  });
   push("ファビコン", oldMeta.favicon, newMeta.favicon);
   push("検索エンジンに表示しない", !!oldMeta.noindex, !!newMeta.noindex, (value) => value ? "表示しない" : "表示する");
   push("構造化データ", oldMeta.structuredData ?? [], newMeta.structuredData ?? []);
@@ -163,7 +167,7 @@ export type EditorRecoveryEntry = { target: EditorTarget; baseVersion: string; b
 /** 読み出した退避内容。document はエディターが検証するまで信頼しない。 */
 export type StoredRecoveryEntry = Omit<EditorRecoveryEntry, "document"> & { document: unknown };
 /** 端末内の共通部品ライブラリの退避（サイト単位）。changed は手元で変えた部品 ID ごとの変更前（保存済み）の version。手元で追加した部品は null。 */
-export type EditorLibraryRecoveryEntry = { siteId: string; baseVersion: string; changed: Readonly<Record<string, number | null>>; library: ComponentLibrary; updatedAt: string };
+export type EditorLibraryRecoveryEntry = { siteId: string; baseVersion: string; changed: Readonly<Record<string, number | null>>; /** token の変更前。競合時に別の保存を上書きしないため保持する。 */ baseTokens?: Readonly<Record<string, DesignToken>>; library: ComponentLibrary; updatedAt: string };
 /** 読み出した部品の退避内容。library はエディターが検証するまで信頼しない。 */
 export type StoredLibraryRecoveryEntry = Omit<EditorLibraryRecoveryEntry, "library"> & { library: unknown };
 export interface EditorRecoveryStore {
@@ -201,11 +205,12 @@ function storedLibraryEntry(raw: string | null): (StoredLibraryRecoveryEntry & {
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return null; }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const { v, siteId, baseVersion, changed, library, updatedAt } = value as Record<string, unknown>;
+  const { v, siteId, baseVersion, changed, baseTokens, library, updatedAt } = value as Record<string, unknown>;
   const time = typeof updatedAt === "string" ? Date.parse(updatedAt) : NaN;
   if (v !== 1 || typeof siteId !== "string" || typeof baseVersion !== "string" || !changed || typeof changed !== "object" || Array.isArray(changed) ||
+    baseTokens !== undefined && (!baseTokens || typeof baseTokens !== "object" || Array.isArray(baseTokens)) ||
     !Object.values(changed).every((base) => base === null || typeof base === "number" && Number.isSafeInteger(base) && base > 0) || library === undefined || !Number.isFinite(time)) return null;
-  return { siteId, baseVersion, changed: changed as Record<string, number | null>, library, updatedAt: updatedAt as string, time };
+  return { siteId, baseVersion, changed: changed as Record<string, number | null>, ...(baseTokens === undefined ? {} : { baseTokens: baseTokens as Record<string, DesignToken> }), library, updatedAt: updatedAt as string, time };
 }
 /**
  * localStorage 等へ作業コピーを退避する。ページは文書ごと、部品ライブラリはサイトごとに1件。scope はログイン中のスタッフごとの opaque な値にし、
@@ -265,15 +270,16 @@ export function createBrowserRecoveryStore(options: { scope: string; storage?: R
         if (raw === null) return null;
         const entry = storedLibraryEntry(raw);
         if (!entry || entry.siteId !== siteId || expired(entry.time)) { place.removeItem(key); return null; }
-        return { siteId: entry.siteId, baseVersion: entry.baseVersion, changed: entry.changed, library: entry.library, updatedAt: entry.updatedAt };
+        return { siteId: entry.siteId, baseVersion: entry.baseVersion, changed: entry.changed, ...(entry.baseTokens === undefined ? {} : { baseTokens: entry.baseTokens }), library: entry.library, updatedAt: entry.updatedAt };
       } catch { return null; }
     },
     writeLibrary(entry) {
       const place = storage();
       if (!place) throw new Error("recovery storage unavailable");
-      // changed は自身のキーだけの新しい object にし、entry の余分なフィールド（token 等）は書かない。
+      // changed は自身のキーだけの新しい object にし、指定した退避情報だけを書く。
       const changed = Object.fromEntries(Object.entries(entry.changed));
-      const serialized = JSON.stringify({ v: 1, siteId: entry.siteId, baseVersion: entry.baseVersion, changed, library: entry.library, updatedAt: entry.updatedAt });
+      const serialized = JSON.stringify({ v: 1, siteId: entry.siteId, baseVersion: entry.baseVersion, changed,
+        ...(entry.baseTokens === undefined ? {} : { baseTokens: entry.baseTokens }), library: entry.library, updatedAt: entry.updatedAt });
       if (serialized.length * 2 > maxBytes) throw new RecoveryTooLargeError();
       place.setItem(prefix + libraryKey(entry.siteId), serialized);
     },

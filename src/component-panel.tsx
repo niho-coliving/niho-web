@@ -230,8 +230,9 @@ export function ComponentDialogBody({ dialog, library, cancel, submit, notice }:
 export function LibraryReloadDialogBody({ plan, close, apply }: { plan: LibraryReloadPlan; close: () => void; apply: () => void }) {
   return <><h2>共通部品を読み直す</h2><p>保存されている最新の共通部品を読み込みます。</p>
     {plan.discarded.length > 0 && <><p>この画面で保存していない次の部品の変更は破棄されます。</p><ul className="e-part-usage">{plan.discarded.map((change) => <li key={change.id}><span>{change.name}</span><small>{changeLabels[change.change]}</small></li>)}</ul></>}
+    {plan.discardedTokens.length > 0 && <><p>この画面で保存していない次のスタイルの変更は破棄されます。</p><ul className="e-part-usage">{plan.discardedTokens.map((name) => <li key={name}><span>{name}</span><small>変更</small></li>)}</ul></>}
     {plan.detached.length > 0 && <><p>編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。</p><ul className="e-part-usage">{plan.detached.map((name) => <li key={name}><span>{name}</span><small>解除</small></li>)}</ul></>}
     {plan.problem && <p className="e-help e-problem" role="alert">{plan.problem}</p>}
     <div className="e-actions"><button type="button" autoFocus onClick={close}>閉じて編集を続ける</button>
-      {!plan.problem && <button type="button" className={plan.discarded.length ? "e-danger" : "e-primary"} onClick={apply}>{plan.discarded.length ? "最新の部品を読み込む（部品の変更を破棄）" : "最新の部品を読み込む"}</button>}</div></>;
+      {!plan.problem && <button type="button" className={plan.discarded.length || plan.discardedTokens.length ? "e-danger" : "e-primary"} onClick={apply}>{plan.discarded.length || plan.discardedTokens.length ? "最新の部品を読み込む（未保存の変更を破棄）" : "最新の部品を読み込む"}</button>}</div></>;
 }

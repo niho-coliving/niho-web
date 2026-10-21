@@ -1,4 +1,5 @@
-import type { ComponentType } from "react";
+import type { SiteStyles } from "./site-styles.js";
+import type { ComponentType, ReactNode } from "react";
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
@@ -211,12 +212,18 @@ export interface EditorAdapter {
   /** ページ操作の影響と確認 token。両方を実装した場合だけページ操作を表示する。 */
   preparePageChange?(change: EditorPageChange, signal: AbortSignal): Promise<EditorPageChangePlan>;
   applyPageChange?(plan: EditorPageChangePlan, signal: AbortSignal): Promise<EditorPageChangeResult>;
+  /** 全ページの draft / 公開参照を同一トランザクションで切り離せるホストだけ true。 */
+  siteStyleCapabilities?: { atomicReferenceDetachment: true };
   /** サイト共通の設定。version は楽観ロック用の opaque な値。 */
   readSiteSettings?(siteId: string, signal: AbortSignal): Promise<EditorSiteSettingsSnapshot>;
-  saveSiteSettings?(request: { siteId: string; settings: SiteSettings; expectedVersion: string }, signal: AbortSignal): Promise<EditorSiteSettingsSaveResult>;
+  saveSiteSettings?(request: { siteId: string; settings: SiteSettings; expectedVersion: string;
+    /** スタイル変更時の保存済み基準。削除参照を全ページで切り離し、設定と原子的に保存する。 */
+    previousStyles?: SiteStyles;
+  }, signal: AbortSignal): Promise<EditorSiteSettingsSaveResult>;
   /** 版履歴。新しい順で、続きは next を cursor に渡す。実装した場合だけ「履歴」を表示する。 */
   listRevisions?(request: { target: EditorTarget; cursor?: string }, signal: AbortSignal): Promise<EditorRevisionPage>;
-  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown }>;
+  /** 共通スタイルを参照する版は、その版に対応する不変のスタイル snapshot も返す。 */
+  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown; siteStyles?: SiteStyles }>;
   /** 保存済みの状態に名前を付ける。ホストは expectedVersion を検証する。 */
   createSnapshot?(request: { target: EditorTarget; expectedVersion: string; label: string }, signal: AbortSignal): Promise<EditorSnapshotResult>;
 }
@@ -236,9 +243,25 @@ export type EditorBlockRegistry = Readonly<Record<string, BlockDefinition & {
 }>>;
 /** 編集する幅の段。minWidth は 320〜3840 の整数・昇順。 */
 export type EditorBreakpoint = { minWidth: number; label: string };
+/** 同じiframeへ表示する、ホスト所有の同期Reactプレビュー。文書を直接変更しない。 */
+export type EditorCanvasPreviewProps = {
+  document: PageDocument;
+  /** 未保存編集の基準版。共有部品の編集中は部品ライブラリの版、それ以外はページ下書きの版。 */
+  baseVersion: string;
+  /** 履歴表示で選択した版。ホストが同じ版の関連表示資源を選ぶために使う。 */
+  historyRevision?: EditorRevisionEntry;
+  width: number;
+  breakpoint: number | "base";
+  mode: "edit" | "preview" | "history";
+  readOnly: boolean;
+  /** 従来の文書描画。編集文書を置き換えない場合はそのまま返せる。 */
+  children: ReactNode;
+};
 export type PageEditorProps = {
   adapter: EditorAdapter;
   blocks?: EditorBlockRegistry;
+  /** Canvasと同じiframe内で描画する。予約・送信などの副作用を起こさず、未指定時は従来どおり。 */
+  previewComponent?: ComponentType<EditorCanvasPreviewProps>;
   /** 新規配置できる登録ブロック。省略時は全件、空配列なら既存ブロックの編集だけを許可。 */
   insertableBlocks?: readonly string[];
   /** サイト別の素材ライブラリ。参照は安定させる。省略時は素材の UI を表示しない。 */

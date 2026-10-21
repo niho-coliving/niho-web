@@ -104,3 +104,24 @@ renderer は同期の React ツリーを返します。データ取得は呼び�
 対象限定テストで文書契約、入力拒否、文書のコピー、scoped CSS、許可されたレイアウト、文字スタイルの CSS の順序と束ね方、過大値の上限、演出の値の境界と CSS の出力位置（hover・focus-visible・reduced-motion・`@supports`・非表示が最後）、開閉の入れ子、旧文書の出力が変わらないこと、registry の props 検証、登録ブロックが初期 HTML に含まれること、React `renderToString` と共通 HTML helper の一致を確認します。
 
 実際の Next.js / Astro アプリでの bundling・hydration・CSP・サイト全体 CSS の視覚確認は利用側の導入時に行います。nonce を必須とする CSP を使うサイトでは、現在のインライン style の配信方法を導入前に調整する必要があります。
+
+## サイト共通スタイル
+
+ページ JSON の `schemaVersion` と必須フィールドは変更しません。`SiteSettings` に任意の `tokens` / `textStyles` を保存し、ページにはページ所有の定義だけを保持します。設定を渡さない既存ホストの検証・描画は従来どおりです。
+
+```ts
+const settings = parseSiteSettings(siteSettingsJson);
+const page = parsePageDocument(pageJson, blocks, { siteStyles: settings });
+// page.tokens / page.textStyles は入力に含まれていたページ定義だけ。
+const effective = resolvePageStyles(page, settings);
+// 部品があるページは展開時にも同じ設定を渡す。
+const resolved = resolvePageDocument(pageJson, library, blocks, settings);
+```
+
+優先順位は、token と文字スタイルそれぞれについて `site → page` です。同名の定義はページが丸ごと上書きします。文字スタイルのプロパティ単位の合成はしません。共有定義と同じ値でも、明示されたページの override は保持し、将来のサイト変更から独立させます。
+
+サイトの文字スタイルはサイトの token だけで検証し、ページによる未定義参照の補完を許しません。その後、実効 token で継承した文字スタイルを再検証します。ページの override によって token の種類が不適合になった場合も拒否します。未解決の token / textStyle、型不一致、未知フィールド、上限超過を許しません。共有値を参照するページは、設定を省略して検証すると拒否されます。
+
+`PageRenderer` の `siteStyles`、`renderPageToHtml(document, blocks, { siteStyles })`、`generatePageCss(document, blocks, assets, siteStyles)` は同じ解決関数を使います。`resolvePageDocument` の返す展開済み文書には実効定義が含まれるため、そのまま設定なしで描画できます。この展開済み文書をページ下書きの正本へ保存しないでください。公開 snapshot に実効定義を固定する方式はホストが選べます。
+
+共有設定とページを別時点から取得すると公開中の見た目が変わるため、ホストは同じ公開 snapshot の設定・文書を組にして読み出してください。キャッシュキーにも設定の版を含めます。

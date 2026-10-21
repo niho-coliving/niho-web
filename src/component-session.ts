@@ -1,10 +1,12 @@
+import type { SiteStyles } from "./site-styles.js";
 import { expandDocument, instancesOf, ownElements, type ResolvedOrigin } from "./component-expand.js";
 import { componentDocument, detachInstance, setComponentProp } from "./component-model.js";
 import { componentUsage, parseComponentLibrary, resolvePageDocument } from "./components.js";
 import { parsePageDocument } from "./document.js";
+import { parseTokens } from "./style-values.js";
 import { nodeAt, sameTarget, walkNodes, type EditorHistory, type NodePath } from "./editor-model.js";
 import type { ComponentLibrarySnapshot, ComponentUsageEntry, EditorBlockRegistry, EditorPage, EditorReleaseAffected, EditorTarget, PageKind } from "./editor-types.js";
-import type { ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropField, PageDocument, PageNode } from "./types.js";
+import type { ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropField, DesignToken, PageDocument, PageNode } from "./types.js";
 import { DocumentValidationError, identifier } from "./validation-utils.js";
 
 // エディターの共通部品セッション。履歴はページと同じく最大50操作で、保存済みの基準と内容を比較する。
@@ -38,8 +40,8 @@ export function acceptSavedLibrary(session: LibrarySession, base: ComponentLibra
     history: { past: session.history.past.map(rebase), present, future: session.history.future.map(rebase) } };
 }
 /** 文書がライブラリで展開・検証できるか。 */
-export function fitsLibrary(document: PageDocument, library: ComponentLibrary, blocks: EditorBlockRegistry): boolean {
-  try { parsePageDocument(document, blocks, { components: library }); return true; } catch { return false; }
+export function fitsLibrary(document: PageDocument, library: ComponentLibrary, blocks: EditorBlockRegistry, siteStyles?: SiteStyles): boolean {
+  try { parsePageDocument(document, blocks, { components: library, ...(siteStyles ? { siteStyles } : {}) }); return true; } catch { return false; }
 }
 /** 部品の検証で返る理由のうち、スタッフ向けの文言があるもの。 */
 export function componentProblem(error: unknown): string | undefined {
@@ -69,6 +71,8 @@ export function libraryChanges(before: ComponentLibrary, after: ComponentLibrary
 export type LibraryReloadPlan = {
   /** 破棄する手元の部品の変更。 */
   discarded: LibraryChange[];
+  /** 破棄する手元のスタイル定義。 */
+  discardedTokens: string[];
   /** 部品を解除して通常の要素にする、編集中のページの部品の名前（手元の名前・出現順・重複なし）。 */
   detached: string[];
   /** 解除を適用したページの文書。解除が無ければ undefined。 */
@@ -83,7 +87,9 @@ export type LibraryReloadPlan = {
  */
 export function planLibraryReload(input: { local: ComponentLibrary; saved: ComponentLibrary; latest: ComponentLibrary; page: PageDocument | undefined; editable: boolean; blocks: EditorBlockRegistry }): LibraryReloadPlan {
   const { local, saved, latest, page, editable, blocks } = input, discarded = libraryChanges(saved, local);
-  if (!page) return { discarded, detached: [] };
+  const discardedTokens = [...new Set([...Object.keys(saved.tokens), ...Object.keys(local.tokens)])]
+    .filter((name) => JSON.stringify(saved.tokens[name]) !== JSON.stringify(local.tokens[name]));
+  if (!page) return { discarded, discardedTokens, detached: [] };
   const own = byId(local), other = byId(latest), base = byId(saved), changed = new Set(discarded.map((change) => change.id));
   const differs = (id: string) => { const mine = own.get(id), theirs = other.get(id); return !mine || !theirs || contentOf(mine) !== contentOf(theirs); };
   const phase1 = (id: string) => !other.has(id) || !base.has(id) && differs(id), phase2 = (id: string) => phase1(id) || changed.has(id) && differs(id);
@@ -104,11 +110,11 @@ export function planLibraryReload(input: { local: ComponentLibrary; saved: Compo
   };
   let chosen = detachWhere(phase1);
   if (!chosen || !fitsLibrary(chosen.document, latest, blocks)) { chosen = detachWhere(phase2); if (chosen && !fitsLibrary(chosen.document, latest, blocks)) chosen = null; }
-  if (chosen && !chosen.names.length) return { discarded, detached: [] };
-  if (!editable) return { discarded, detached: [], problem: "このページは読み取り専用のため、最新の共通部品に合わせて部品を解除できません。別のページを開いてから、もう一度読み直してください。" };
-  if (chosen) return { discarded, detached: chosen.names, page: chosen.document };
+  if (chosen && !chosen.names.length) return { discarded, discardedTokens, detached: [] };
+  if (!editable) return { discarded, discardedTokens, detached: [], problem: "このページは読み取り専用のため、最新の共通部品に合わせて部品を解除できません。別のページを開いてから、もう一度読み直してください。" };
+  if (chosen) return { discarded, discardedTokens, detached: chosen.names, page: chosen.document };
   const suspects = [...new Set(walkNodes(page).flatMap(({ node }) => node.type === "instance" && differs(node.component) ? [nameOf(node.component)] : []))];
-  return { discarded, detached: [], problem: `最新の共通部品では、編集中のページを表示できないため読み直せません。${suspects.length ? `ページの「${suspects.join("」「")}」を` : "ページの共通部品を"}「部品を解除」で通常の要素にするか削除してから、もう一度読み直してください。` };
+  return { discarded, discardedTokens, detached: [], problem: `最新の共通部品では、編集中のページを表示できないため読み直せません。${suspects.length ? `ページの「${suspects.join("」「")}」を` : "ページの共通部品を"}「部品を解除」で通常の要素にするか削除してから、もう一度読み直してください。` };
 }
 /**
  * 部品を読み直した後のページの履歴。最新に無い部品と、手元で追加した ID が最新では別の部品になっている部品を参照する版へは
@@ -123,28 +129,30 @@ export function trimReloadedHistory(history: EditorHistory, input: { local: Comp
   return cut < 0 && end < 0 ? history : { past: history.past.slice(cut + 1), present: history.present, future: end < 0 ? history.future : history.future.slice(0, end) };
 }
 
-export type RecoveredLibrary = { siteId: string; baseVersion: string; changed: Readonly<Record<string, number | null>>; library: ComponentLibrary; updatedAt: string };
+export type RecoveredLibrary = { siteId: string; baseVersion: string; changed: Readonly<Record<string, number | null>>; baseTokens?: Readonly<Record<string, DesignToken>>; library: ComponentLibrary; updatedAt: string };
 /** 端末から読んだ部品の退避内容を検証する。対象のサイトと違う・形が合わないものは null（別サイトへは復元しない）。 */
 export function parseRecoveredLibrary(stored: unknown, siteId: string, blocks: EditorBlockRegistry): RecoveredLibrary | null {
   if (!stored || typeof stored !== "object") return null;
-  const { siteId: place, baseVersion, changed, library, updatedAt } = stored as Record<string, unknown>;
+  const { siteId: place, baseVersion, changed, baseTokens, library, updatedAt } = stored as Record<string, unknown>;
   if (place !== siteId || typeof baseVersion !== "string" || !baseVersion || typeof updatedAt !== "string" || !Number.isFinite(Date.parse(updatedAt)) || !changed || typeof changed !== "object" || Array.isArray(changed)) return null;
   const entries = Object.entries(changed);
   if (!entries.every(([, base]) => base === null || typeof base === "number" && Number.isSafeInteger(base) && base > 0)) return null;
   try {
     for (const [id] of entries) identifier(id, "$.changed");
     const parsed = parseComponentLibrary(library, blocks);
-    return parsed.siteId === siteId ? { siteId, baseVersion, changed: Object.fromEntries(entries) as Record<string, number | null>, library: parsed, updatedAt } : null;
+    const previousTokens = baseTokens === undefined ? undefined : parseTokens(baseTokens, "$.baseTokens");
+    return parsed.siteId === siteId ? { siteId, baseVersion, changed: Object.fromEntries(entries) as Record<string, number | null>,
+      ...(previousTokens === undefined ? {} : { baseTokens: previousTokens }), library: parsed, updatedAt } : null;
   } catch { return null; }
 }
-export type LibraryMerge = { library: ComponentLibrary | null; restored: LibraryChange[]; conflicts: string[] };
+export type LibraryMerge = { library: ComponentLibrary | null; restored: LibraryChange[]; restoredTokens: string[]; conflicts: string[] };
 /**
  * 退避内容のうち、保存先（latest）でその後に変わっていない部品だけを latest に重ねる。
  * 変更前の version と latest の version が違う部品（追加した ID が latest で別の部品になっている場合を含む）は latest を残し、conflicts に名前を返す。
  * 重ねた結果を検証できなければ library は null。
  */
 export function mergeRecoveredLibrary(recovered: RecoveredLibrary, latest: ComponentLibrary, blocks: EditorBlockRegistry): LibraryMerge {
-  const own = byId(recovered.library), other = byId(latest), adopted = new Map<string, ComponentDefinition | null>(), restored: LibraryChange[] = [], conflicts: string[] = [];
+  const own = byId(recovered.library), other = byId(latest), adopted = new Map<string, ComponentDefinition | null>(), restored: LibraryChange[] = [], restoredTokens: string[] = [], conflicts: string[] = [];
   for (const [id, base] of Object.entries(recovered.changed)) {
     const mine = own.get(id), theirs = other.get(id), named = mine ?? theirs;
     // どちらにも無い、または同じ内容なら重ねる必要が無い。
@@ -156,11 +164,23 @@ export function mergeRecoveredLibrary(recovered: RecoveredLibrary, latest: Compo
   }
   const components = latest.components.flatMap((component) => { const next = adopted.get(component.id); return next === undefined ? [component] : next ? [next] : []; });
   for (const [id, next] of adopted) if (next && !other.has(id)) components.push(next);
-  // 復元した部品が使う token を失わないよう、latest に無い token だけを足す（latest の値は変えない）。
-  const tokens = restored.length ? { ...latest.tokens, ...Object.fromEntries(Object.entries(recovered.library.tokens).filter(([name]) => !Object.hasOwn(latest.tokens, name))) } : latest.tokens;
+  const tokens = { ...latest.tokens };
+  const sameToken = (left: DesignToken | undefined, right: DesignToken | undefined) => JSON.stringify(left) === JSON.stringify(right);
+  if (recovered.baseTokens) {
+    for (const name of new Set([...Object.keys(recovered.baseTokens), ...Object.keys(recovered.library.tokens)])) {
+      const before = recovered.baseTokens[name], mine = recovered.library.tokens[name], theirs = latest.tokens[name];
+      if (sameToken(before, mine) || sameToken(theirs, mine)) continue;
+      if (!sameToken(theirs, before)) { conflicts.push(`スタイル「${name}」`); continue; }
+      if (mine === undefined) delete tokens[name]; else tokens[name] = structuredClone(mine);
+      restoredTokens.push(name);
+    }
+  } else if (restored.length) {
+    // 旧形式の退避では変更前を判定できないため、既存 token は上書きしない。
+    for (const [name, token] of Object.entries(recovered.library.tokens)) if (!Object.hasOwn(tokens, name)) tokens[name] = token;
+  }
   let library: ComponentLibrary | null = null;
   try { library = parseComponentLibrary({ ...latest, tokens, components }, blocks); } catch { /* 重ねた結果が検証できない */ }
-  return { library, restored, conflicts };
+  return { library, restored, restoredTokens, conflicts };
 }
 /** 提案する価値があるか。重ねられない・競合だけ・内容が変わる、のいずれか。 */
 export function hasRecoveredChanges(merge: LibraryMerge, latest: ComponentLibrary): boolean {
@@ -169,9 +189,9 @@ export function hasRecoveredChanges(merge: LibraryMerge, latest: ComponentLibrar
 
 const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
 /** キャンバスに描く文書。インスタンスがなければそのまま使い、展開できなければ元の文書（描画側で表示不可になる）を返す。 */
-export function resolveCanvas(document: PageDocument, library: ComponentLibrary | undefined, blocks: EditorBlockRegistry): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
+export function resolveCanvas(document: PageDocument, library: ComponentLibrary | undefined, blocks: EditorBlockRegistry, siteStyles?: SiteStyles): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
   if (!library || !instancesOf(document.body).length) return { document, origins: noOrigins };
-  try { return resolvePageDocument(document, library, blocks); } catch { return { document, origins: noOrigins }; }
+  try { return resolvePageDocument(document, library, blocks, siteStyles); } catch { return { document, origins: noOrigins }; }
 }
 /** path の要素と子孫のうち、文書の文字スタイルを参照するノードの path。部品は文書の文字スタイルを持てない。 */
 export function textStylePaths(document: PageDocument, path: NodePath): NodePath[] {

@@ -1,3 +1,4 @@
+import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import { createElement, Fragment, type ComponentType, type ReactElement } from "react";
 import type { BlockContract, PageNode, PublicPropValue } from "./types.js";
 import { parsePageDocument } from "./document.js";
@@ -11,6 +12,7 @@ export type BlockDefinition = BlockContract & {
 export type BlockRegistry = Readonly<Record<string, BlockDefinition>>;
 export type PageRendererProps = {
   document: unknown; blocks?: BlockRegistry;
+  siteStyles?: SiteStyles;
   /** ホストが解決した素材。描画前に検証する。 */
   assets?: ResolvedAssetMap;
   /** 解決できない素材画像。既定は描画しない。placeholder はエディター用。 */
@@ -18,8 +20,8 @@ export type PageRendererProps = {
 };
 
 /** useEffect を使わず、Next.js の初期 HTML と静的 SSR の両方で本文を返す。 */
-export function PageRenderer({ document: input, blocks = {}, assets: assetInput, missingAssets = "omit" }: PageRendererProps): ReactElement {
-  const document = parsePageDocument(input, blocks);
+export function PageRenderer({ document: input, blocks = {}, assets: assetInput, missingAssets = "omit", siteStyles }: PageRendererProps): ReactElement {
+  const document = resolvePageStyles(parsePageDocument(input, blocks, siteStyles ? { siteStyles } : {}), siteStyles);
   const assets = assetInput === undefined ? {} : parseResolvedAssets(assetInput);
   const scope = pageScope(document);
   function render(node: PageNode): ReactElement | string | null {

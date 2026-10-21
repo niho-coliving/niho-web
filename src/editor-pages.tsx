@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { detachRemovedSiteStyles, parseSiteStyles, type SiteStyles } from "./site-styles.js";
+import { parsePageDocument } from "./document.js";
 import { Dialog } from "./editor-dialog.js";
 import { pageChangeProblems, sameTarget, validatePageChangePlan, type EditorOperation } from "./editor-model.js";
-import type { EditorAdapter, EditorLocalizedPage, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
+import type { EditorAdapter, EditorBlockRegistry, EditorLocalizedPage, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageChangeResult, EditorSite, EditorTarget } from "./editor-types.js";
 import { localizationStateLabel } from "./editor-localization.js";
+import { resolvedAsset, type LibraryAsset, type ResolvedAssetMap } from "./assets.js";
+import { coverAlt, socialImageProblem } from "./editor-assets.js";
 import { buildPageTree, findPathConflict, pageUrl, parseSiteSettings, resolvePageMetadata, validatePagePath, type PageMetadata, type PageTreeNode, type PageVisibility, type SiteSettings } from "./pages.js";
-import type { PageDocument } from "./types.js";
+import type { AssetReference, ComponentLibrary, PageDocument, PageImage } from "./types.js";
 import { DocumentValidationError } from "./validation-utils.js";
 
 const iconPaths = {
@@ -35,8 +39,8 @@ const targetOf = (page: EditorTarget): EditorTarget => ({ siteId: page.siteId, p
 const pageKey = (page: EditorTarget) => `${page.pageId}/${page.locale}`;
 const kindLabels: Record<string, string> = { page: "ページ", template: "テンプレート", shared: "共通枠" };
 const publicPath = (page: EditorPage | undefined) => page?.path !== undefined && validatePagePath(page.path) === null ? page.path : undefined;
-function metadataFor(document: PageDocument, page: EditorPage | undefined, domain: string | undefined, settings: SiteSettings | undefined): PageMetadata | undefined {
-  try { return resolvePageMetadata({ document, site: settings, domain, path: publicPath(page), visibility: page?.visibility }); } catch { return undefined; }
+function metadataFor(document: PageDocument, page: EditorPage | undefined, domain: string | undefined, settings: SiteSettings | undefined, assets?: ResolvedAssetMap): PageMetadata | undefined {
+  try { return resolvePageMetadata({ document, site: settings, domain, path: publicPath(page), visibility: page?.visibility, assets }); } catch { return undefined; }
 }
 
 /** 公開情報・サイト設定の検証エラーを入力欄向けの文にする。対象外は undefined。 */
@@ -46,6 +50,7 @@ export function publicInfoMessage(error: unknown): string | undefined {
   if (field === "title") return "サイトタイトルは改行なしの120文字以内で入力してください。";
   if (field === "description") return "説明文は改行なしの500文字以内で入力してください。";
   if (field === "ogImage.src" || field === "favicon") return "URL は https:// か / から始まる形式で入力してください。";
+  if (field === "ogImage" || field.startsWith("ogImage.asset")) return "ソーシャルカバーの画像を選び直してください。";
   if (field === "ogImage.alt") return "画像の説明は改行なしの300文字以内で入力してください。";
   if (field === "locale") return "言語は ja や ja-JP の形式で入力してください。";
   if (field.startsWith("structuredData")) return "構造化データは16件までです。指定を確認してください。";
@@ -259,44 +264,57 @@ export function PageChangeDialog({ start, site, pages, locale, prepare, apply, a
   return <Dialog name={dialogTitle(start)} dismiss={() => { if (!busy) close(); }}>{body}</Dialog>;
 }
 
-type SiteForm = { title: string; description: string; imageSrc: string; imageAlt: string; favicon: string; locale: string; noindex: boolean };
-const emptyForm: SiteForm = { title: "", description: "", imageSrc: "", imageAlt: "", favicon: "", locale: "", noindex: false };
-const formFrom = (settings: SiteSettings): SiteForm => ({ title: settings.title, description: settings.description ?? "", imageSrc: settings.ogImage?.src ?? "", imageAlt: settings.ogImage?.alt ?? "",
-  favicon: settings.favicon ?? "", locale: settings.locale, noindex: !!settings.noindex });
-const settingsFrom = (form: SiteForm) => ({ title: form.title, ...(form.description.trim() ? { description: form.description } : {}), ...(form.imageSrc ? { ogImage: { src: form.imageSrc, alt: form.imageAlt } } : {}),
-  ...(form.favicon ? { favicon: form.favicon } : {}), locale: form.locale, ...(form.noindex ? { noindex: true } : {}) });
+/** imageAsset があれば imageSrc より優先する（素材とURLはどちらか一方）。 */
+type SiteForm = { title: string; description: string; imageSrc: string; imageAsset: AssetReference | null; imageAlt: string; favicon: string; locale: string; noindex: boolean };
+const emptyForm: SiteForm = { title: "", description: "", imageSrc: "", imageAsset: null, imageAlt: "", favicon: "", locale: "", noindex: false };
+const formFrom = (settings: SiteSettings): SiteForm => {
+  const image = settings.ogImage;
+  return { title: settings.title, description: settings.description ?? "", imageSrc: image && "src" in image ? image.src : "", imageAsset: image && "asset" in image ? { ...image.asset } : null,
+    imageAlt: image?.alt ?? "", favicon: settings.favicon ?? "", locale: settings.locale, noindex: !!settings.noindex };
+};
+const formImage = (form: SiteForm): PageImage | undefined => form.imageAsset ? { asset: form.imageAsset, alt: form.imageAlt } : form.imageSrc ? { src: form.imageSrc, alt: form.imageAlt } : undefined;
+const settingsFrom = (form: SiteForm) => {
+  const image = formImage(form);
+  return { title: form.title, ...(form.description.trim() ? { description: form.description } : {}), ...(image ? { ogImage: image } : {}),
+    ...(form.favicon ? { favicon: form.favicon } : {}), locale: form.locale, ...(form.noindex ? { noindex: true } : {}) };
+};
 export type SiteSettingsState = {
   /** readSiteSettings / saveSiteSettings をホストが実装しているか。 */
   supported: boolean; editable: boolean;
   status: "idle" | "loading" | "error" | "ready";
   /** 保存済みの設定。 */
   settings: SiteSettings | undefined;
+  styleSaveEpoch: number; styles: SiteStyles; stylesDirty: boolean; latest: SiteSettings | undefined;
+  editStyles: (styles: SiteStyles) => string | undefined;
   form: SiteForm; dirty: boolean; problem: string | undefined; canSave: boolean; busy: boolean;
   message: { text: string; alert: boolean } | null; conflict: boolean;
   edit: (patch: Partial<SiteForm>) => void; reset: () => void; reload: () => void; save: () => Promise<void>;
 };
 /** サイト設定は文書と別に、opaque な version の楽観ロックで保存する。 */
-export function useSiteSettings(adapter: EditorAdapter, siteId: string): SiteSettingsState {
+export function useSiteSettings(adapter: EditorAdapter, siteId: string, blocks: EditorBlockRegistry, components?: ComponentLibrary): SiteSettingsState {
   const [loaded, setLoaded] = useState<{ siteId: string; settings: SiteSettings; version: string } | null>(null);
   const [status, setStatus] = useState<SiteSettingsState["status"]>("idle"), [form, setForm] = useState(emptyForm), [epoch, setEpoch] = useState(0);
+  const [styleSaveEpoch, setStyleSaveEpoch] = useState(0);
+  const [styles, setStyles] = useState<SiteStyles>({}), [latest, setLatest] = useState<SiteSettings>();
   const [busy, setBusy] = useState(false), [message, setMessage] = useState<SiteSettingsState["message"]>(null), [conflict, setConflict] = useState(false);
   const saving = useRef<AbortController | null>(null);
   useEffect(() => {
-    saving.current?.abort(); saving.current = null; setLoaded(null); setForm(emptyForm); setMessage(null); setConflict(false); setBusy(false);
+    saving.current?.abort(); saving.current = null; setLoaded(null); setForm(emptyForm); setStyles({}); setLatest(undefined); setMessage(null); setConflict(false); setBusy(false);
     if (!siteId || !adapter.readSiteSettings) { setStatus("idle"); return; }
     const controller = new AbortController(); setStatus("loading");
     adapter.readSiteSettings(siteId, controller.signal).then((snapshot) => {
       if (controller.signal.aborted) return;
       if (!snapshot || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("version is required");
       const settings = parseSiteSettings(snapshot.settings);
-      setLoaded({ siteId, settings, version: snapshot.version }); setForm(formFrom(settings)); setStatus("ready");
+      setLoaded({ siteId, settings, version: snapshot.version }); setForm(formFrom(settings)); setStyles(parseSiteStyles(settings)); setStatus("ready");
     }).catch(() => { if (!controller.signal.aborted) setStatus("error"); });
     return () => controller.abort();
   }, [adapter, siteId, epoch]);
   useEffect(() => () => saving.current?.abort(), []);
-  const dirty = status === "ready" && !!loaded && JSON.stringify(form) !== JSON.stringify(formFrom(loaded.settings));
+  const stylesDirty = status === "ready" && !!loaded && JSON.stringify(styles) !== JSON.stringify(parseSiteStyles(loaded.settings));
+  const dirty = status === "ready" && !!loaded && (stylesDirty || JSON.stringify(form) !== JSON.stringify(formFrom(loaded.settings)));
   let parsed: SiteSettings | undefined, problem: string | undefined;
-  if (dirty) try { parsed = parseSiteSettings(settingsFrom(form)); } catch (error) { problem = publicInfoMessage(error) ?? "サイト設定の値を確認してください。"; }
+  if (dirty) try { parsed = parseSiteSettings({ ...settingsFrom(form), ...styles }); } catch (error) { problem = publicInfoMessage(error) ?? "サイト設定の値を確認してください。"; }
   const editable = typeof adapter.saveSiteSettings === "function";
   async function save() {
     if (!loaded || !parsed || !adapter.saveSiteSettings || saving.current) return;
@@ -306,22 +324,83 @@ export function useSiteSettings(adapter: EditorAdapter, siteId: string): SiteSet
       else setMessage({ text: "サイト設定を保存できませんでした。入力を保持しています。", alert: true });
     };
     try {
-      const result = await adapter.saveSiteSettings({ siteId: loaded.siteId, settings: structuredClone(settings), expectedVersion: loaded.version }, controller.signal);
+      if (stylesDirty) {
+        const before = parseSiteStyles(loaded.settings), after = parseSiteStyles(settings);
+        const removed = Object.keys(before.tokens ?? {}).some((name) => !Object.hasOwn(after.tokens ?? {}, name)) || Object.keys(before.textStyles ?? {}).some((name) => !Object.hasOwn(after.textStyles ?? {}, name));
+        if (removed && !adapter.siteStyleCapabilities?.atomicReferenceDetachment) throw new Error("atomic reference detachment is required");
+        const pages = await adapter.listPages(loaded.siteId, controller.signal);
+        await Promise.all(pages.map(async (page) => {
+          if (page.siteId !== loaded.siteId) throw new Error("site mismatch");
+          const snapshot = await adapter.readDocument(page, controller.signal);
+          const document = parsePageDocument(snapshot.document, blocks, { ...(components ? { components } : {}), siteStyles: before });
+          if (!sameTarget(document, page)) throw new Error("page mismatch");
+          parsePageDocument(detachRemovedSiteStyles(document, before, after), blocks, { ...(components ? { components } : {}), siteStyles: after });
+        }));
+      }
+      if (stylesDirty) {
+        const current = await adapter.readSiteSettings!(loaded.siteId, controller.signal);
+        if (controller.signal.aborted) return;
+        const currentSettings = parseSiteSettings(current.settings);
+        if (current.version !== loaded.version || JSON.stringify(currentSettings) !== JSON.stringify(loaded.settings)) { setLatest(currentSettings); failed({ status: 409 }); return; }
+      }
+      const result = await adapter.saveSiteSettings({ siteId: loaded.siteId, settings: structuredClone(settings), expectedVersion: loaded.version, ...(stylesDirty ? { previousStyles: parseSiteStyles(loaded.settings) } : {}) }, controller.signal);
       if (controller.signal.aborted) return;
-      if (result.status === "conflict") { failed({ status: 409 }); return; }
+      if (result.status === "conflict") { try { const conflictSnapshot = await adapter.readSiteSettings!(loaded.siteId, controller.signal); if (!controller.signal.aborted) setLatest(parseSiteSettings(conflictSnapshot.settings)); } catch { /* 比較の取得に失敗しても入力を保持する。 */ } failed({ status: 409 }); return; }
       if (result.status !== "saved" || typeof result.version !== "string" || !result.version || result.version === loaded.version) throw new Error("version must advance");
-      setLoaded({ siteId: loaded.siteId, settings, version: result.version }); setForm(formFrom(settings)); setMessage({ text: "サイト設定を保存しました。", alert: false });
+      setLoaded({ siteId: loaded.siteId, settings, version: result.version }); setForm(formFrom(settings)); setStyles(parseSiteStyles(settings)); if (stylesDirty) setStyleSaveEpoch((value) => value + 1); setLatest(undefined); setMessage({ text: "サイト設定を保存しました。", alert: false });
     } catch (error) { if (!controller.signal.aborted) failed(error); }
     finally { if (saving.current === controller) { saving.current = null; setBusy(false); } }
   }
   return {
-    supported: typeof adapter.readSiteSettings === "function", editable, status, settings: loaded?.settings, form, dirty, problem,
+    supported: typeof adapter.readSiteSettings === "function", editable, status, settings: loaded?.siteId === siteId ? loaded.settings : undefined, form, dirty, problem, styles, stylesDirty, latest, styleSaveEpoch,
+    editStyles: (next) => { if (!editable || status !== "ready" || busy) return "サイト設定を読み込んでから編集してください。"; try { setStyles(parseSiteStyles(next)); setMessage(null); return undefined; } catch { return "共通スタイルの参照・種類・値を確認してください。"; } },
     canSave: editable && dirty && !!parsed && !busy, busy, message, conflict,
     edit: (patch) => { setForm((previous) => ({ ...previous, ...patch })); setMessage(null); },
-    reset: () => { if (loaded) setForm(formFrom(loaded.settings)); setMessage(null); setConflict(false); },
+    reset: () => { if (loaded) { setForm(formFrom(loaded.settings)); setStyles(parseSiteStyles(loaded.settings)); } setMessage(null); setConflict(false); },
     reload: () => setEpoch((value) => value + 1),
     save
   };
+}
+
+/** 素材 adapter があるホストで、ソーシャルカバーを素材から選ぶための値。 */
+export type CoverPicker = { assets: ResolvedAssetMap; failed: boolean; pick: () => void };
+/** プレビューに使う URL。素材は解決できた場合だけ、URL は https か公開ドメイン付きの / パス。 */
+function coverSource(image: PageImage | undefined, assets: ResolvedAssetMap | undefined, domain: string | undefined): string | undefined {
+  if (!image) return undefined;
+  if ("asset" in image) return assets ? resolvedAsset(assets, image.asset)?.src : undefined;
+  return image.src.startsWith("https://") ? image.src : image.src.startsWith("/") && domain ? `${domain}${image.src}` : undefined;
+}
+/** 文書・サイト設定（保存済みと入力中）のソーシャルカバーの素材参照。プレビュー用に解決する。 */
+export function coverReferences(document: PageDocument | undefined, state: SiteSettingsState): AssetReference[] {
+  return [document?.meta?.ogImage, state.settings?.ogImage, formImage(state.form)].flatMap((image) => image && "asset" in image ? [image.asset] : []);
+}
+/** サイト設定のソーシャルカバーに素材を入れる。保存はサイト設定の保存で行う。 */
+export function chooseSiteCover(state: SiteSettingsState, asset: LibraryAsset): string | undefined {
+  if (!state.editable || state.status !== "ready" || state.busy) return "サイト設定を編集できる状態になってから選んでください。";
+  const problem = socialImageProblem(asset);
+  if (problem) return problem;
+  state.edit({ imageAsset: { provider: asset.provider, id: asset.id }, imageSrc: "", imageAlt: coverAlt(asset, state.form.imageAlt) });
+  return undefined;
+}
+/** ソーシャルカバー。cover があれば素材から選び、URL 指定は「URL で指定」にたたむ。 */
+function SocialCoverField({ image, src, cover, disabled, locked, empty, clear, url, alt }: {
+  image: PageImage | undefined; src: string | undefined; cover: CoverPicker | undefined; disabled: boolean; locked?: string | undefined; empty: string;
+  /** 無ければ「画像を外す」を出さない（訳文では原文の画像を外せない）。 */
+  clear: (() => void) | undefined; url: ReactNode; alt: ReactNode;
+}) {
+  if (!cover) return <>{url}{alt}{src && <img className="e-cover" src={src} alt="" />}</>;
+  const asset = !!image && "asset" in image;
+  return <div className="e-cover-field">
+    <div className="e-cover e-cover-frame">{src ? <img src={src} alt="" /> : <span>{image ? "画像を表示できません" : empty}</span>}</div>
+    {image && <small className="e-help">{asset ? "素材ライブラリの画像" : "URL で指定した画像"}</small>}
+    {asset && !src && cover.failed && <small className="e-help e-problem">素材の情報を取得できませんでした。</small>}
+    <div className="e-actions"><button type="button" disabled={disabled || !!locked} onClick={cover.pick}>{image ? "画像を置き換え" : "画像を選ぶ"}</button>
+      {image && clear && <button type="button" disabled={disabled || !!locked} onClick={clear}>画像を外す</button>}</div>
+    {locked && <small className="e-help">{locked}</small>}
+    <small className="e-help">リンクを SNS で共有したときに表示されます。1200×630px（横長）を推奨します。</small>
+    <details open={!!image && !asset}><summary>URL で指定</summary>{url}</details>
+    {alt}
+  </div>;
 }
 
 function TextInput({ label, value, change, disabled, multiline = false, placeholder }: { label: string; value: string; change: (value: string) => void; disabled: boolean; multiline?: boolean; placeholder?: string }) {
@@ -329,8 +408,8 @@ function TextInput({ label, value, change, disabled, multiline = false, placehol
   return <label className="e-field" htmlFor={id}><span>{label}</span>{multiline ? <textarea {...props} rows={3} /> : <input {...props} />}</label>;
 }
 /** 右レール「サイト」タブの内容。サイト設定は文書と別に保存する。 */
-export function SiteSettingsPanel({ site, state }: { site: EditorSite | undefined; state: SiteSettingsState }) {
-  const { form, status } = state, locked = !state.editable || state.busy;
+export function SiteSettingsPanel({ site, state, cover }: { site: EditorSite | undefined; state: SiteSettingsState; cover?: CoverPicker | undefined }) {
+  const { form, status } = state, locked = !state.editable || state.busy, image = formImage(form);
   return <>
     <section className="e-section"><h3>公開ドメイン</h3>{site && <p className="e-help">{site.name}</p>}
       {site?.domains.length ? <ul className="e-domains">{site.domains.map((domain) => <li key={domain}>{domain}</li>)}</ul> : <p className="e-help">公開ドメインはありません。</p>}
@@ -343,13 +422,15 @@ export function SiteSettingsPanel({ site, state }: { site: EditorSite | undefine
           <TextInput label="サイトタイトル" value={form.title} disabled={locked} change={(title) => state.edit({ title })} />
           <TextInput label="説明文" value={form.description} disabled={locked} multiline change={(description) => state.edit({ description: description.replace(/[\r\n]+/g, " ") })} />
           <h4>ソーシャルカバー</h4>
-          <TextInput label="画像 URL" value={form.imageSrc} disabled={locked} placeholder="https://… または /images/cover.jpg" change={(imageSrc) => state.edit({ imageSrc })} />
-          <TextInput label="画像の説明" value={form.imageAlt} disabled={locked || !form.imageSrc} change={(imageAlt) => state.edit({ imageAlt })} />
+          <SocialCoverField image={image} src={coverSource(image, cover?.assets, site?.domains[0])} cover={cover} disabled={locked} empty="画像は未設定です" clear={() => state.edit({ imageSrc: "", imageAsset: null, imageAlt: "" })}
+            url={<TextInput label="画像 URL" value={form.imageSrc} disabled={locked} placeholder="https://… または /images/cover.jpg" change={(imageSrc) => state.edit(imageSrc ? { imageSrc, imageAsset: null } : { imageSrc })} />}
+            alt={<TextInput label="画像の説明" value={form.imageAlt} disabled={locked || !image} change={(imageAlt) => state.edit({ imageAlt })} />} />
           <TextInput label="ファビコン URL" value={form.favicon} disabled={locked} change={(favicon) => state.edit({ favicon })} />
           <TextInput label="言語" value={form.locale} disabled={locked} placeholder="ja / ja-JP" change={(locale) => state.edit({ locale })} />
           <label className="e-check"><input type="checkbox" checked={form.noindex} disabled={locked} onChange={(event) => state.edit({ noindex: event.target.checked })} />サイト全体を検索エンジンに表示しない</label>
           {state.problem && <p className="e-help e-problem" role="alert">{state.problem}</p>}
           {state.message && <p className={state.message.alert ? "e-help e-problem" : "e-help"} role={state.message.alert ? "alert" : "status"}>{state.message.text}</p>}
+          {state.latest && <details><summary>競合した保存内容と入力を比較</summary><p>最新の保存内容</p><pre>{JSON.stringify(state.latest, null, 2)}</pre><p>あなたの入力</p><pre>{JSON.stringify({ ...settingsFrom(form), ...state.styles }, null, 2)}</pre></details>}
           {state.conflict && <button type="button" className="e-small" disabled={state.busy} onClick={state.reload}>最新の設定を読み込む（入力を破棄）</button>}
           {state.editable ? <><div className="e-actions"><button type="button" className="e-primary" disabled={!state.canSave} onClick={() => void state.save()}>サイト設定を保存</button>
             <button type="button" disabled={!state.dirty || state.busy} onClick={state.reset}>変更を取り消す</button></div>
@@ -373,10 +454,10 @@ function SearchPreview({ metadata, url }: { metadata: PageMetadata | undefined; 
 }
 
 /** 右レール「ページ」タブの内容。ページ操作は確認付き、公開情報は文書の編集として undo/redo の対象にする。 */
-export function PageSettings({ document, page, site, settings, field, apply, report, disabled, targetMode = false, operations, operationsDisabled, unsaved, start }: {
+export function PageSettings({ document, page, site, settings, field, apply, report, disabled, targetMode = false, cover, operations, operationsDisabled, unsaved, start }: {
   document: PageDocument; page: EditorPage | undefined; site: EditorSite | undefined; settings: SiteSettingsState;
   field: FieldRenderer; apply: (operation: EditorOperation) => string | undefined; report: (message: string) => void; disabled: boolean;
-  targetMode?: boolean;
+  targetMode?: boolean; cover?: CoverPicker | undefined;
   operations: boolean; operationsDisabled: boolean; unsaved: boolean; start: (start: PageChangeStart) => void;
 }) {
   const meta = document.meta ?? {}, kind = page?.kind ?? "page", domain = site?.domains[0], path = publicPath(page);
@@ -385,7 +466,9 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
   const offered = (site?.structuredData ?? []).filter((preset, index, all) => all.findIndex((other) => other.id === preset.id) === index);
   const selected = meta.structuredData ?? [], unsupported = selected.filter((value) => !offered.some((preset) => preset.id === value));
   const structured = (value: string, on: boolean) => run({ type: "meta", field: "structuredData", value: on ? [...selected.filter((other) => other !== value), value] : selected.filter((other) => other !== value) });
-  const image = meta.ogImage, cover = image && (image.src.startsWith("https://") ? image.src : image.src.startsWith("/") && domain ? `${domain}${image.src}` : undefined);
+  const image = meta.ogImage;
+  // 素材の画像のまま URL 欄を空で確定しても画像は外さない。外すのは「画像を外す」。
+  const coverUrl = (value: string): EditorOperation => ({ type: "meta", field: "ogImage", value: value ? { src: value, alt: image?.alt ?? "" } : image && "asset" in image ? image : undefined });
   return <div className="e-page-settings">
       <section className="e-section">
         <div className="e-section-head"><h3>ページ設定</h3>{canChange && <button type="button" className="e-small" aria-label="ページ名とURLを変更" disabled={changeDisabled} onClick={() => start({ action: "update", page })}>変更</button>}</div>
@@ -406,9 +489,10 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
         {field("説明文", meta.description ?? "", (value) => ({ type: "meta", field: "description", value: value.trim() ? value.replace(/[\r\n]+/g, " ") : undefined }), "meta.description",
           { multiline: true, hint: (value) => `${value.length} / 500 · 検索結果に表示される文章です。` })}
         <h4>ソーシャルカバー</h4>
-        {field("画像 URL", image?.src ?? "", (value) => ({ type: "meta", field: "ogImage", value: value ? { src: value, alt: image?.alt ?? "" } : undefined }), "meta.ogImage.src", { placeholder: "https://… または /images/cover.jpg" })}
-        {image && field("画像の説明", image.alt, (value) => ({ type: "meta", field: "ogImage", value: { src: image.src, alt: value } }), "meta.ogImage.alt")}
-        {cover && <img className="e-cover" src={cover} alt="" />}
+        <SocialCoverField image={image} src={coverSource(image, cover?.assets, domain)} cover={cover} disabled={disabled} empty={settings.settings?.ogImage ? "サイト共通の画像を使います" : "画像は未設定です"}
+          locked={targetMode && !image ? "ソーシャルカバーの追加は原文側で行ってください。" : undefined} clear={targetMode ? undefined : () => run({ type: "meta", field: "ogImage", value: undefined })}
+          url={field("画像 URL", image && "src" in image ? image.src : "", coverUrl, "meta.ogImage.src", { placeholder: "https://… または /images/cover.jpg" })}
+          alt={image && field("画像の説明", image.alt, (value) => ({ type: "meta", field: "ogImage", value: { ...image, alt: value } }), "meta.ogImage.alt")} />
         {field("ファビコン URL", meta.favicon ?? "", (value) => ({ type: "meta", field: "favicon", value: value || undefined }), "meta.favicon")}
         <label className="e-check"><input type="checkbox" checked={!!meta.noindex} disabled={disabled || targetMode} onChange={(event) => run({ type: "meta", field: "noindex", value: event.target.checked })} />検索エンジンに表示しない（noindex）{targetMode && <small className="e-help">共通設定は原文側で編集してください。</small>}</label>
         {(offered.length > 0 || unsupported.length > 0) && <><h4>構造化データ</h4>
@@ -417,7 +501,7 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
           {unsupported.map((value) => <div className="e-unsupported" key={value}><span>未対応: {value}</span><button type="button" className="e-small" aria-label={`${value} を外す`} disabled={disabled} onClick={() => structured(value, false)}>外す</button></div>)}
           <small className="e-help">中身はサイトのデータからホストが作成します。</small></>}
       </section>
-      <SearchPreview metadata={metadataFor(document, page, domain, settings.settings)} url={domain && path ? pageUrl(domain, path) : undefined} />
+      <SearchPreview metadata={metadataFor(document, page, domain, settings.settings, cover?.assets)} url={domain && path ? pageUrl(domain, path) : undefined} />
   </div>;
 }
 

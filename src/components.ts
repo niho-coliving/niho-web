@@ -1,3 +1,4 @@
+import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type {
   BlockContracts, ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropDefinition, ComponentPropField, ElementNode, PageDocument, PageNode
 } from "./types.js";
@@ -122,10 +123,11 @@ export function parseComponentLibrary(input: unknown, blocks: BlockContracts = {
  * 下書き文書のインスタンスを部品の複製へ展開し、公開用の v1 文書と展開したノードの出所を返す。
  * library はインスタンスを含まない文書でだけ省略できる。
  */
-export function resolvePageDocument(document: unknown, library: unknown, blocks: BlockContracts = {}): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
-  if (library === undefined) return { document: parsePageDocument(document, blocks), origins: new Map() };
+export function resolvePageDocument(document: unknown, library: unknown, blocks: BlockContracts = {}, siteStyles?: SiteStyles): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
+  if (library === undefined) return { document: resolvePageStyles(parsePageDocument(document, blocks, siteStyles ? { siteStyles } : {}), siteStyles), origins: new Map() };
   const components = parseComponentLibrary(library, blocks);
-  const expanded = expandDocument(parsePageDocument(document, blocks, { components }), components);
+  const parsed = parsePageDocument(document, blocks, { components, ...(siteStyles ? { siteStyles } : {}) });
+  const expanded = expandDocument(resolvePageStyles(parsed, siteStyles), components);
   return { document: parsePageDocument(expanded.document, blocks), origins: expanded.origins };
 }
 
