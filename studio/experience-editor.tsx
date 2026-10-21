@@ -6,6 +6,7 @@ import type { Project } from "../src/projects.js";
 import type { PublicPropValue } from "../src/types.js";
 
 const BASE = "/api/projects/project-experience/sites/experience/editor";
+const STAGING_BASE = "/api/projects/project-experience/sites/experience/editor-staging";
 const DOMAIN = "https://experience.niho.life";
 const PAGE_IDS = ["home", "experiences", "experience-detail", "booking", "host", "chrome"] as const;
 const PAGE_ID_SET = new Set<string>(PAGE_IDS);
@@ -35,11 +36,6 @@ function validVersion(value: unknown): value is string {
 function validTarget(target: EditorTarget): EditorTarget {
   if (target.siteId !== "experience" || target.locale !== "en" || !PAGE_ID_SET.has(target.pageId)) throw new Error("編集対象が一致しません。");
   return { siteId: "experience", pageId: target.pageId, locale: "en" };
-}
-
-function pagePath(target: EditorTarget): string {
-  const checked = validTarget(target);
-  return `${BASE}/sites/experience/pages/${checked.pageId}/en`;
 }
 
 async function api(path: string, method: RequestMethod, body: Record<string, unknown> | undefined, signal: AbortSignal): Promise<unknown> {
@@ -135,7 +131,7 @@ function parseReleased(value: unknown, target: EditorTarget): Extract<EditorRele
   return { status: "released", snapshot: parseSnapshot(source.snapshot, target) };
 }
 
-function createExperienceAdapter(onStatus: (status: number | null) => void): EditorAdapter {
+function createExperienceAdapter(onStatus: (status: number | null) => void, base: string): EditorAdapter {
   async function request<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
     try {
       const result = await run();
@@ -153,24 +149,26 @@ function createExperienceAdapter(onStatus: (status: number | null) => void): Edi
     catch (error) { if (error instanceof EditorApiError && error.status === 409) return { status: "conflict" }; throw error; }
   }
   return {
-    listSites: (signal) => request(signal, async () => parseSites(await api(`${BASE}/sites`, "GET", undefined, signal))),
+    listSites: (signal) => request(signal, async () => parseSites(await api(`${base}/sites`, "GET", undefined, signal))),
     listPages: (siteId, signal) => request(signal, async () => {
       if (siteId !== "experience") throw new Error("編集対象のサイトがありません。");
-      return parsePages(await api(`${BASE}/sites/experience/pages`, "GET", undefined, signal));
+      return parsePages(await api(`${base}/sites/experience/pages`, "GET", undefined, signal));
     }),
-    readDocument: (target, signal) => request(signal, async () => parseSnapshot(await api(pagePath(target), "GET", undefined, signal), target)),
+    readDocument: (target, signal) => request(signal, async () => parseSnapshot(await api(`${base}/sites/experience/pages/${validTarget(target).pageId}/en`, "GET", undefined, signal), target)),
     saveDraft: (input, signal) => conflict(() => request(signal, async () => {
       if (!validVersion(input.expectedVersion)) throw new Error("保存対象の版が正しくありません。");
-      return parseSaved(await api(`${pagePath(input.target)}/draft`, "PUT", { expectedVersion: input.expectedVersion, document: input.document }, signal));
+      const target = validTarget(input.target);
+      return parseSaved(await api(`${base}/sites/experience/pages/${target.pageId}/en/draft`, "PUT", { expectedVersion: input.expectedVersion, document: input.document }, signal));
     })),
     prepareRelease: (input, signal) => request(signal, async () => {
-      validTarget(input.target);
+      const target = validTarget(input.target);
       const body = { expectedVersion: input.expectedVersion, action: input.action, ...(input.action === "rollback" ? { revision: input.revision } : {}) };
-      return parsePlan(await api(`${pagePath(input.target)}/release-plan`, "POST", body, signal), input);
+      return parsePlan(await api(`${base}/sites/experience/pages/${target.pageId}/en/release-plan`, "POST", body, signal), input);
     }),
     release: (plan, signal) => conflict(() => request(signal, async () => {
       if (!releaseMatches(plan, plan)) throw new Error("公開確認が不正です。再度確認してください。");
-      return parseReleased(await api(`${pagePath(plan.target)}/release`, "POST", { expectedVersion: plan.expectedVersion, confirmationToken: plan.confirmationToken }, signal), plan.target);
+      const target = validTarget(plan.target);
+      return parseReleased(await api(`${base}/sites/experience/pages/${target.pageId}/en/release`, "POST", { expectedVersion: plan.expectedVersion, confirmationToken: plan.confirmationToken }, signal), target);
     }))
   };
 }
@@ -215,14 +213,16 @@ const nihoExperiencePreviewBlocks = {
   }
 } satisfies EditorBlockRegistry;
 
-export function ExperienceEditor({ project }: { readonly project: Project }) {
+export function ExperienceEditor({ project, environment = "production" }: { readonly project: Project; readonly environment?: "production" | "staging" }) {
   const [status, setStatus] = useState<number | null>(null);
-  const adapter = useMemo(() => createProjectEditorAdapter(createExperienceAdapter(setStatus), project), [project]);
+  const base = environment === "staging" ? STAGING_BASE : BASE;
+  const adapter = useMemo(() => createProjectEditorAdapter(createExperienceAdapter(setStatus, base), project), [base, project]);
   return <main className="studio-editor">
     <header className="studio-editor-heading">
-      <div><p className="studio-kicker">NIHO EXPERIENCE</p><h1>サイト編集</h1><p>英語サイトを編集します。キャンバス内の体験・提供者・予約情報は表示用サンプルです。</p></div>
+      <div><p className="studio-kicker">NIHO EXPERIENCE{environment === "staging" ? " · STG" : ""}</p><h1>{environment === "staging" ? "サイト編集（STG）" : "サイト編集"}</h1><p>英語サイトを編集します。キャンバス内の体験・提供者・予約情報は表示用サンプルです。</p></div>
       <a href={`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}`}>ダッシュボードに戻る</a>
     </header>
+    {environment === "staging" && <aside className="studio-editor-note studio-editor-staging-note" role="status"><h2>STG環境・オーナー専用</h2><p>この画面の読み書き・公開確認・公開・復元は NIHO API STG に送信します。本番APIと本番bridge keyは使用しません。</p></aside>}
     {status !== null && <div className={`studio-editor-alert studio-editor-alert-${status}`} role="alert">
       <strong>{status === 401 ? "セッションの再確認が必要です" : status === 403 ? "編集権限を確認できません" : status === 503 ? "編集ブリッジを利用できません（503）" : "編集 API の要求を完了できませんでした"}</strong>
       <span>{status === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : status === 403 ? "D1 の Experience プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : status === 503 ? "NIHO 側 editor API の反映状況と、Studio／NIHO API 両側の bridge secret 設定を管理者が確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
