@@ -543,6 +543,7 @@ test("failed asset preview resolution can be retried", async () => {
     assert.equal(attempts, 2);
     assert.equal(button("素材を再読み込み"), undefined);
     assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/garden.png"));
+    await clickCanvas("photo"); assert.equal(input("レスポンシブ画像 URL"), undefined);
   } finally { await app.cleanup(); }
 });
 
@@ -695,6 +696,19 @@ test("without an asset adapter the editor keeps the URL image fields and shows n
     assert.equal(input("画像 URL").value, "/photo.webp"); assert.equal(button("画像を置き換え"), undefined); assert.equal(button("背景画像を選ぶ"), undefined);
     await change(input("画像 URL"), "/other.webp"); assert.equal(canvasNode("photo").getAttribute("src"), "/other.webp");
   } finally { await app.cleanup(); }
+});
+
+test("image URL locks disable responsive replacement and keep alt editable", async () => {
+  for (const field of ["attrs.src", "attrs.srcSet", "asset"]) {
+    const app = await setup({ document: withImage({ attrs: { src: "/photo.webp", srcSet: "/large.webp", alt: "Sea" } }), locks: [{ nodeId: "photo", fields: [field], reason: "業務画像" }] });
+    try {
+      await clickCanvas("photo");
+      assert.equal(input("画像 URL").disabled, true);
+      assert.equal(input("レスポンシブ画像 URL").disabled, true);
+      assert.equal(input("画像の説明").disabled, false);
+      assert.equal(button("下書き保存").disabled, true);
+    } finally { await app.cleanup(); }
+  }
 });
 
 const caps = (extra = {}) => ({ upload: false, editMetadata: false, delete: false, folders: false, acquire: false, ...extra });

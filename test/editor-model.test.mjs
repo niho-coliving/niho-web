@@ -165,6 +165,25 @@ test("image operations switch between library assets and URLs and keep or set al
   assert.throws(() => editDocument(locked, { type: "image", path: [0, 3], source: { src: "/other.webp" } }, {}, [{ nodeId: "photo", fields: ["asset"], reason: "連動画像" }]), /連動画像/);
   assert.throws(() => editDocument(locked, { type: "image", path: [0, 3], source: { asset: { provider: "uploads", id: "b" } } }, {}, [{ nodeId: "photo", fields: ["*"], reason: "連動画像" }]), /連動画像/);
 });
+test("image source locks cover src, srcSet, assets, restoration and history together", () => {
+  const original = withPhoto({ attrs: { src: "/photo.webp", srcSet: "/photo-large.webp", alt: "Sea" } });
+  const changed = structuredClone(original); nodeAt(changed, [0, 3]).attrs.srcSet = "/bypass.webp";
+  for (const field of ["attrs.src", "attrs.srcSet", "asset"]) {
+    const locks = [{ nodeId: "photo", fields: [field], reason: "業務画像" }];
+    for (const requested of ["attrs.src", "attrs.srcSet", "asset"]) assert.equal(lockReason(original, [0, 3], requested, locks), "業務画像");
+    for (const operation of [
+      { type: "attribute", path: [0, 3], name: "srcSet", value: "/bypass.webp" },
+      { type: "attribute", path: [0, 3], name: "src", value: "/bypass.webp" },
+      { type: "image", path: [0, 3], source: { src: "/photo.webp", srcset: "/bypass.webp" } },
+      { type: "image", path: [0, 3], source: { asset: { provider: "uploads", id: "bypass" } } },
+      { type: "restore", document: changed }
+    ]) assert.throws(() => editDocument(original, operation, {}, locks), /業務画像/);
+    assert.throws(() => travelHistory({ past: [changed], present: original, future: [] }, "undo", {}, locks), /業務画像/);
+    assert.throws(() => travelHistory({ past: [], present: original, future: [changed] }, "redo", {}, locks), /業務画像/);
+    assert.equal(nodeAt(editDocument(original, { type: "attribute", path: [0, 3], name: "alt", value: "Updated sea" }, {}, locks), [0, 3]).attrs.alt, "Updated sea");
+  }
+});
+
 test("background operations set and clear images per breakpoint like style operations", () => {
   const wave = { provider: "uploads", id: "wave" };
   let next = editDocument(doc(), { type: "background", path: [0], breakpoint: "base", asset: wave });

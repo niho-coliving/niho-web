@@ -264,6 +264,7 @@ export function parsePublishedSiteLocaleSnapshot(input: unknown, options: Releas
     return { pageId, sourcePath, path, indexable, document };
   });
   if (new Set(pages.map((page) => page.pageId)).size !== pages.length || new Set(pages.map((page) => page.path)).size !== pages.length) fail("$.pages", "duplicate page identity");
+  validateLocaleRouteCatalogue(pages.map((page) => page.sourcePath));
   const supportedBlocks = assertSupportedBlocks(pages, components, uniqueIds(source.supportedBlocks, "$.supportedBlocks", 1_000));
   const navigation = parseNavigation(source.navigation), allowed = new Set(pages.map((page) => page.pageId));
   if (navigationPageIds(navigation).some((id) => !allowed.has(id))) fail("$.navigation", "navigation references an unpublished page");
@@ -423,22 +424,28 @@ function withoutLinkAttributes(attrs: Record<string, string | number | boolean> 
   const result = Object.fromEntries(Object.entries(attrs).filter(([name]) => !["href", "target", "rel", "hreflang"].includes(name.toLowerCase())));
   return Object.keys(result).length ? result : undefined;
 }
-function projectNodes(nodes: readonly PageNode[], removedRoutes: ReadonlySet<string>, origins: readonly string[], exposedHrefNodes: ReadonlySet<string> = new Set()): PageNode[] {
+function projectNodes(nodes: readonly PageNode[], removedRoutes: ReadonlySet<string>, origins: readonly string[], blocks: BlockContracts,
+  components: ComponentLibrary, exposedHrefNodes: ReadonlySet<string> = new Set()): PageNode[] {
   return nodes.map((node): PageNode => {
     if (node.type === "text") return clone(node);
     if (node.type === "element") {
       const removed = node.tag === "a" && pointsToRemovedRoute(node.attrs?.href, removedRoutes, origins);
-      if (!removed) return { ...clone(node), children: projectNodes(node.children, removedRoutes, origins, exposedHrefNodes) };
+      const children = projectNodes(node.children, removedRoutes, origins, blocks, components, exposedHrefNodes);
+      if (!removed) return { ...clone(node), children };
       const { attrs: _attrs, ...base } = clone(node), attrs = withoutLinkAttributes(node.attrs);
       // href の公開propはa要素に束縛される。hrefなしのaを保ち、安全なインスタンス別URLは引き続き適用できる。
-      return { ...base, tag: exposedHrefNodes.has(node.id) ? "a" : "span", ...(attrs ? { attrs } : {}), children: projectNodes(node.children, removedRoutes, origins, exposedHrefNodes) };
+      return { ...base, tag: exposedHrefNodes.has(node.id) ? "a" : "span", ...(attrs ? { attrs } : {}), children };
     }
     if (node.type === "component") {
-      const props = Object.fromEntries(Object.entries(node.props).filter(([, value]) => !pointsToRemovedRoute(value, removedRoutes, origins)));
+      const rules = blocks[node.block]?.props ?? {};
+      const removed = Object.keys(node.props).filter((name) => rules[name]?.type === "url" && pointsToRemovedRoute(node.props[name], removedRoutes, origins));
+      const props = Object.fromEntries(Object.entries(node.props).filter(([name]) => !removed.includes(name)));
       return { ...clone(node), props };
     }
+    const definition = components.components.find((component) => component.id === node.component);
     const { props: _props, ...base } = clone(node);
-    const props = node.props && Object.fromEntries(Object.entries(node.props).filter(([, value]) => !pointsToRemovedRoute(value, removedRoutes, origins)));
+    const props = node.props && Object.fromEntries(Object.entries(node.props).filter(([name, value]) =>
+      definition?.props?.[name]?.field !== "href" || !pointsToRemovedRoute(value, removedRoutes, origins)));
     return { ...base, ...(props && Object.keys(props).length ? { props } : {}) };
   });
 }
@@ -472,11 +479,11 @@ export async function projectCurrentPublishedSiteLocaleSnapshot(input: { snapsho
   if (!allowedIds.size) fail("$.visibility", "no public pages remain available");
   const removedRoutes = new Set(previous.routes.filter((route) => !allowedIds.has(route.pageId)).flatMap((route) => [route.path, route.sourcePath]).map(routeKey));
   const components: ComponentLibrary = { ...clone(previous.components), components: previous.components.components.map((component) => ({
-    ...clone(component), root: projectNodes([component.root], removedRoutes, origins,
+    ...clone(component), root: projectNodes([component.root], removedRoutes, origins, options.blocks ?? {}, previous.components,
       new Set(Object.values(component.props ?? {}).filter((prop) => prop.field === "href").map((prop) => prop.node)))[0] as typeof component.root
   })) };
   const pages = previous.pages.filter((page) => allowedIds.has(page.pageId)).map((page) => ({
-    ...clone(page), document: { ...clone(page.document), body: projectNodes(page.document.body, removedRoutes, origins) }
+    ...clone(page), document: { ...clone(page.document), body: projectNodes(page.document.body, removedRoutes, origins, options.blocks ?? {}, previous.components) }
   }));
   const routes = previous.routes.filter((route) => allowedIds.has(route.pageId));
   const seo = previous.seo.filter((entry) => allowedIds.has(entry.pageId));

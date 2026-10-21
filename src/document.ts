@@ -47,7 +47,7 @@ function attributes(value: unknown, tag: ElementTag, path: string, asset = false
     }
     result[name] = value as string | number | boolean;
   }
-  if (tag === "img" && asset && Object.hasOwn(result, "src")) fail(path, "img uses either src or asset");
+  if (tag === "img" && asset && (Object.hasOwn(result, "src") || Object.hasOwn(result, "srcSet"))) fail(path, "img uses either URL sources or asset");
   if (tag === "img" && (!asset && typeof result.src !== "string" || typeof result.alt !== "string")) fail(path, asset ? "img requires alt" : "img requires src and alt");
   return result;
 }

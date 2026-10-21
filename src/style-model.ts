@@ -26,6 +26,8 @@ export function normalizeBreakpoints(input: readonly EditorBreakpoint[] | undefi
 export function editorTiers(document: PageDocument, breakpoints: readonly EditorBreakpoint[] = defaultBreakpoints): EditorTier[] {
   const widths = new Set(breakpoints.map((entry) => entry.minWidth));
   for (const { node } of walkNodes(document)) if (node.type !== "text") for (const entry of node.style?.responsive ?? []) widths.add(entry.minWidth);
+  // 業務ブロックの表示領域で使う幅も段として選べるようにする。
+  for (const { node } of walkNodes(document)) if (node.type === "component") for (const style of Object.values(node.slots ?? {})) for (const entry of style.responsive ?? []) widths.add(entry.minWidth);
   for (const style of Object.values(document.textStyles ?? {})) for (const entry of style.responsive ?? []) widths.add(entry.minWidth);
   const sorted = [...widths].sort((a, b) => a - b);
   return (["base", ...sorted] as TierKey[]).map((key, index) => {
@@ -49,7 +51,8 @@ export function fieldState(document: PageDocument, node: ElementNode | Component
     overriddenAt: responsive.filter((entry) => entry.minWidth > start && entry.declarations[property] !== undefined).map((entry) => entry.minWidth) };
 }
 export function tokenUsage(document: PageDocument, name: string): {
-  nodes: { nodeId: string; path: NodePath; property: StyleProperty; breakpoint: TierKey; state?: StateName }[];
+  /** slot は業務ブロックの表示領域での参照。 */
+  nodes: { nodeId: string; path: NodePath; property: StyleProperty; breakpoint: TierKey; state?: StateName; slot?: string }[];
   textStyles: { name: string; property: TextStyleProperty; breakpoint: TierKey }[];
 } {
   const uses = (values: StyleDeclarations | undefined) => Object.entries(values ?? {}).flatMap(([property, value]) => typeof value === "object" && "token" in value && value.token === name ? [property] : []);
@@ -59,6 +62,10 @@ export function tokenUsage(document: PageDocument, name: string): {
     for (const property of uses(node.style?.base)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: "base" });
     for (const entry of node.style?.responsive ?? []) for (const property of uses(entry.declarations)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: entry.minWidth });
     for (const [state, values] of Object.entries(node.style?.states ?? {})) for (const property of uses(values)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: "base", state: state as StateName });
+    if (node.type === "component") for (const [slot, style] of Object.entries(node.slots ?? {})) {
+      for (const property of uses(style.base)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: "base", slot });
+      for (const entry of style.responsive ?? []) for (const property of uses(entry.declarations)) nodes.push({ nodeId: node.id, path, property: property as StyleProperty, breakpoint: entry.minWidth, slot });
+    }
   }
   for (const [style, value] of Object.entries(document.textStyles ?? {})) {
     for (const property of uses(value.base)) textStyles.push({ name: style, property: property as TextStyleProperty, breakpoint: "base" });

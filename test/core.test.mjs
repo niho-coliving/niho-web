@@ -187,3 +187,13 @@ test("background images accept only library asset references and background enum
     const copy = doc(); copy.body[0].style.base = declarations; reject(copy);
   }
 });
+
+
+test("asset-backed images cannot include independent src or srcSet sources", () => {
+  const image = { type: "element", id: "managedPhoto", tag: "img", asset: { provider: "uploads", id: "photo" }, attrs: { alt: "Sea" }, children: [] };
+  const input = doc(); input.body.push(image);
+  assert.ok(parsePageDocument(input));
+  for (const attrs of [{ src: "/other.webp" }, { srcSet: "/other.webp" }, { src: "/other.webp", srcSet: "/large.webp" }]) {
+    image.attrs = { alt: "Sea", ...attrs }; reject(input);
+  }
+});

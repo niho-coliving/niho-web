@@ -13,8 +13,9 @@ import { PageRenderer } from "./react.js";
 import type { ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropField, ElementNode, InstanceNode, PageDocument } from "./types.js";
 
 // 共通部品の表示部品。編集操作はすべてエディターから受け取り、ここでは文書・ライブラリを変更しない。
-/** エディターの入力欄。apply は問題があれば理由を返す。 */
-export type InputRenderer = (name: string, value: string, apply: (value: string) => string | undefined, key: string, options?: { multiline?: boolean }) => ReactNode;
+/** エディターの入力欄。apply は問題があれば理由を返す。reason はロックの理由、hint は入力欄の下の補足。 */
+export type InputRenderer = (name: string, value: string, apply: (value: string) => string | undefined, key: string,
+  options?: { multiline?: boolean; reason?: string | undefined; hint?: ((value: string) => ReactNode) | undefined }) => ReactNode;
 export type ComponentDialogState = { type: "create"; path: NodePath } | { type: "rename"; componentId: string } | { type: "remove"; componentId: string } | { type: "detach"; path: NodePath };
 const dialogTitles = { create: "共通部品にする", rename: "名前を変更", remove: "共通部品を削除", detach: "部品を解除" } as const;
 export const componentDialogTitle = (dialog: ComponentDialogState): string => dialogTitles[dialog.type];

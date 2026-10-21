@@ -333,8 +333,8 @@ test("source component editing saves through the canonical library session and t
     await clickTool("部品"); await click("編集"); await click("p · sharedText");
     await change(input("テキスト"), "共有原文を更新"); await click("下書き保存");
     assert.equal(app.librarySaves.length, 1);
+    assert.equal(app.siteReads, initialSiteReads + 1, "shared source saves refresh site localization once");
     assert.equal(app.components.components[0].root.children[0].children[0].text, "共有原文を更新");
-    assert.equal(app.siteReads, initialSiteReads + 1);
 
     await click("ページに戻る"); await click("English（訳文）"); await flush(7);
     const frame = document.querySelector('iframe[title="ページのライブキャンバス"]'); assert.ok(frame);
