@@ -1,4 +1,4 @@
-import { normalizePageChange, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
+import { normalizePageChange, parseEditorReadOnly, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
 import { parseEditorLocaleReleaseApplyResult, parseEditorLocaleReleasePlan, parseEditorLocaleReleaseState } from "./editor-locale-release.js";
 import type { EditorAdapter, EditorComponentAdapter, EditorLocaleReleaseApplyRequest, EditorLocaleReleasePrepareRequest, EditorLocalizationAdapter, EditorLocalizationCommand, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
 import { parseRevisionEntry, parseRevisionPage } from "./history.js";
@@ -203,7 +203,8 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       const checkedTarget = targetForProject(target, site);
       const snapshot = structuredClone(await adapter.readDocument(checkedTarget, signal));
       assertDocumentTarget(snapshot.document, checkedTarget);
-      return snapshot;
+      const { readOnly: rawReadOnly, ...rest } = snapshot, readOnly = parseEditorReadOnly(rawReadOnly);
+      return { ...rest, ...(readOnly ? { readOnly } : {}) };
     },
     async saveDraft(request, signal) {
       const target = targetForProject(request.target, site);
@@ -225,7 +226,8 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       if (result.status === "released") {
         const snapshot = structuredClone(result.snapshot);
         assertDocumentTarget(snapshot.document, target);
-        return { status: "released", snapshot };
+        const { readOnly: rawReadOnly, ...rest } = snapshot, readOnly = parseEditorReadOnly(rawReadOnly);
+        return { status: "released", snapshot: { ...rest, ...(readOnly ? { readOnly } : {}) } };
       }
       return result;
     },

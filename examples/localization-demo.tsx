@@ -19,9 +19,12 @@ const wait = (milliseconds: number, signal: AbortSignal) => new Promise<void>((r
 const text = (value: string): PageNode => ({ type: "text", text: value });
 const element = (id: string, tag: "header" | "nav" | "main" | "section" | "h1" | "p" | "a" | "img" | "footer", children: PageNode[] = [], attrs?: Record<string, string>): PageNode => ({ type: "element", id, tag, ...(attrs ? { attrs } : {}), children });
 function makeDocument(siteId: string, pageId: string, locale: string, title: string, heading: string, body: string): PageDocument {
-  return { schemaVersion: 1, siteId, pageId, locale, revision: 1, title, meta: { description: body }, tokens: { ink: { type: "color", value: "#17382d" }, paper: { type: "color", value: "#f7f3ea" } }, body: [
+  return { schemaVersion: 1, siteId, pageId, locale, revision: 1, title, meta: { description: body, ogImage: { src: `/media/${siteId}-og-source.svg`, alt: locale.startsWith("ja") ? "鎌倉の海" : "Kamakura sea" } }, tokens: { ink: { type: "color", value: "#17382d" }, paper: { type: "color", value: "#f7f3ea" } }, body: [
     { type: "instance", id: `${pageId}_sharedHeader`, component: "siteHeader" },
-    { ...element(`${pageId}_main`, "main", [element(`${pageId}_hero`, "section", [element(`${pageId}_heading`, "h1", [text(heading)]), element(`${pageId}_lead`, "p", [text(body)]), { ...element(`${pageId}_photo`, "img", [], { alt: locale.startsWith("ja") ? "鎌倉の海" : "Kamakura sea" }), asset: { provider: "demo", id: "main" } }])]), style: { base: { padding: 32, color: { token: "ink" }, display: "flex", flexDirection: "column", gap: 18 } } },
+    { ...element(`${pageId}_main`, "main", [element(`${pageId}_hero`, "section", [element(`${pageId}_heading`, "h1", [text(heading)]), element(`${pageId}_lead`, "p", [text(body)]),
+      { ...element(`${pageId}_photo`, "img", [], { alt: locale.startsWith("ja") ? "鎌倉の海" : "Kamakura sea" }), asset: { provider: "demo", id: "main" } },
+      element(`${pageId}_urlPhoto`, "img", [], { src: `/media/${siteId}-url-source.svg`, srcSet: `/media/${siteId}-url-source.svg`, alt: locale.startsWith("ja") ? "URL参照の海" : "URL-referenced sea" })])]),
+      style: { base: { padding: 32, color: { token: "ink" }, display: "flex", flexDirection: "column", gap: 18 } } },
     { type: "instance", id: `${pageId}_sharedFooter`, component: "siteFooter" }
   ] };
 }
@@ -43,7 +46,8 @@ const dictionary = new Map<string, string>([
 ]);
 const translated = (value: string) => dictionary.get(value) ?? `［デモ訳］${value}`;
 const translateValue = (value: LocalizationValue): LocalizationValue => typeof value === "string" ? translated(value) : value.kind === "asset" ? { kind: "asset", asset: { provider: "demo", id: "localized" } }
-  : { kind: "rich-text", children: value.children.map(function map(node): typeof node { return node.type === "text" ? { ...node, text: translated(node.text) } : { ...node, children: node.children.map(map) }; }) };
+  : value.kind === "image-url" ? { kind: "image-url", src: value.src.replace("-source.svg", "-localized.svg"), ...(value.srcset ? { srcset: value.srcset.replace("-source.svg", "-localized.svg") } : {}) }
+    : { kind: "rich-text", children: value.children.map(function map(node): typeof node { return node.type === "text" ? { ...node, text: translated(node.text) } : { ...node, children: node.children.map(map) }; }) };
 async function makePage(config: SiteLocalizationConfig, components: ComponentLibrary, pageId: string, path: string, title: string, heading: string, body: string, initialIncomplete = false): Promise<PageState> {
   const source = makeDocument(config.siteId, pageId, config.documentLocales[config.sourceLocale], title, heading, body), targetLocale = config.sourceLocale === "ja" ? "en" : "ja", options = { components };
   const collection = await collectLocalizationUnits(config, source, targetLocale, options); let overlay = createLocalizationOverlay(collection);
@@ -94,6 +98,9 @@ await seed();
 const siteFor = (siteId: string) => { const site = sites.get(siteId); if (!site) throw new Error("site not found"); return site; };
 const pageFor = (target: EditorTarget) => { const page = siteFor(target.siteId).pages.get(target.pageId); if (!page) throw new Error("page not found"); return page; };
 const isSource = (site: SiteState, target: EditorTarget) => target.locale === site.config.documentLocales[site.config.sourceLocale];
+const readOnlyFor = (site: SiteState, target: EditorTarget) => site.config.siteId === "experience" && target.pageId === "about" && isSource(site, target)
+  ? { reason: "この公開テキストの英語原文は既存の業務編集画面が正本です。ここでは内容を確認し、日本語派生だけを編集します。", editUrl: "/staff/business/public-text/experience-about", editLabel: "業務原稿を編集" }
+  : undefined;
 const statusFor = (site: SiteState, page: PageState, locale: LocalizationLocale) => locale === site.config.sourceLocale ? { state: "source" as const, published: true } : (() => {
   const status = localizationStatus(page.overlay, page.collection), release = site.releases[locale], current = release.current && release.snapshots.get(release.current.releaseId);
   return { state: page.job.state === "failed" ? "failed" as const : page.job.state === "queued" || page.job.state === "running" ? "translating" as const : status.reviewNeeded ? "review-needed" as const : status.complete ? "reviewed" as const : "review-needed" as const,
@@ -166,9 +173,10 @@ async function generate(page: PageState, site: SiteState, signal: AbortSignal) {
 export const localizationDemoAdapter: EditorAdapter = {
   listSites: async () => [...sites.entries()].map(([id, site]) => ({ id, name: site.name, domains: [`https://${id}.demo.invalid`] })),
   listPages: async (siteId) => { const site = siteFor(siteId); return [...site.pages.values()].map((page) => ({ ...page.page, locale: site.config.documentLocales[site.config.sourceLocale] })); },
-  readDocument: async (target) => { const site = siteFor(target.siteId), page = pageFor(target); return { document: structuredClone(isSource(site, target) ? page.source : page.target), version: `doc-${page.documentVersion}` }; },
+  readDocument: async (target) => { const site = siteFor(target.siteId), page = pageFor(target), readOnly = readOnlyFor(site, target); return { document: structuredClone(isSource(site, target) ? page.source : page.target), version: `doc-${page.documentVersion}`, ...(readOnly ? { readOnly } : {}) }; },
   saveDraft: async (request) => {
     const site = siteFor(request.target.siteId), page = pageFor(request.target);
+    if (readOnlyFor(site, request.target)) throw { status: 403 };
     if (request.expectedVersion !== `doc-${page.documentVersion}`) return { status: "conflict" };
     if (isSource(site, request.target)) {
       page.source = { ...structuredClone(request.document), revision: page.source.revision + 1 };
@@ -185,7 +193,11 @@ export const localizationDemoAdapter: EditorAdapter = {
     }
     page.documentVersion++; site.siteVersion++; return { status: "saved", version: `doc-${page.documentVersion}`, revision: (isSource(site, request.target) ? page.source : page.target).revision };
   },
-  prepareRelease: async (request) => ({ ...request, confirmationToken: "demo-source-only", domain: `https://${request.target.siteId}.demo.invalid`, changes: [{ path: "デモ", before: "公開は行いません", after: "原文側の確認UIだけを表示" }] }),
+  prepareRelease: async (request) => {
+    const site = siteFor(request.target.siteId);
+    if (readOnlyFor(site, request.target)) throw { status: 403 };
+    return { ...request, confirmationToken: "demo-source-only", domain: `https://${request.target.siteId}.demo.invalid`, changes: [{ path: "デモ", before: "公開は行いません", after: "原文側の確認UIだけを表示" }] };
+  },
   release: async () => ({ status: "conflict" }),
   components: {
     readLibrary: async (siteId) => { const site = siteFor(siteId); return { library: structuredClone(site.components), version: `lib-${site.componentVersion}` }; },

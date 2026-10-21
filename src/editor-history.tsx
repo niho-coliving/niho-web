@@ -335,16 +335,16 @@ export function VersionPanel({ history, status, snapshotBlock }: { history: Vers
   </section>;
 }
 /** 履歴モード中、キャンバス上部に浮かべる操作。 */
-export function HistoryBar({ history, restore, rollback, rollbackHint }: { history: VersionHistory; restore: () => void; rollback: (() => void) | undefined; rollbackHint: string | undefined }) {
+export function HistoryBar({ history, restore, restoreBlocked, rollback, rollbackHint }: { history: VersionHistory; restore: () => void; restoreBlocked?: string; rollback: (() => void) | undefined; rollbackHint: string | undefined }) {
   const viewing = history.viewing;
   if (!viewing) return null;
   return <div className="e-history-bar" role="region" aria-label="表示中の版">
     <span className="e-history-bar-title">{formatDateTime(viewing.entry.createdAt)} · {revisionKindLabels[viewing.entry.kind]}</span>
     <button type="button" onClick={history.showDiff}>差分を見る</button>
-    <button type="button" className="e-primary" onClick={restore}>この版を復元</button>
+    <button type="button" className="e-primary" disabled={!!restoreBlocked} onClick={restore}>この版を復元</button>
     {rollback && <button type="button" disabled={!!rollbackHint} onClick={rollback}>公開版をこの版に戻す…</button>}
     <button type="button" onClick={history.exit}>閉じる</button>
-    {rollback && rollbackHint && <small className="e-history-bar-hint">{rollbackHint}</small>}
+    {(restoreBlocked || rollback && rollbackHint) && <small className="e-history-bar-hint">{restoreBlocked ?? rollbackHint}</small>}
   </div>;
 }
 function SnapshotDialog({ history }: { history: VersionHistory }) {

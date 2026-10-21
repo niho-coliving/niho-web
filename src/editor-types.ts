@@ -112,12 +112,16 @@ export interface EditorLocalizationAdapter {
 }
 /** フィールドは props.name / attrs.href / children / style 等。* はノード全体。 */
 export type EditorLock = { nodeId: string; fields: readonly string[]; reason: string };
+/** 文書単位の表示ポリシー。認可の代わりではなく、ホストは書込 API 側でも同じ正本ポリシーを検証する。 */
+export type EditorReadOnly = { reason: string; editUrl?: string; editLabel?: string };
 export type EditorSnapshot = {
   document: unknown;
   /** ホストが発行する opaque な楽観ロック値。 */
   version: string;
   locks?: readonly EditorLock[];
   releases?: readonly { revision: number; label: string }[];
+  /** 省略時は従来どおり編集可能。ブラウザ退避や履歴からは復元せず、毎回ホストの現在値を使う。 */
+  readOnly?: EditorReadOnly;
 };
 export type EditorSaveResult = {
   status: "saved";

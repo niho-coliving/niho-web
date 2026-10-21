@@ -63,6 +63,19 @@ export function isSafePublicUrl(value: unknown): value is string {
   } catch { return false; }
 }
 
+/** 画像 source 用。fragment は画像参照として扱わず、既存の公開 URL 制約をそのまま使う。 */
+export function publicImageUrl(value: unknown, path: string): string {
+  if (!isSafePublicUrl(value) || value.startsWith("#")) fail(path, "unsafe image URL");
+  return value;
+}
+
+/** 現行文書契約の responsive source は単一 URL。候補列の独自解釈はしない。 */
+export function publicImageSrcSet(value: unknown, path: string): string {
+  const result = publicImageUrl(value, path);
+  if (/[,\s]/u.test(result)) fail(path, "srcSet supports one URL only");
+  return result;
+}
+
 /** パス・query・fragment・資格情報・末尾 / を含まない HTTPS origin。 */
 export function isSafeHttpsOrigin(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0 || value.length > 2048 || /[\u0000-\u001f\u007f]/u.test(value)) return false;

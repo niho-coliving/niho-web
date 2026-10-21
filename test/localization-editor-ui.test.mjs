@@ -35,11 +35,12 @@ async function typeWithoutBlur(target, value) {
 }
 const config = (siteId, sourceLocale) => ({ schemaVersion: 1, siteId, sourceLocale, defaultLocale: sourceLocale, enabledLocales: sourceLocale === "ja" ? ["ja", "en"] : ["en", "ja"],
   documentLocales: { ja: "ja-JP", en: "en-US" }, glossaryVersion: "demo-g1", contextVersion: "demo-c1" });
-const sourcePage = (siteId, pageId, locale, title) => ({ schemaVersion: 1, siteId, pageId, locale, revision: 1, title, tokens: { ink: { type: "color", value: "#17382d" } }, body: [
+const sourcePage = (siteId, pageId, locale, title) => ({ schemaVersion: 1, siteId, pageId, locale, revision: 1, title, meta: { ogImage: { src: `/${siteId}-og-source.webp`, alt: "OG" } }, tokens: { ink: { type: "color", value: "#17382d" } }, body: [
   { type: "element", id: "hero", tag: "section", style: { base: { color: { token: "ink" }, padding: 24 } }, children: [
     { type: "element", id: "heading", tag: "h1", children: [{ type: "text", text: locale.startsWith("ja") ? "海辺で暮らす" : "Live by the sea" }] },
     { type: "element", id: "lead", tag: "p", children: [{ type: "text", text: locale.startsWith("ja") ? "詳しくは" : "Read " }, { type: "element", id: "details", tag: "a", attrs: { href: "/details" }, children: [{ type: "text", text: locale.startsWith("ja") ? "こちら" : "details" }] }] },
-    { type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "main" }, attrs: { alt: locale.startsWith("ja") ? "海の写真" : "Sea" }, children: [] }
+    { type: "element", id: "photo", tag: "img", asset: { provider: "uploads", id: "main" }, attrs: { alt: locale.startsWith("ja") ? "海の写真" : "Sea" }, children: [] },
+    { type: "element", id: "urlPhoto", tag: "img", attrs: { src: `/${siteId}-source.webp`, srcSet: `/${siteId}-source-2x.webp`, alt: locale.startsWith("ja") ? "URLの海" : "URL sea", width: 640, height: 360 }, children: [] }
   ] }
 ] });
 const translateRich = (value) => ({ ...value, children: value.children.map(function map(node) { return node.type === "text" ? { ...node, text: node.text ? `訳:${node.text}` : node.text } : { ...node, children: node.children.map(map) }; }) });
@@ -48,7 +49,9 @@ async function localizedSite(siteId, sourceLocale, labels) {
   const collection = await collectLocalizationUnits(cfg, sourceDocument, sourceLocale === "ja" ? "en" : "ja");
   let overlay = createLocalizationOverlay(collection);
   for (const unit of collection.units.filter((entry) => entry.scope === "page")) {
-    const value = unit.kind === "asset" ? { kind: "asset", asset: { provider: "uploads", id: `${siteId}-localized` } }
+    const value = unit.field === "meta.ogImage.src" ? { kind: "image-url", src: `/${siteId}-og-localized.webp` }
+      : unit.field === "node.urlPhoto.asset" ? { kind: "image-url", src: `/${siteId}-localized.webp` }
+      : unit.kind === "asset" ? { kind: "asset", asset: { provider: "uploads", id: `${siteId}-localized` } }
       : unit.kind === "rich-text" ? translateRich(unit.sourceValue) : unit.unitId === "page.title" ? labels.manual : `訳:${unit.sourceValue}`;
     overlay = editLocalizedValue(overlay, collection, { unitId: unit.unitId, value, expectedVersion: overlay.version });
   }
@@ -57,7 +60,7 @@ async function localizedSite(siteId, sourceLocale, labels) {
   const targetDocument = (await materializeLocalizedPage(cfg, sourceDocument, collection, overlay)).document;
   return { cfg, sourceDocument, targetDocument, collection, overlay, labels, documentVersion: 1, localizationVersion: 1, siteVersion: 1, job: { state: "failed", message: "合成した失敗" } };
 }
-async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, extraPublicPage = false, recovery, localeRelease } = {}) {
+async function setup({ conflictOnce = false, conflictSourceChange = false, rejectCommandOnce = false, delayedRead = false, delayedSite = false, delayedSiteAfterFirst = false, rejectSiteOnce = false, rejectPageOnce = false, unsupportedLocale = false, extraPublicPage = false, recovery, localeRelease, readOnlySource = false, readOnlyTarget = false } = {}) {
   const kamakura = await localizedSite("kamakura", "ja", { source: "鎌倉ホーム", manual: "Manual Kamakura", candidate: "Candidate Kamakura" });
   const experience = await localizedSite("experience", "en", { source: "Experience home", manual: "体験（手修正）", candidate: "体験（翻訳案）" });
   const sites = { kamakura, experience }, calls = { saves: [], commands: [], siteReads: 0, pageReads: 0 }; let conflict = conflictOnce, rejectCommand = rejectCommandOnce, delayedResolve, delayedSiteResolve, failSite = rejectSiteOnce, failPage = rejectPageOnce;
@@ -72,7 +75,8 @@ async function setup({ conflictOnce = false, conflictSourceChange = false, rejec
   const adapter = {
     listSites: async () => [{ id: "kamakura", name: "鎌倉", domains: ["https://kamakura.example"] }, { id: "experience", name: "Experience", domains: ["https://experience.example"] }],
     listPages: async (siteId) => [{ siteId, pageId: "home", locale: unsupportedLocale && siteId === "kamakura" ? "fr-FR" : sites[siteId].cfg.documentLocales[sites[siteId].cfg.sourceLocale], title: sites[siteId].labels.source }],
-    readDocument: async (target) => { const state = stateFor(target), value = structuredClone(isSource(state, target) ? state.sourceDocument : state.targetDocument); if (unsupportedLocale && target.locale === "fr-FR") value.locale = target.locale; return { document: value, version: `doc-${state.documentVersion}` }; },
+    readDocument: async (target) => { const state = stateFor(target), source = isSource(state, target), value = structuredClone(source ? state.sourceDocument : state.targetDocument); if (unsupportedLocale && target.locale === "fr-FR") value.locale = target.locale; return { document: value, version: `doc-${state.documentVersion}`,
+      ...((readOnlySource && source || readOnlyTarget && !source) ? { readOnly: { reason: source ? "業務公開テキストの原文は既存の業務編集画面が正本です。" : "この派生原稿はホスト側で固定されています。", editUrl: "/staff/business/public-text", editLabel: "業務原稿を編集" } } : {}) }; },
     saveDraft: async (request) => {
       calls.saves.push(structuredClone(request)); const state = stateFor(request.target);
       if (isSource(state, request.target)) state.sourceDocument = { ...structuredClone(request.document), revision: state.sourceDocument.revision + 1 };
@@ -158,7 +162,7 @@ async function setupSharedComponents() {
       values: [{ unitId: unit.unitId, sourceFingerprint: unit.sourceFingerprint, value: "Shared candidate" }] });
     pages.set(pageId, { source: sourceDocument, collection, overlay, target: (await materializeLocalizedPage(cfg, sourceDocument, collection, overlay, { components })).document, documentVersion: 1, localizationVersion: 1 });
   }
-  const pageFor = (target) => pages.get(target.pageId), calls = [], librarySaves = []; let siteReads = 0; let libraryVersion = 1;
+  const pageFor = (target) => pages.get(target.pageId), calls = [], librarySaves = []; let libraryVersion = 1, siteReads = 0;
   const pickedAsset = { provider: "uploads", id: "shared-target", siteId: "shared", kind: "image", status: "ready", name: "言語別の共有画像", mimeType: "image/png", bytes: 100, width: 100, height: 50, alt: "", version: "1", updatedAt: "2026-10-21T00:00:00.000Z" };
   const assets = {
     listAssets: async () => ({ assets: [pickedAsset], folders: [] }), uploadAsset: async () => ({ status: "rejected", reason: "permission" }), updateAsset: async () => ({ status: "rejected", reason: "permission" }),
@@ -181,7 +185,7 @@ async function setupSharedComponents() {
       listUsage: async () => []
     },
     localization: {
-      readSite: async () => (siteReads++, { config: structuredClone(cfg), version: "site-1", pages: [...pages.entries()].map(([pageId, page]) => ({ siteId: "shared", pageId, title: page.source.title, locales: { ja: { state: "source" }, en: { state: "review-needed" } } })) }),
+      readSite: async () => { siteReads++; return { config: structuredClone(cfg), version: `site-${libraryVersion}`, pages: [...pages.entries()].map(([pageId, page]) => ({ siteId: "shared", pageId, title: page.source.title, locales: { ja: { state: "source" }, en: { state: "review-needed" } } })) }; },
       readPage: async (target) => { const page = pageFor(target); return { sourceDocument: structuredClone(page.source), sourceVersion: `source-1-lib-${libraryVersion}`, overlay: structuredClone(page.overlay), version: `loc-${page.localizationVersion}` }; },
       command: async (request) => {
         calls.push(structuredClone(request)); const page = pageFor(request.target), unit = page.collection.units.find((item) => item.unitId === request.unitId);
@@ -207,7 +211,7 @@ async function setupSharedComponents() {
   };
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   await act(async () => root.render(createElement(PageEditor, { adapter, assets }))); await flush(6);
-  return { pages, components, calls, librarySaves, siteReads: () => siteReads, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  return { pages, components, calls, librarySaves, get siteReads() { return siteReads; }, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
 test("same logical page switches locale through the dirty guard, saves real target content and keeps source unchanged", async () => {
@@ -234,14 +238,71 @@ test("same logical page switches locale through the dirty guard, saves real targ
   } finally { await app.cleanup(); }
 });
 
-test("source draft saves refresh site localization without leaving the page", async () => {
+test("source draft save refreshes site localization status once without waiting for translation", async () => {
   const app = await setup();
   try {
-    const reads = app.calls.siteReads;
-    await click("ページ"); await change(input("ページタイトル"), "新しい原文"); await click("下書き保存");
-    assert.equal(app.calls.saves.length, 1);
-    assert.equal(app.calls.siteReads, reads + 1);
-    assert.equal(input("ページタイトル").value, "新しい原文");
+    const initialReads = app.calls.siteReads;
+    await change(input("ページタイトル"), "新しい原文"); await click("下書き保存"); await flush(7);
+    assert.equal(app.calls.saves.length, 1); assert.equal(app.calls.siteReads, initialReads + 1);
+  } finally { await app.cleanup(); }
+});
+
+test("URL画像の手修正は親bufferでcancel・離脱guard・409再試行を保ち、target canvasだけを更新する", async () => {
+  const app = await setup({ conflictOnce: true });
+  try {
+    await click("English（訳文）"); await flush(5); await click("翻訳");
+    const section = document.querySelector('[data-unit-id="page.node.urlPhoto.asset"]'); assert.ok(section);
+    const url = [...section.querySelectorAll("label")].find((label) => label.querySelector("span")?.textContent === "言語別の画像 URL")?.querySelector("input");
+    const save = [...section.querySelectorAll("button")].find((node) => node.textContent === "URLを保存"), cancel = [...section.querySelectorAll("button")].find((node) => node.textContent === "入力を取り消す");
+    const frameImage = () => document.querySelector("iframe").contentDocument.querySelector('[data-nw-node="urlPhoto"]');
+    const accepted = frameImage().getAttribute("src"), acceptedAlt = frameImage().getAttribute("alt");
+    await change(url, "/manual-cancel.webp"); assert.equal(frameImage().getAttribute("src"), accepted);
+    const unload = new dom.window.Event("beforeunload", { cancelable: true }); window.dispatchEvent(unload); assert.equal(unload.defaultPrevented, true);
+    await click("日本語（原文）"); assert.ok(document.querySelector('[role="dialog"]')); await click("編集を続ける"); assert.equal(url.value, "/manual-cancel.webp");
+    await act(async () => cancel.click()); await flush(); assert.equal(url.value, accepted);
+    await change(url, "/manual-target.webp"); await act(async () => save.click()); await flush(7);
+    assert.ok(document.body.textContent.includes("409")); assert.equal(url.value, "/manual-target.webp"); assert.equal(frameImage().getAttribute("src"), accepted);
+    await act(async () => save.click()); await flush(8);
+    assert.equal(frameImage().getAttribute("src"), "/manual-target.webp"); assert.equal(frameImage().getAttribute("alt"), acceptedAlt);
+    assert.equal(app.sites.kamakura.sourceDocument.body[0].children.find((node) => node.id === "urlPhoto").attrs.src, "/kamakura-source.webp");
+    assert.deepEqual(app.calls.commands.filter((entry) => entry.action === "set-value").at(-1).value, { kind: "image-url", src: "/manual-target.webp" });
+    const responsive = () => document.querySelector('[data-unit-id="page.node.urlPhoto.asset"]').querySelectorAll("input")[1];
+    const saveUrl = () => [...document.querySelector('[data-unit-id="page.node.urlPhoto.asset"]').querySelectorAll("button")].find((node) => node.textContent === "URLを保存");
+    await change(responsive(), "/manual-2x.webp"); await act(async () => saveUrl().click()); await flush(8);
+    assert.equal(frameImage().getAttribute("srcset"), "/manual-2x.webp");
+    await change(responsive(), ""); await act(async () => saveUrl().click()); await flush(8);
+    assert.equal(frameImage().hasAttribute("srcset"), false);
+    assert.deepEqual(app.calls.commands.filter((entry) => entry.action === "set-value").at(-1).value, { kind: "image-url", src: "/manual-target.webp" });
+    assert.equal(document.querySelector('[data-unit-id="page.meta.ogImage.src"]').querySelectorAll("input").length, 1);
+    const current = document.querySelector('[data-unit-id="page.node.urlPhoto.asset"]'), review = [...current.querySelectorAll("button")].find((node) => node.textContent === "現在の訳を確認済みにする");
+    await act(async () => review.click()); await flush(7);
+    assert.ok(app.sites.kamakura.overlay.entries.find((entry) => entry.unitId === "page.node.urlPhoto.asset").reviewedSourceFingerprint);
+    await click("日本語（原文）"); await flush(7); assert.equal(frameImage().getAttribute("src"), "/kamakura-source.webp");
+  } finally { await app.cleanup(); }
+});
+
+test("read-only original policy stays on its snapshot while the Japanese derivative remains editable", async () => {
+  const app = await setup({ readOnlySource: true });
+  try {
+    assert.ok(document.body.textContent.includes("原文（読み取り専用）")); assert.equal(input("ページタイトル").disabled, true);
+    await clickTool("ページ"); await change(input("編集するサイト"), "experience"); await flush(7);
+    assert.ok(document.body.textContent.includes("原文（読み取り専用）")); assert.equal(button("English（原文）").disabled, true);
+    await click("日本語（訳文）"); await flush(7);
+    assert.equal(document.body.textContent.includes("原文（読み取り専用）"), false); assert.equal(input("ページタイトル").disabled, false);
+    await change(input("ページタイトル"), "編集できる日本語派生原稿"); assert.equal(button("下書き保存").disabled, false);
+    assert.equal(app.sites.experience.sourceDocument.title, "Experience home");
+  } finally { await app.cleanup(); }
+});
+
+test("a target is read-only only when its own snapshot carries the policy", async () => {
+  const app = await setup({ readOnlyTarget: true });
+  try {
+    assert.equal(document.body.textContent.includes("読み取り専用"), false); assert.equal(input("ページタイトル").disabled, false);
+    await click("English（訳文）"); await flush(7);
+    assert.ok(document.body.textContent.includes("この言語（読み取り専用）")); assert.equal(input("ページタイトル").disabled, true); assert.equal(button("下書き保存").disabled, true);
+    await click("翻訳"); assert.equal(document.querySelector('[data-unit-id="page.title"] input, [data-unit-id="page.title"] textarea').disabled, true);
+    await click("日本語（原文）"); await flush(7);
+    assert.equal(document.body.textContent.includes("読み取り専用"), false); assert.equal(input("ページタイトル").disabled, false);
   } finally { await app.cleanup(); }
 });
 
@@ -268,11 +329,11 @@ test("candidate stays separate until adoption, command conflicts retry, failures
 test("source component editing saves through the canonical library session and target rendering uses its localized view", async () => {
   const app = await setupSharedComponents();
   try {
-    const siteReadsBefore = app.siteReads();
+    const initialSiteReads = app.siteReads;
     await clickTool("部品"); await click("編集"); await click("p · sharedText");
     await change(input("テキスト"), "共有原文を更新"); await click("下書き保存");
     assert.equal(app.librarySaves.length, 1);
-    assert.equal(app.siteReads(), siteReadsBefore + 1, "shared source saves refresh site localization once");
+    assert.equal(app.siteReads, initialSiteReads + 1, "shared source saves refresh site localization once");
     assert.equal(app.components.components[0].root.children[0].children[0].text, "共有原文を更新");
 
     await click("ページに戻る"); await click("English（訳文）"); await flush(7);

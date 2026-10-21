@@ -1,11 +1,11 @@
 import { detachInstance } from "./component-model.js";
 import { parsePageDocument } from "./document.js";
-import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
+import type { EditorBlockRegistry, EditorLock, EditorPage, EditorPageChange, EditorPageChangePlan, EditorPageImpact, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget } from "./editor-types.js";
 import { findPathConflict, validatePagePath } from "./pages.js";
 import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
 import type { Appear, AssetReference, ComponentLibrary, ComponentNode, DesignToken, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, PageMeta, PageNode, PublicPropValue, StateName, StateProperty, StyleDeclarations, StyleProperty, StyleValue, TextStyle } from "./types.js";
 import { stateNames, textStyleProperties } from "./style-values.js";
-import { isSafeHttpsOrigin } from "./validation-utils.js";
+import { isSafeHttpsOrigin, isSafePublicUrl, keys, line, record } from "./validation-utils.js";
 
 export { nodeAt, walkNodes, type NodePath };
 export type EditorOperation =
@@ -33,7 +33,7 @@ export type EditorOperation =
   | { type: "title"; value: string }
   | { type: "add"; parentId: string | null; node: PageNode; index?: number }
   | { type: "replaceChildren"; path: NodePath; children: PageNode[] }
-  | { type: "image"; path: NodePath; source: { asset: AssetReference } | { src: string }; alt?: string }
+  | { type: "image"; path: NodePath; source: { asset: AssetReference } | { src: string; srcset?: string }; alt?: string }
   | { type: "background"; path: NodePath; breakpoint: number | "base"; asset: AssetReference | undefined }
   | { type: "replaceAsset"; from: AssetReference; to: AssetReference }
   | { type: "duplicate" | "remove"; path: NodePath }
@@ -51,6 +51,21 @@ export type EditorOperation =
 export type MetaOperation = { [K in keyof PageMeta]-?: { type: "meta"; field: K; value: PageMeta[K] | undefined } }[keyof PageMeta];
 export type EditorHistory = { past: PageDocument[]; present: PageDocument; future: PageDocument[] };
 export const fingerprint = (document: PageDocument): string => JSON.stringify(document);
+/** Snapshot の任意 read-only 表示契約を、UI と Project adapter で共有して検証する。 */
+export function parseEditorReadOnly(value: unknown): EditorReadOnly | undefined {
+  if (value === undefined) return undefined;
+  const source = record(value, "$snapshot.readOnly");
+  keys(source, ["reason", "editUrl", "editLabel"], "$snapshot.readOnly");
+  const reason = line(source.reason, "$snapshot.readOnly.reason", 500);
+  let editUrl: string | undefined;
+  if (source.editUrl !== undefined) {
+    if (!isSafePublicUrl(source.editUrl) || source.editUrl.startsWith("#") || !(/^\/(?!\/)/u.test(source.editUrl) || /^https:\/\//iu.test(source.editUrl))) throw new Error("読み取り専用の編集先が正しくありません。");
+    editUrl = source.editUrl;
+  }
+  if (source.editLabel !== undefined && editUrl === undefined) throw new Error("読み取り専用の編集先が正しくありません。");
+  const editLabel = source.editLabel === undefined ? undefined : line(source.editLabel, "$snapshot.readOnly.editLabel", 80);
+  return { reason, ...(editUrl ? { editUrl } : {}), ...(editLabel ? { editLabel } : {}) };
+}
 export function effectiveLocks(document: PageDocument, locks: readonly EditorLock[], blocks: EditorBlockRegistry): EditorLock[] {
   return [...locks, ...walkNodes(document).flatMap(({ node }) => node.type === "component"
     ? Object.entries(blocks[node.block]?.lockedProps ?? {}).map(([name, reason]) => ({ nodeId: node.id, fields: [`props.${name}`], reason })) : [])];
@@ -64,6 +79,7 @@ function fieldValue(node: PageNode, field: string): unknown {
   }
   return value;
 }
+const imageSourceFields = ["asset", "attrs.src", "attrs.srcSet"];
 function assertLocks(before: PageDocument, after: PageDocument, locks: readonly EditorLock[]): void {
   const index = (document: PageDocument) => new Map(walkNodes(document).flatMap(({ node }) => node.type === "text" ? [] : [[node.id, node] as const]));
   const previous = index(before), next = index(after);
@@ -74,6 +90,9 @@ function assertLocks(before: PageDocument, after: PageDocument, locks: readonly 
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolved(document, entry)]));
   };
   const projected = (document: PageDocument, node: PageNode, field: string): unknown => {
+    if (node.type === "element" && node.tag === "img" && imageSourceFields.includes(field)) {
+      return [node.asset, node.attrs?.src, node.attrs?.srcSet];
+    }
     const raw = resolved(document, fieldValue(node, field));
     if (node.type === "text" || field !== "*" && field !== "style" && !field.startsWith("style.")) return raw;
     const textStyle = node.style?.textStyle && document.textStyles?.[node.style.textStyle];
@@ -94,7 +113,7 @@ export function lockReason(document: PageDocument, path: NodePath, field: string
     if (node.type === "text") continue;
     const inherited = depth < path.length;
     const lock = locks.find((lock) => lock.nodeId === node.id && lock.fields.some((locked) => locked === "*" ||
-      (inherited ? locked === "children" : field === locked || field.startsWith(`${locked}.`))));
+      (inherited ? locked === "children" : field === locked || field.startsWith(`${locked}.`) || node.type === "element" && node.tag === "img" && imageSourceFields.includes(field) && imageSourceFields.includes(locked))));
     if (lock) return lock.reason;
   }
   return undefined;
@@ -337,8 +356,12 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     } else if (operation.type === "image") {
       if (node.type !== "element" || node.tag !== "img") throw new Error("画像を選択してください。");
       node.attrs ??= {};
-      if ("asset" in operation.source) { node.asset = structuredClone(operation.source.asset); delete node.attrs.src; }
-      else { node.attrs.src = operation.source.src; delete node.asset; }
+      if ("asset" in operation.source) { node.asset = structuredClone(operation.source.asset); delete node.attrs.src; delete node.attrs.srcSet; }
+      else {
+        node.attrs.src = operation.source.src;
+        if (operation.source.srcset === undefined) delete node.attrs.srcSet; else node.attrs.srcSet = operation.source.srcset;
+        delete node.asset;
+      }
       if (operation.alt !== undefined) node.attrs.alt = operation.alt;
     } else if (operation.type === "background") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
