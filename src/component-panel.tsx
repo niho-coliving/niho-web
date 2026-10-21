@@ -10,6 +10,7 @@ import {
 import type { EditorBlockRegistry } from "./editor-types.js";
 import type { NodePath } from "./node-tree.js";
 import { PageRenderer } from "./react.js";
+import type { SiteStyles } from "./site-styles.js";
 import type { ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropField, ElementNode, InstanceNode, PageDocument } from "./types.js";
 
 // 共通部品の表示部品。編集操作はすべてエディターから受け取り、ここでは文書・ライブラリを変更しない。
@@ -59,16 +60,16 @@ function contentBox(body: HTMLElement): Box | undefined {
   return [content, decor].find((box) => box.left < box.right && box.top < box.bottom);
 }
 /** 部品を 960px 幅で描き、見えている内容がカードに収まるよう拡大・縮小して中央に置く。内容が同じ間は同じ文書を渡し、再描画しない。 */
-export function ComponentPreview({ library, componentId, blocks }: { library: ComponentLibrary; componentId: string; blocks: EditorBlockRegistry }) {
+export function ComponentPreview({ library, componentId, blocks, siteStyles }: { library: ComponentLibrary; componentId: string; blocks: EditorBlockRegistry; siteStyles: SiteStyles }) {
   const box = useRef<HTMLDivElement>(null), frame = useRef<HTMLIFrameElement>(null), last = useRef<{ text: string; document: PageDocument } | null>(null);
   const [body, setBody] = useState<HTMLElement | null>(null), [fit, setFit] = useState<Fit>({ scale: .23, x: 0, y: 0 });
   const document = useMemo(() => {
     try {
-      const next = componentPreview(library, componentId, blocks), text = JSON.stringify(next);
+      const next = componentPreview(library, componentId, blocks, siteStyles), text = JSON.stringify(next);
       if (last.current?.text !== text) last.current = { text, document: next };
       return last.current.document;
     } catch { return null; }
-  }, [library, componentId, blocks]);
+  }, [library, componentId, blocks, siteStyles]);
   useEffect(() => {
     const element = box.current; if (!element) return;
     let frameRequest = 0;
@@ -101,8 +102,10 @@ type CardActions = {
   edit: (componentId: string) => void; rename: (componentId: string) => void; duplicate: (componentId: string) => void; remove: (componentId: string) => void;
 };
 /** 左パネルの共通部品。visible の間だけ縮小表示を描く。 */
-export function ComponentPanel({ library, failed, visible, blocks, editing, usage, usageLoading, insertableBlocks, canPlace, disabled, ...actions }: CardActions & {
+export function ComponentPanel({ library, failed, visible, siteStyles, blocks, editing, usage, usageLoading, insertableBlocks, canPlace, disabled, ...actions }: CardActions & {
   library: ComponentLibrary | undefined; failed: boolean; visible: boolean; blocks: EditorBlockRegistry; editing: string | null;
+  /** 縮小表示に重ねるサイト共通スタイル。読み込み前は undefined で、ページと違う見た目で描かないよう枠だけを出す。 */
+  siteStyles: SiteStyles | undefined;
   usage: ReadonlyMap<string, ComponentUsageSummary> | undefined; usageLoading: boolean; insertableBlocks: readonly string[] | undefined;
   /** 配置先の文書があり、編集できる状態か。 */
   canPlace: boolean;
@@ -118,7 +121,7 @@ export function ComponentPanel({ library, failed, visible, blocks, editing, usag
       {list.length ? <div className="e-part-list">{list.map((component) => {
         const summary = usage?.get(component.id), placeProblem = placementProblem(library, component.id, insertableBlocks, editing), removeProblem = removalProblem(library, component.id, summary), current = editing === component.id;
         return <article key={component.id} className={`e-part-card${current ? " is-editing" : ""}`} aria-label={component.name}>
-          {visible && <ComponentPreview library={library} componentId={component.id} blocks={blocks} />}
+          {visible && (siteStyles ? <ComponentPreview library={library} componentId={component.id} blocks={blocks} siteStyles={siteStyles} /> : <div className="e-part-thumb" aria-hidden="true" />)}
           <div className="e-part-meta"><strong>{component.name}</strong>{current && <span className="e-part-badge">編集中</span>}<small>{kindLabel(component.kind)} · {usageText(summary, usageLoading)}</small></div>
           <div className="e-actions"><button type="button" draggable={canPlace && !placeProblem} onDragStart={(event) => actions.drag(event, component.id)} onDragEnd={actions.dragEnd}
             onClick={() => actions.place(component.id)} disabled={!canPlace || !!placeProblem}>配置</button>
