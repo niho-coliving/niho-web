@@ -50,9 +50,10 @@ const button = (text, root = document) => [...root.querySelectorAll("button")].f
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
 const captions = () => [...right().querySelectorAll(".e-field")].map((node) => node.querySelector("span")?.textContent);
-const heading = () => right().querySelector(".e-inspector-content h2")?.textContent;
+const heading = () => right().querySelector(".e-inspector-content h2")?.textContent ?? right().querySelector(".e-inspector-context strong")?.textContent;
+const tab = (name) => [...right().querySelectorAll('[role="tab"]')].find((node) => node.textContent === name);
+const selectTab = async (name) => click(tab(name));
 const slotRow = (name) => [...right().querySelectorAll("button.e-slot")].find((node) => node.querySelector(".e-slot-name")?.textContent === name);
-const summaries = () => [...right().querySelectorAll("summary")].map((node) => node.textContent);
 const frame = () => document.querySelector('iframe[title="ページのライブキャンバス"]');
 const canvas = () => frame().contentDocument;
 const canvasCss = () => canvas().querySelector("style[data-nw-style]").textContent;
@@ -174,15 +175,18 @@ test("regions never offer text styles, states, motion or background images", asy
   const app = await setup({ document: doc, blocks: { Feature: feature }, props: { assets: createMemoryAssetLibrary({ siteId: "demo" }) } });
   try {
     await click(button("特集 · feature", left()));
-    // ブロックの外枠には従来どおり表示する。
-    assert.ok(input("テキストスタイル", right())); assert.ok(button("背景画像を選ぶ", right()));
-    assert.ok(summaries().includes("演出")); assert.ok(summaries().includes("背景画像"));
+    // ブロック全体では設定項目を Studio のタブごとに確認する。
+    await selectTab("テキスト"); assert.ok(input("テキストスタイル", right()));
+    await selectTab("ボックス"); assert.ok(button("背景画像を選ぶ", right()));
+    await selectTab("変形"); assert.ok(input("X", right()));
+    await selectTab("設定");
     await click(slotRow("特集の枠"));
     assert.equal(heading(), "特集 · 特集の枠");
-    for (const caption of ["文字色", "文字サイズ", "背景色"]) assert.ok(input(caption, right()), caption);
-    assert.ok(!input("テキストスタイル", right())); assert.ok(!button("背景画像を選ぶ", right()));
-    assert.equal(summaries().some((summary) => ["演出", "背景画像"].includes(summary)), false);
-    assert.ok(!right().querySelector('[aria-label="編集する状態"]'));
+    for (const caption of ["文字色", "文字サイズ"]) assert.ok(input(caption, right()), caption);
+    assert.ok(!input("テキストスタイル", right()));
+    await selectTab("ボックス"); assert.ok(input("背景色", right())); assert.ok(!button("背景画像を選ぶ", right()));
+    await selectTab("変形"); assert.equal(input("X", right()), undefined);
+    await selectTab("設定"); assert.ok(!right().querySelector('[aria-label="編集する状態"]'));
   } finally { await app.cleanup(); }
 });
 
@@ -280,7 +284,7 @@ test("registries without regions keep today's block inspector and canvas selecti
     await canvasClick('[data-nw-node="notice"] aside');
     assert.equal(heading(), "お知らせ · notice");
     assert.equal(right().textContent.includes("表示領域"), false); assert.ok(!right().querySelector(".e-slot-list"));
-    assert.ok(input("heading", right())); assert.ok(input("文字色", right()));
+    assert.ok(input("heading", right())); await selectTab("テキスト"); assert.ok(input("文字色", right()));
   } finally { await app.cleanup(); }
 });
 

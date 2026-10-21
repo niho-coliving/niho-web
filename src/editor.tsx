@@ -509,9 +509,17 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     if (selected?.type === "text" || selected?.type === "element" && selected.children.length === 1 && selected.children[0]?.type === "text") return "text";
     return "box";
   }
-  function select(path: NodePath | null, slot: string | null = null) { if (manualInputPending && path) { setNavigation({ type: "node", path }); return; } if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!(masterId ? libraryBlocked : pageOperationalBlocked)) { setSelection(path); if (path) setElementTab(defaultElementTab(path)); setSlotChoice(path && slot && !targetMode ? { of: path, name: slot } : null); setSelectedLocalizationUnit(null); setSelectedCanvasNode(null); setInspector(path ? "element" : "page"); setDraft(null); setStyleState("normal"); } }
+  function defaultSlotTab(path: NodePath, slot: string, source: PageDocument | undefined = currentDocument()): InspectorTab {
+    const selected = source ? nodeAt(source, path) : undefined;
+    if (selected?.type !== "component") return defaultElementTab(path, source);
+    const declared = declaredSlot(blocks[selected.block], slot);
+    if (!declared) return defaultElementTab(path, source);
+    const textProperties = ["color", "fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "textAlign", "fontStyle", "textDecorationLine"];
+    return declared.text || declared.style?.some((property) => textProperties.includes(property)) ? "text" : declared.style?.length ? "box" : "settings";
+  }
+  function select(path: NodePath | null, slot: string | null = null) { if (manualInputPending && path) { setNavigation({ type: "node", path }); return; } if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!(masterId ? libraryBlocked : pageOperationalBlocked)) { setSelection(path); if (path) setElementTab(slot && !targetMode ? defaultSlotTab(path, slot) : defaultElementTab(path)); setSlotChoice(path && slot && !targetMode ? { of: path, name: slot } : null); setSelectedLocalizationUnit(null); setSelectedCanvasNode(null); setInspector(path ? "element" : "page"); setDraft(null); setStyleState("normal"); } }
   /** 選択中の業務ブロックの表示領域を選ぶ。null は「ブロック全体に戻る」。 */
-  function chooseSlot(name: string | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!targetMode && !editBlocked && selection) { setSlotChoice({ of: selection, name, ...(!name && slotName ? { back: slotName } : {}) }); setDraft(null); setStyleState("normal"); } }
+  function chooseSlot(name: string | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!targetMode && !editBlocked && selection) { setElementTab(name ? defaultSlotTab(selection, name) : defaultElementTab(selection)); setSlotChoice({ of: selection, name, ...(!name && slotName ? { back: slotName } : {}) }); setDraft(null); setStyleState("normal"); } }
 
   /** 複数の操作は1回の履歴にまとめる。部品の編集中は部品の root を1つだけ持つ文書を編集し、ライブラリへ書き戻す。 */
   function apply(operation: EditorOperation | readonly EditorOperation[]): string | undefined {
