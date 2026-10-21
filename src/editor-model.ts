@@ -156,13 +156,11 @@ function preserveRange(original: PageDocument, before: ElementNode | ComponentNo
   // 余白と枠線幅は shorthand と上下左右が重なるため、組ごとに広い幅の値を保つ。
   const targets = new Set(properties.flatMap((property) => { const group = boxGroup(property); return group ? boxMembers(group) : [property]; }));
   const current = breakpoint === "base" ? before.style?.base : before.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations;
-  const setsBorderWidth = properties.some((property) => boxGroup(property) === "borderWidth" && values[property] !== undefined);
   for (const property of targets) {
     // 無い値の削除は何も変えないので、広い幅に書き足さない。
     if (own(property) || Object.hasOwn(values, property) && values[property] === undefined && current?.[property] === undefined) continue;
     const group = boxGroup(property);
-    const value = inheritedStyle(original, before, property, until)?.value ?? (group === "borderWidth" && property === "borderWidth" && setsBorderWidth ? 0
-      : group || values[property] === undefined ? undefined : neutral[property]);
+    const value = inheritedStyle(original, before, property, until)?.value ?? (group || values[property] === undefined ? undefined : neutral[property]);
     if (value !== undefined) writes[property] = structuredClone(value);
     else if (!boxGroup(property) && values[property] !== undefined) throw refuse();
   }
