@@ -4,7 +4,7 @@ import type {
 } from "./types.js";
 import { COMPONENT_LIMITS, expandDocument, instancesOf } from "./component-expand.js";
 import { isStyleProperty, parseStyle, parseTextStyles, parseTokens } from "./style-values.js";
-import { DocumentValidationError, fail, identifier, isSafePublicUrl, keys, line, localeCode, parseAssetReference, publicImageSrcSet, publicImageUrl, record, string } from "./validation-utils.js";
+import { DocumentValidationError, fail, identifier, isSafePublicLink, isSafePublicUrl, keys, line, localeCode, parseAssetReference, publicImageSrcSet, publicImageUrl, record, string } from "./validation-utils.js";
 
 const tags = new Set("div section article header footer main nav aside h1 h2 h3 h4 h5 h6 p span a img picture source ul ol li dl dt dd strong em b i small blockquote figure figcaption br hr time details summary".split(" "));
 const voidTags = new Set(["img", "source", "br", "hr"]);
@@ -29,7 +29,7 @@ function attributes(value: unknown, tag: ElementTag, path: string, asset = false
           (["width", "height"].includes(name) && value <= 0) || (name === "tabIndex" && ![-1, 0].includes(value))) fail(at, "invalid integer attribute");
     } else {
       const text = string(value, at, 2048);
-      if (name === "href" && !isSafePublicUrl(text)) fail(at, "unsafe URL");
+      if (name === "href" && !isSafePublicLink(text)) fail(at, "unsafe URL");
       if (name === "src") publicImageUrl(text, at);
       if (name === "srcSet") publicImageSrcSet(text, at);
       if (name === "media" && !/^\((?:min|max)-width: [1-9]\d{1,3}px\)$/.test(text)) fail(at, "unsupported media condition");

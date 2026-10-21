@@ -63,6 +63,57 @@ export function isSafePublicUrl(value: unknown): value is string {
   } catch { return false; }
 }
 
+function isSafeMailAddress(value: string): boolean {
+  const [local, domain, ...extra] = value.split("@");
+  if (!local || !domain || extra.length || local.length > 64 || value.length > 254 || local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false;
+  if (!/^[A-Za-z0-9.!#$%&'*+/=_~-]+$/.test(local)) return false;
+  const labels = domain.split(".");
+  return labels.length >= 2 && labels.at(-1)!.length >= 2 && labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
+}
+
+function isSafeMailto(value: string, decoded: string): boolean {
+  const payload = value.slice(value.indexOf(":") + 1), decodedPayload = decoded.slice(decoded.indexOf(":") + 1);
+  if (payload.includes("#") || decodedPayload.includes("#")) return false;
+  const queryIndex = payload.indexOf("?"), decodedQueryIndex = decodedPayload.indexOf("?");
+  const address = queryIndex < 0 ? payload : payload.slice(0, queryIndex);
+  const decodedAddress = decodedQueryIndex < 0 ? decodedPayload : decodedPayload.slice(0, decodedQueryIndex);
+  if (address.includes("%") || /\s/u.test(decodedAddress) || !isSafeMailAddress(decodedAddress)) return false;
+  if (queryIndex < 0) return decodedQueryIndex < 0;
+  if (decodedQueryIndex < 0) return false;
+  const query = payload.slice(queryIndex + 1);
+  if (!query) return false;
+  const params = new URLSearchParams(query), seen = new Set<string>(), allowed = new Set(["subject", "body"]);
+  let valid = true;
+  params.forEach((content, name) => {
+    if (!allowed.has(name) || seen.has(name) || /[\u0000-\u001f\u007f\\<>"']/u.test(content)) valid = false;
+    seen.add(name);
+  });
+  return valid && seen.size > 0;
+}
+
+function isSafeTelephone(value: string): boolean {
+  const number = value.slice(value.indexOf(":") + 1);
+  if (!/^\+?[0-9][0-9().-]{0,38}$/.test(number) || !/[0-9)]$/.test(number) || (number.match(/[0-9]/g)?.length ?? 0) > 20) return false;
+  let depth = 0;
+  for (const character of number) {
+    if (character === "(") depth++;
+    if (character === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/** PageDocument のリンク用。一般 URL 制約は維持し、a.href だけ安全な mailto/tel を追加する。 */
+export function isSafePublicLink(value: unknown): value is string {
+  if (isSafePublicUrl(value)) return true;
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048 || /\s/u.test(value)) return false;
+  let decoded: string;
+  try { decoded = decodeURIComponent(value); } catch { return false; }
+  if (/[\u0000-\u001f\u007f\\<>"']/u.test(value + decoded)) return false;
+  if (/^mailto:/i.test(value)) return isSafeMailto(value, decoded);
+  if (/^tel:/i.test(value)) return isSafeTelephone(value);
+  return false;
+}
+
 /** 画像 source 用。fragment は画像参照として扱わず、既存の公開 URL 制約をそのまま使う。 */
 export function publicImageUrl(value: unknown, path: string): string {
   if (!isSafePublicUrl(value) || value.startsWith("#")) fail(path, "unsafe image URL");

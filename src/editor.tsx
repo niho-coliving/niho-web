@@ -21,7 +21,7 @@ import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, chooseSiteCover, coverReferences, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
 import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, LibraryRecoveryBanner, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useLibraryRecovery, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
-import { isSafePublicUrl } from "./validation-utils.js";
+import { isSafePublicLink } from "./validation-utils.js";
 import type { ComponentUsageEntry, EditorBlockRegistry, EditorCanvasPreviewProps, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, socialImageProblem, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
@@ -241,7 +241,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
     const range = selection.getRangeAt(0); range.deleteContents(); const breakNode = body.ownerDocument.createElement("br"); range.insertNode(breakNode); range.setStartAfter(breakNode); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
   }
   function applyLink() {
-    if (!isSafePublicUrl(linkHref)) { setLinkError("HTTPSまたはサイト内URLを入力してください。"); return; }
+    if (!isSafePublicLink(linkHref)) { setLinkError("HTTPS、サイト内URL、mailto、telを入力してください。"); return; }
     if (!savedRange.current || savedRange.current.collapsed) { setLinkError("リンクにする文字を選択してください。"); return; }
     const selection = body?.ownerDocument.getSelection();
     if (selection && savedRange.current) { selection.removeAllRanges(); selection.addRange(savedRange.current); }
