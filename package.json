@@ -100,6 +100,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "studio:build": "node studio/build.mjs",
+    "studio:typecheck": "tsc -p studio/tsconfig.json --noEmit",
+    "studio:dev": "npm run studio:build && wrangler dev --config studio/wrangler.toml",
+    "studio:deploy": "npm run studio:build && wrangler deploy --config studio/wrangler.toml",
     "test": "npm run build && node --test test/*.test.mjs",
     "demo": "node examples/editor-demo.mjs",
     "demo:projects": "node examples/projects-demo.mjs",
