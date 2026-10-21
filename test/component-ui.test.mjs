@@ -910,7 +910,7 @@ test("the component editor's style panel names who owns each library token and l
     // サイト共通の値は名前・色の変更と削除ができない。部品の中の要素へは適用できる。
     await click("a · n2"); await click(row("ブランド"));
     assert.ok(styles().textContent.includes("サイト共通の値のため、部品の編集では変更できません。ページに戻り、スタイルの「サイト共通」で変更してください。"));
-    assert.deepEqual([input("名前", styles()).disabled, input("色", styles()).disabled, button("このカラーを削除", styles())], [true, true, undefined]);
+    assert.deepEqual([input("名前", styles()).disabled, input("色", styles()).disabled, !!button("このカラーを削除", styles())], [true, true, false]);
     await click(button("選択中の要素の文字色に適用", styles()));
     assert.ok(css().includes('[data-nw-node="n2"]{color:var(--nw-brand);}'));
     // ライブラリにだけある値は、これまでどおり部品の編集で変えられる。
