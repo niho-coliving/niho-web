@@ -13,7 +13,7 @@ Issue #68 / #69 の Studio host です。共有 `@niho/web` ライブラリと�
 
 D1 が Project / Site / Member / Role / Invitation / Audit の正本です。NIHO account、niho-app の User / Project DB、NIHO cookie、Cloudflare dashboard membership は権限根拠にしません。Kamakura の content CMS はそのサイト側、Experience の contributor content は niho-app 側に残ります。
 
-Experience の Editor UI と BFF は実装されています。ただし、本番で編集・保存・公開が利用可能になるのは、niho-app Backend Draft PR #19268 の反映と、Studio Worker／NIHO API 両側への同一 bridge secret の設定が完了した後です。それまでは Editor を開けても 503 を明示します。Kamakura の editor bridge は未接続です。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
+Experience の Editor UI と BFF は実装されています。ただし、本番で編集・保存・公開が利用可能になるのは、niho-app Backend Draft PR #19268 の反映と、Studio Worker／NIHO API 両側への同一 bridge secret の設定が完了した後です。それまでは Editor を「接続待ち」と表示し、直接 URL でも編集画面を開きません。Kamakura の editor bridge は未接続です。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
 
 ## 認証・認可境界
 
@@ -146,7 +146,7 @@ wrangler dev --config studio/wrangler.toml
 
 ## 制約と follow-up
 
-- Experience editor は Backend Draft PR #19268 の merge・配備と、Studio Worker／NIHO API の両 secret 設定が揃うまで 503 です。揃う前に「本番で編集可能」と案内しません。
+- Experience editor は Backend Draft PR #19268 の merge・配備と、Studio Worker／NIHO API の両 secret 設定が揃うまで UI を「接続待ち」にします。直接 API は未設定時に 503 で停止します。揃う前に「本番で編集可能」と案内しません。
 - Kamakura editor bridge は未接続で、UI は「エディター接続待ち」の説明 dialog を表示します。
 - Experience editor は production API が提供するページ文書・下書き・公開・復元だけを扱います。自由追加できない NIHO 業務ブロックは `insertableBlocks=[]` とし、components / localization / assets は未実装です。
 - 招待メールの配信、再送、token の再表示はありません。URL の安全な共有は owner の運用責任です。
