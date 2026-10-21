@@ -12,7 +12,7 @@ import type { ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode, 
 type Values = Partial<Record<StyleProperty, StyleValue | undefined>>;
 /** wide: 選んだ段から上の幅すべて（mobile first の通常の指定）。only: 次の段の手前まで。 */
 export type StyleRange = "wide" | "only";
-export type InspectorTab = "text" | "box" | "transform" | "settings";
+export type InspectorTab = "text" | "image" | "box" | "transform" | "settings";
 export type StyleInspectorProps = {
   document: PageDocument;
   /** 「外観」の背景色の直後に差し込むホスト側の欄（素材の背景画像など）。 */
@@ -41,6 +41,8 @@ export type StyleInspectorProps = {
   /** 編集中の状態。通常以外では状態に使える見た目だけを表示し、キャンバスに強制表示する。 */
   styleState?: StyleState;
   setStyleState?: (state: StyleState) => void;
+  /** workspaceが状態選択を外側に置く場合は、変形欄の重複した状態選択を隠す。 */
+  stateControl?: "local" | "external";
   /** slot: 業務ブロックの表示領域。base / responsive だけを持つため、テキストスタイル・状態・演出・幅別の非表示・背景画像を出さない。 */
   scope?: "node" | "slot";
   /** InspectorのStudio準拠タブ。省略すると既存の一括表示として扱う。 */
@@ -199,11 +201,11 @@ export function StyleInspector(props: StyleInspectorProps) {
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
     </section>}
     {show("transform") && motionVisible && <>
-      <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
+      <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} showStateControl={props.stateControl !== "external"} apply={apply} preview={preview} pending={pending}
         fieldKey={fieldKey} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
         tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="transform" />
     </>}
-    {show("settings") && motionVisible && <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
+    {show("settings") && motionVisible && <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} showStateControl={props.stateControl !== "external"} apply={apply} preview={preview} pending={pending}
       fieldKey={`${fieldKey}-settings`} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
       tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="settings" />}
     {show("box") && normal && <Layout ui={ui} />}

@@ -15,7 +15,7 @@ const script = output.outputFiles[0]?.text;
 if (!script) throw new Error("builder demo build produced no output");
 const host = createAtelierHost();
 const port = Number(process.env.PORT) || 4177;
-const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Atelier Moku — 汎用ビルダー demo</title><style>html,body,#root{margin:0;min-height:100%;background:#ece9e5}body{font-family:Inter,"Noto Sans JP",sans-serif}</style></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>';
+const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Atelier Moku — 汎用ビルダー demo</title><style>html,body,#root{margin:0;width:100%;height:100%;overflow:hidden;background:#ece9e5}body{font-family:Inter,"Noto Sans JP",sans-serif}</style></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>';
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-label="木の道具と器が並ぶアトリエ"><rect width="1200" height="675" fill="#e9ddcf"/><rect y="430" width="1200" height="245" fill="#a77b59"/><circle cx="260" cy="360" r="145" fill="#c98c64"/><circle cx="260" cy="360" r="92" fill="#f3e6d6"/><path d="M650 150h55v350h-55zM740 100h42v400h-42zM830 190h68v310h-68z" fill="#694b38"/><path d="M585 500h380l-60 92H640z" fill="#d9b58e"/></svg>';
 
 function json(response, value, status = 200) {

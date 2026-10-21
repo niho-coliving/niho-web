@@ -12,7 +12,7 @@ const context = createContext("missing");
 const fixture = { schemaVersion: 1, siteId: "demo", pageId: "home", locale: "en", revision: 1, title: "Synthetic page", tokens: {}, body: [{ type: "element", id: "heading", tag: "h1", children: [{ type: "text", text: "Synthetic heading" }] }] };
 const flush = async () => { for (let index = 0; index < 4; index++) await act(async () => new Promise((resolve) => setTimeout(resolve, 0))); };
 async function press(target) { assert.ok(target); await act(async () => target.click()); await flush(); }
-const toolbar = (label) => [...document.querySelectorAll(".e-toolbar button")].find((node) => node.textContent === label);
+const toolbar = (label) => [...document.querySelectorAll(".e-inspector-actions button,.e-preview-exit")].find((node) => node.textContent === label || node.getAttribute("aria-label") === label);
 async function change(target, value) {
   assert.ok(target);
   await act(async () => {
@@ -68,7 +68,7 @@ test("the host component shares context, current width and read-only preview/his
     assert.equal(host().dataset.historyId, "");
     assert.equal(host().dataset.mode, "edit"); assert.equal(host().dataset.readonly, "false");
     assert.equal(host().querySelector("h1").textContent, "Synthetic heading");
-    await change(document.querySelector('select[aria-label="表示幅"]'), "375"); assert.equal(host().dataset.width, "375");
+    await change(document.querySelector('[aria-label="表示幅"]'), "375"); assert.equal(host().dataset.width, "375");
     const form = app.frame.contentDocument.querySelector("[data-host-form]");
     const submit = new app.frame.contentWindow.Event("submit", { bubbles: true, cancelable: true });
     await act(async () => form.dispatchEvent(submit)); assert.equal(submit.defaultPrevented, true);

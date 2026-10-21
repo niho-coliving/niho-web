@@ -260,8 +260,6 @@ export type EditorCanvasPreviewProps = {
 };
 export type PageEditorProps = {
   adapter: EditorAdapter;
-  /** 編集画面のホスト固有プレゼンテーション。機能や保存契約は変えない。 */
-  toolbarLayout?: "kamakura";
   /** ホストが用意する戻るなどの操作をツールバーの先頭へ表示する。 */
   toolbarStart?: ReactNode;
   blocks?: EditorBlockRegistry;

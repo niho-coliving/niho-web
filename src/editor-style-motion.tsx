@@ -13,6 +13,8 @@ type Permission = StyleProperty | "states" | "appear" | "hidden";
 export type MotionProps = {
   document: PageDocument; node: ElementNode | ComponentNode | InstanceNode; saved: ElementNode | ComponentNode | InstanceNode | undefined; path: NodePath; tiers: readonly EditorTier[];
   state: StyleState; setState: (state: StyleState) => void;
+  /** false when the surrounding workspace owns the single state selector. */
+  showStateControl?: boolean;
   section?: "transform" | "settings";
   apply: (operation: EditorOperation) => string | undefined; preview: (operation: EditorOperation | null) => void; pending: Pending; fieldKey: string; disabled: boolean;
   reason: (field: string) => string | undefined; notify: (message: string) => void; can: (permission: Permission) => boolean; colorTokens: readonly ColorChoice[];
@@ -115,7 +117,7 @@ export function MotionFields(props: MotionProps) {
   const report = (error: string | undefined) => { if (error) notify(error); };
   const states = node.style?.states ?? {}, hasStates = Object.values(states).some((values) => Object.keys(values ?? {}).length);
   const stateLock = reason("style.states");
-  const segment = can("states") && <Row caption="状態" group status={{}}>
+  const segment = props.showStateControl !== false && can("states") && <Row caption="状態" group status={{}}>
     <Segmented label="編集する状態" value={state} disabled={disabled} onChange={props.setState} options={(["normal", "hover", "focus", "active"] as const).map((value) => ({ value, text: stateLabels[value] }))} />
   </Row>;
   if (state !== "normal") {
@@ -138,7 +140,7 @@ export function MotionFields(props: MotionProps) {
     const underline = values.textDecorationLine === "underline";
     return <>
       {segment}
-      <p className="e-help e-state-note">{during[state]}に変える見た目だけを表示しています。すべての幅に適用します。</p>
+      {props.showStateControl !== false && <p className="e-help e-state-note">{during[state]}に変える見た目だけを表示しています。すべての幅に適用します。</p>}
       {mirrored && <label className="e-check"><input type="checkbox" checked={mirror} disabled={locked} onChange={(event) => setMirror(event.target.checked)} />キーボードのフォーカス時も同じ見た目にする</label>}
       {color("color", "文字色")}{color("backgroundColor", "背景色")}{color("borderColor", "枠線の色")}
       <PercentField key={key("opacity")} caption="不透明度" value={values.opacity} apply={(next) => set({ opacity: next })} preview={(next) => preview(next === null ? null : { opacity: next })} pending={pending} fieldKey={key("opacity")} disabled={locked} status={status("opacity")} placeholder="100" />

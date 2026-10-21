@@ -180,6 +180,6 @@ export function KamakuraEditor({ project, environment }: { readonly project: Pro
     {catalog.status === "error" && <section className="studio-kamakura-state" role="alert"><h1>ページを読み込めませんでした</h1><p>{catalog.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者へ確認してください。" : "編集内容は変更されていません。接続状態を確認して再試行してください。"}</p><button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
     {ready && (ready.pages.length === 0
       ? <section className="studio-kamakura-state"><h1>編集できるページはありません</h1><p>編集対象のページがありません。ページ一覧を再読み込みしてください。</p><button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></section>
-      : adapter && <PageEditor adapter={adapter} blocks={blocks} assets={kamakuraAssetLibrary} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarLayout="kamakura" toolbarStart={<a className="e-kamakura-back" href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">‹</a>} />)}
+      : adapter && <PageEditor adapter={adapter} blocks={blocks} assets={kamakuraAssetLibrary} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarStart={<a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">←</a>} />)}
   </main>;
 }

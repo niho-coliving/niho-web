@@ -8,8 +8,8 @@ export type TrustedEditorProps = { readonly project: Project; readonly environme
 type ClientIntegration = { readonly Editor: ComponentType<TrustedEditorProps>; readonly shellClass?: string; readonly contentClass?: string };
 
 const CLIENT_INTEGRATIONS: ReadonlyMap<string, ClientIntegration> = new Map([
-  [integrationIdentity("project-kamakura", "kamakura"), { Editor: KamakuraEditor, shellClass: "studio-kamakura-shell", contentClass: "studio-kamakura-content" }],
-  [integrationIdentity("project-experience", "experience"), { Editor: ExperienceEditor }]
+  [integrationIdentity("project-kamakura", "kamakura"), { Editor: KamakuraEditor, shellClass: "studio-editor-shell", contentClass: "studio-editor-content" }],
+  [integrationIdentity("project-experience", "experience"), { Editor: ExperienceEditor, shellClass: "studio-editor-shell", contentClass: "studio-editor-content" }]
 ]);
 
 export function resolveClientIntegration(resolved: ResolvedTrustedIntegration | null): ClientIntegration | null {

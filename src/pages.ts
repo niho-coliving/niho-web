@@ -14,7 +14,7 @@ export type SitePage = {
   locale: string;
   /** ページ一覧に出す名前。検索結果の title は文書の title。 */
   title: string;
-  /** `/` か `/a/b`。テンプレートは `/experiences/[slug]`。 */
+  /** `/` か `/a/b`。テンプレートは `/articles/[slug]`。 */
   path?: string;
   kind?: PageKind;
   visibility?: PageVisibility;

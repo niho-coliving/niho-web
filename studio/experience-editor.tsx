@@ -221,15 +221,11 @@ export function ExperienceEditor({ project, environment = "production" }: { read
   const base = environment === "staging" ? STAGING_BASE : BASE;
   const adapter = useMemo(() => createProjectEditorAdapter(createExperienceAdapter(setStatus, base), project), [base, project]);
   return <main className="studio-editor">
-    <header className="studio-editor-heading">
-      <div><p className="studio-kicker">NIHO EXPERIENCE{environment === "staging" ? " · STG" : ""}</p><h1>{environment === "staging" ? "サイト編集（STG）" : "サイト編集"}</h1><p>英語サイトを編集します。キャンバス内の体験・提供者・予約情報は表示用サンプルです。</p></div>
-      <a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")}>ダッシュボードに戻る</a>
-    </header>
-    {environment === "staging" && <aside className="studio-editor-note studio-editor-staging-note" role="status"><h2>STG環境・オーナー専用</h2><p>この画面の読み書き・公開確認・公開・復元は NIHO API STG に送信します。本番APIと本番bridge keyは使用しません。</p></aside>}
+    {environment === "staging" && <aside className="studio-editor-note studio-editor-staging-note" role="status"><strong>STG環境</strong><span>読み書き・公開・復元は NIHO API STG に送信します。</span></aside>}
     {status !== null && <div className={`studio-editor-alert studio-editor-alert-${status}`} role="alert">
       <strong>{status === 401 ? "セッションの再確認が必要です" : status === 403 ? "編集権限を確認できません" : status === 503 ? "編集ブリッジを利用できません（503）" : "編集 API の要求を完了できませんでした"}</strong>
       <span>{status === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : status === 403 ? "D1 の Experience プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : status === 503 ? "NIHO 側 editor API の反映状況と、Studio／NIHO API 両側の bridge secret 設定を管理者が確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
     </div>}
-    <PageEditor adapter={adapter} blocks={nihoExperiencePreviewBlocks} insertableBlocks={[]} builder={studioBuilderDefinition} />
+    <PageEditor adapter={adapter} blocks={nihoExperiencePreviewBlocks} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarStart={<a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">←</a>} />
   </main>;
 }
