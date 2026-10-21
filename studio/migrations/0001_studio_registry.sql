@@ -83,9 +83,9 @@ BEGIN
 END;
 
 INSERT INTO projects (id, name) VALUES
-  ('project-kamakura', 'NIHOkamakura'),
-  ('project-experience', 'NIHO experience');
+  ('project-kamakura', '鎌倉ひとはこ'),
+  ('project-experience', 'NIHO Experience');
 
 INSERT INTO sites (id, project_id, name, public_origin) VALUES
-  ('kamakura', 'project-kamakura', 'Kamakura site', NULL),
-  ('experience', 'project-experience', 'Experience site', NULL);
+  ('kamakura', 'project-kamakura', '鎌倉サイト', NULL),
+  ('experience', 'project-experience', 'Experience サイト', NULL);

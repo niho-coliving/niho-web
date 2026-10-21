@@ -1,10 +1,14 @@
-type D1Result<T> = { readonly results?: readonly T[]; readonly success: boolean };
+type D1Meta = { readonly changes?: number };
+type D1Result<T> = { readonly results?: readonly T[]; readonly success: boolean; readonly meta?: D1Meta };
 type D1Statement = {
   bind(...values: readonly unknown[]): D1Statement;
   first<T>(): Promise<T | null>;
   all<T>(): Promise<D1Result<T>>;
 };
-type D1Database = { prepare(query: string): D1Statement };
+type D1Database = {
+  prepare(query: string): D1Statement;
+  batch<T>(statements: readonly D1Statement[]): Promise<readonly D1Result<T>[]>;
+};
 type AssetBinding = { fetch(request: Request): Promise<Response> };
 
 export interface Env {
@@ -16,12 +20,15 @@ export interface Env {
   readonly ACCESS_AUDIENCE: string;
 }
 
-type AccessIdentity = { readonly subject: string };
+type Role = "owner" | "editor";
+type AccessIdentity = { readonly subject: string; readonly email: string };
 type JwtHeader = { readonly alg?: unknown; readonly kid?: unknown; readonly typ?: unknown };
 type JwtClaims = {
   readonly iss?: unknown;
   readonly aud?: unknown;
   readonly sub?: unknown;
+  readonly email?: unknown;
+  readonly type?: unknown;
   readonly exp?: unknown;
   readonly iat?: unknown;
   readonly nbf?: unknown;
@@ -36,8 +43,32 @@ type ProjectRow = {
   readonly public_origin: string | null;
   readonly display_name: string;
 };
+type AdminContextRow = { readonly project_name: string; readonly site_name: string };
+type MemberRow = {
+  readonly access_subject: string;
+  readonly email: string | null;
+  readonly role: Role;
+  readonly display_name: string;
+  readonly created_at: string;
+};
+type InvitationRow = {
+  readonly id: string;
+  readonly email: string;
+  readonly role: Role;
+  readonly created_at: number;
+  readonly expires_at: number;
+  readonly status: "pending" | "expired" | "accepted" | "revoked";
+};
+type InvitationPreviewRow = {
+  readonly project_name: string;
+  readonly site_name: string;
+  readonly role: Role;
+  readonly expires_at: number;
+};
 
 const MAX_MUTATION_BODY_BYTES = 16 * 1024;
+const MAX_PENDING_INVITATIONS = 100;
+const MAX_PROJECT_MEMBERS = 500;
 const JWKS_CACHE_MILLISECONDS = 5 * 60 * 1000;
 let jwksCache: { readonly url: string; readonly expiresAt: number; readonly keys: readonly SigningJwk[] } | undefined;
 let lastForcedJwksRefreshAt = 0;
@@ -45,6 +76,7 @@ let lastForcedJwksRefreshAt = 0;
 class AuthenticationError extends Error {}
 class ConfigurationError extends Error {}
 class SigningKeysUnavailableError extends Error {}
+class InvalidInputError extends Error {}
 
 function securityHeaders(contentType: string): Headers {
   return new Headers({
@@ -72,6 +104,12 @@ function htmlError(message: string, status: number): Response {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) throw new InvalidInputError("unexpected input fields");
 }
 
 function decodeBase64Url(value: string, maximumLength: number): Uint8Array {
@@ -125,7 +163,7 @@ async function loadJwks(url: string, force = false): Promise<readonly SigningJwk
 }
 
 function selectSigningKey(keys: readonly SigningJwk[], kid: string): SigningJwk | undefined {
-  return keys.find((key) => key.kid === kid && key.kty === "RSA" && (key.alg === undefined || key.alg === "RS256") && (key.use === undefined || key.use === "sig") && (key.key_ops === undefined || key.key_ops.includes("verify")));
+  return keys.find((key) => key.kid === kid && key.kty === "RSA" && (key.alg === undefined || key.alg === "RS256") && (key.use === undefined || key.use === "sig") && (key.key_ops === undefined || Array.isArray(key.key_ops) && key.key_ops.includes("verify")));
 }
 
 async function verifySignature(signingInput: string, signature: Uint8Array, key: SigningJwk): Promise<boolean> {
@@ -137,6 +175,23 @@ async function verifySignature(signingInput: string, signature: Uint8Array, key:
 
 function finiteInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function validSubject(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && value.trim() === value && !/\p{Cc}/u.test(value);
+}
+
+function normalizeEmail(value: unknown, ErrorType: typeof AuthenticationError | typeof InvalidInputError): string {
+  if (typeof value !== "string" || value.length < 3 || value.length > 254 || value.trim() !== value || !/^[\x21-\x7e]+$/u.test(value)) throw new ErrorType("invalid email");
+  const email = value.toLowerCase();
+  const parts = email.split("@");
+  if (parts.length !== 2) throw new ErrorType("invalid email");
+  const [local, domain] = parts as [string, string];
+  if (!local || local.length > 64 || local.startsWith(".") || local.endsWith(".") || local.includes("..") || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u.test(local)) throw new ErrorType("invalid email");
+  if (!domain || domain.length > 253 || domain.startsWith(".") || domain.endsWith(".")) throw new ErrorType("invalid email");
+  const labels = domain.split(".");
+  if (labels.some((label) => !label || label.length > 63 || label.startsWith("-") || label.endsWith("-") || !/^[a-z0-9-]+$/u.test(label))) throw new ErrorType("invalid email");
+  return email;
 }
 
 async function authenticate(request: Request, env: Env): Promise<AccessIdentity> {
@@ -162,15 +217,18 @@ async function authenticate(request: Request, env: Env): Promise<AccessIdentity>
 
   const now = Math.floor(Date.now() / 1000);
   const audiences = typeof claims.aud === "string" ? [claims.aud] : Array.isArray(claims.aud) && claims.aud.every((entry) => typeof entry === "string") ? claims.aud : [];
-  if (claims.iss !== configuration.issuer || !audiences.includes(configuration.audience)) throw new AuthenticationError("invalid Access claims");
+  if (claims.iss !== configuration.issuer || !audiences.includes(configuration.audience) || claims.type !== "app") throw new AuthenticationError("invalid Access claims");
   if (!finiteInteger(claims.exp) || !finiteInteger(claims.iat) || claims.exp <= now || claims.iat > now + 60 || claims.exp <= claims.iat) throw new AuthenticationError("expired Access assertion");
   if (claims.nbf !== undefined && (!finiteInteger(claims.nbf) || claims.nbf > now + 60)) throw new AuthenticationError("inactive Access assertion");
-  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 128 || claims.sub.trim() !== claims.sub || /[\u0000-\u001f\u007f]/u.test(claims.sub)) throw new AuthenticationError("invalid Access subject");
-  return { subject: claims.sub };
+  if (!validSubject(claims.sub)) throw new AuthenticationError("invalid Access subject");
+  return { subject: claims.sub, email: normalizeEmail(claims.email, AuthenticationError) };
 }
 
 function validIdentifier(value: string): boolean { return /^[A-Za-z][A-Za-z0-9_-]{0,79}$/u.test(value); }
 function validName(value: string): boolean { return value.length > 0 && value.length <= 120 && value.trim().length > 0 && !/[\u0000-\u001f\u007f]/u.test(value); }
+function validRole(value: unknown): value is Role { return value === "owner" || value === "editor"; }
+function validInvitationId(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value); }
+function validInvitationToken(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/u.test(value); }
 
 function domainsFor(origin: string | null): readonly string[] {
   if (origin === null) return [];
@@ -244,11 +302,307 @@ async function dashboard(env: Env, identity: AccessIdentity, projectId: string, 
   });
 }
 
-async function enforceMutationBoundary(request: Request): Promise<void> {
+function ownerContextStatement(env: Env, identity: AccessIdentity, projectId: string, siteId: string): D1Statement {
+  return env.DB.prepare(`
+    SELECT p.name AS project_name, s.name AS site_name
+      FROM project_members AS actor
+      JOIN projects AS p ON p.id = actor.project_id
+      JOIN sites AS s ON s.project_id = p.id
+     WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+       AND p.id = ?2 AND s.id = ?3
+     LIMIT 1
+  `).bind(identity.subject, projectId, siteId);
+}
+
+function firstRow<T>(result: D1Result<unknown> | undefined): T | undefined {
+  return result?.results?.[0] as T | undefined;
+}
+
+function changed(result: D1Result<unknown> | undefined): boolean {
+  return result?.success === true && result.meta?.changes === 1;
+}
+
+function unixTimestamp(value: number): string {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("invalid stored timestamp");
+  return new Date(value * 1000).toISOString();
+}
+
+async function membershipAdministration(env: Env, identity: AccessIdentity, projectId: string, siteId: string): Promise<Response> {
+  const results = await env.DB.batch<unknown>([
+    ownerContextStatement(env, identity, projectId, siteId),
+    env.DB.prepare(`
+      SELECT m.access_subject, m.email, m.role, m.display_name, m.created_at
+        FROM project_members AS m
+       WHERE m.project_id = ?2
+         AND EXISTS (
+           SELECT 1 FROM project_members AS actor
+           JOIN sites AS s ON s.project_id = actor.project_id
+            WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+              AND actor.project_id = ?2 AND s.id = ?3
+         )
+       ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.display_name COLLATE NOCASE, m.access_subject
+       LIMIT 500
+    `).bind(identity.subject, projectId, siteId),
+    env.DB.prepare(`
+      SELECT i.id, i.email, i.role, i.created_at, i.expires_at,
+             CASE
+               WHEN i.used_at IS NOT NULL THEN 'accepted'
+               WHEN i.revoked_at IS NOT NULL THEN 'revoked'
+               WHEN i.expires_at <= unixepoch() THEN 'expired'
+               ELSE 'pending'
+             END AS status
+        FROM project_invitations AS i
+       WHERE i.project_id = ?2
+         AND EXISTS (
+           SELECT 1 FROM project_members AS actor
+           JOIN sites AS s ON s.project_id = actor.project_id
+            WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+              AND actor.project_id = ?2 AND s.id = ?3
+         )
+       ORDER BY i.created_at DESC, i.id DESC
+       LIMIT 100
+    `).bind(identity.subject, projectId, siteId)
+  ]);
+  const context = firstRow<AdminContextRow>(results[0]);
+  if (!context) return json({ error: "forbidden" }, 403);
+  if (!validName(context.project_name) || !validName(context.site_name)) throw new Error("invalid stored project");
+  const members = ((results[1]?.results ?? []) as readonly MemberRow[]).map((member) => ({
+    subject: member.access_subject,
+    email: member.email,
+    role: member.role,
+    displayName: member.display_name,
+    createdAt: member.created_at,
+    isCurrent: member.access_subject === identity.subject
+  }));
+  const invitations = ((results[2]?.results ?? []) as readonly InvitationRow[]).map((invitation) => ({
+    id: invitation.id,
+    email: invitation.email,
+    role: invitation.role,
+    createdAt: unixTimestamp(invitation.created_at),
+    expiresAt: unixTimestamp(invitation.expires_at),
+    status: invitation.status
+  }));
+  return json({ status: "ready", projectName: context.project_name, siteName: context.site_name, members, invitations });
+}
+
+function randomToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+}
+
+async function tokenHash(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function auditActionForInvite(prefix: "invitation.created" | "invitation.accepted", role: Role): string {
+  return `${prefix}.${role}`;
+}
+
+async function createInvitation(request: Request, env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["email", "role", "expiresInDays"]);
+  const email = normalizeEmail(body.email, InvalidInputError);
+  if (!validRole(body.role)) throw new InvalidInputError("invalid role");
+  if (!Number.isSafeInteger(body.expiresInDays) || (body.expiresInDays as number) < 1 || (body.expiresInDays as number) > 7) throw new InvalidInputError("invalid expiry");
+  const role = body.role;
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + (body.expiresInDays as number) * 86_400;
+  const token = randomToken();
+  const hash = await tokenHash(token);
+  const invitationId = crypto.randomUUID();
+  const results = await env.DB.batch<unknown>([
+    ownerContextStatement(env, identity, projectId, siteId),
+    env.DB.prepare(`
+      INSERT INTO project_invitations
+        (id, project_id, email, role, token_hash, invited_by_subject, created_at, expires_at)
+      SELECT ?4, ?2, ?5, ?6, ?7, ?1, ?8, ?9
+       WHERE EXISTS (
+         SELECT 1 FROM project_members AS actor
+         JOIN sites AS s ON s.project_id = actor.project_id
+          WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+            AND actor.project_id = ?2 AND s.id = ?3
+       )
+         AND (SELECT count(*) FROM project_invitations
+               WHERE project_id = ?2 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > unixepoch()) < ?10
+         AND NOT EXISTS (
+           SELECT 1 FROM project_members
+            WHERE project_id = ?2 AND email = ?5
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM project_invitations
+            WHERE project_id = ?2 AND email = ?5
+              AND used_at IS NULL AND revoked_at IS NULL AND expires_at > unixepoch()
+         )
+    `).bind(identity.subject, projectId, siteId, invitationId, email, role, hash, now, expiresAt, MAX_PENDING_INVITATIONS),
+    env.DB.prepare(`
+      INSERT INTO studio_audit_records (project_id, actor_subject, action, target)
+      SELECT ?2, ?1, ?3, ?4 WHERE changes() = 1
+    `).bind(identity.subject, projectId, auditActionForInvite("invitation.created", role), email)
+  ]);
+  if (!firstRow<AdminContextRow>(results[0])) return json({ error: "forbidden" }, 403);
+  if (!changed(results[1])) return json({ error: "operation_rejected" }, 409);
+  const invitationUrl = new URL(`/projects/${encodeURIComponent(projectId)}/sites/${encodeURIComponent(siteId)}/invite`, request.url);
+  invitationUrl.searchParams.set("token", token);
+  return json({
+    status: "created",
+    invitation: { id: invitationId, email, role, expiresAt: unixTimestamp(expiresAt) },
+    invitationUrl: invitationUrl.href
+  }, 201);
+}
+
+async function invitationPreview(env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["token"]);
+  if (!validInvitationToken(body.token)) throw new InvalidInputError("invalid invitation token");
+  const hash = await tokenHash(body.token);
+  const row = await env.DB.prepare(`
+    SELECT p.name AS project_name, s.name AS site_name, i.role, i.expires_at
+      FROM project_invitations AS i
+      JOIN projects AS p ON p.id = i.project_id
+      JOIN sites AS s ON s.project_id = p.id
+     WHERE i.token_hash = ?1 AND i.email = ?2
+       AND i.project_id = ?3 AND s.id = ?4
+       AND i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > unixepoch()
+     LIMIT 1
+  `).bind(hash, identity.email, projectId, siteId).first<InvitationPreviewRow>();
+  if (!row) return json({ error: "invitation_unavailable" }, 404);
+  if (!validName(row.project_name) || !validName(row.site_name) || !validRole(row.role)) throw new Error("invalid stored invitation");
+  return json({
+    status: "ready",
+    invitation: { projectName: row.project_name, siteName: row.site_name, role: row.role, expiresAt: unixTimestamp(row.expires_at) }
+  });
+}
+
+async function acceptInvitation(env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["token"]);
+  if (!validInvitationToken(body.token)) throw new InvalidInputError("invalid invitation token");
+  const hash = await tokenHash(body.token);
+  const results = await env.DB.batch<unknown>([
+    env.DB.prepare(`
+      INSERT INTO project_members (project_id, access_subject, role, display_name, email)
+      SELECT i.project_id, ?1, i.role, ?2, ?2
+        FROM project_invitations AS i
+        JOIN sites AS s ON s.project_id = i.project_id
+       WHERE i.token_hash = ?3 AND i.email = ?2
+         AND i.project_id = ?4 AND s.id = ?5
+         AND i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > unixepoch()
+         AND (SELECT count(*) FROM project_members WHERE project_id = i.project_id) < ?6
+      ON CONFLICT DO NOTHING
+    `).bind(identity.subject, identity.email, hash, projectId, siteId, MAX_PROJECT_MEMBERS),
+    env.DB.prepare(`
+      UPDATE project_invitations
+         SET used_at = unixepoch(), accepted_subject = ?1
+       WHERE token_hash = ?2 AND email = ?3 AND project_id = ?4
+         AND used_at IS NULL AND revoked_at IS NULL AND expires_at > unixepoch()
+         AND changes() = 1
+    `).bind(identity.subject, hash, identity.email, projectId),
+    env.DB.prepare(`
+      INSERT INTO studio_audit_records (project_id, actor_subject, action, target)
+      SELECT i.project_id, ?1,
+             CASE i.role WHEN 'owner' THEN 'invitation.accepted.owner' ELSE 'invitation.accepted.editor' END,
+             i.id
+        FROM project_invitations AS i
+       WHERE i.token_hash = ?2 AND i.accepted_subject = ?1 AND changes() = 1
+    `).bind(identity.subject, hash)
+  ]);
+  if (!changed(results[0]) || !changed(results[1])) return json({ error: "invitation_unavailable" }, 409);
+  return json({ status: "accepted" });
+}
+
+async function revokeInvitation(env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["invitationId"]);
+  if (!validInvitationId(body.invitationId)) throw new InvalidInputError("invalid invitation id");
+  const results = await env.DB.batch<unknown>([
+    ownerContextStatement(env, identity, projectId, siteId),
+    env.DB.prepare(`
+      UPDATE project_invitations
+         SET revoked_at = unixepoch(), revoked_by_subject = ?1
+       WHERE id = ?4 AND project_id = ?2
+         AND used_at IS NULL AND revoked_at IS NULL AND expires_at > unixepoch()
+         AND EXISTS (
+           SELECT 1 FROM project_members AS actor
+           JOIN sites AS s ON s.project_id = actor.project_id
+            WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+              AND actor.project_id = ?2 AND s.id = ?3
+         )
+    `).bind(identity.subject, projectId, siteId, body.invitationId),
+    env.DB.prepare(`
+      INSERT INTO studio_audit_records (project_id, actor_subject, action, target)
+      SELECT ?2, ?1, 'invitation.revoked', ?3 WHERE changes() = 1
+    `).bind(identity.subject, projectId, body.invitationId)
+  ]);
+  if (!firstRow<AdminContextRow>(results[0])) return json({ error: "forbidden" }, 403);
+  if (!changed(results[1])) return json({ error: "operation_rejected" }, 409);
+  return json({ status: "revoked" });
+}
+
+async function changeMemberRole(env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["subject", "role"]);
+  if (!validSubject(body.subject) || !validRole(body.role)) throw new InvalidInputError("invalid member role input");
+  const action = body.role === "owner" ? "member.promoted" : "member.demoted";
+  let results: readonly D1Result<unknown>[];
+  try {
+    results = await env.DB.batch<unknown>([
+      ownerContextStatement(env, identity, projectId, siteId),
+      env.DB.prepare(`
+        UPDATE project_members
+           SET role = ?5
+         WHERE project_id = ?2 AND access_subject = ?4 AND role <> ?5
+           AND EXISTS (
+             SELECT 1 FROM project_members AS actor
+             JOIN sites AS s ON s.project_id = actor.project_id
+              WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+                AND actor.project_id = ?2 AND s.id = ?3
+           )
+      `).bind(identity.subject, projectId, siteId, body.subject, body.role),
+      env.DB.prepare(`
+        INSERT INTO studio_audit_records (project_id, actor_subject, action, target)
+        SELECT ?2, ?1, ?3, ?4 WHERE changes() = 1
+      `).bind(identity.subject, projectId, action, body.subject)
+    ]);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("cannot demote the final owner")) return json({ error: "final_owner_required" }, 409);
+    throw error;
+  }
+  if (!firstRow<AdminContextRow>(results[0])) return json({ error: "forbidden" }, 403);
+  if (!changed(results[1])) return json({ error: "operation_rejected" }, 409);
+  return json({ status: "changed" });
+}
+
+async function removeMember(env: Env, identity: AccessIdentity, projectId: string, siteId: string, body: Record<string, unknown>): Promise<Response> {
+  exactKeys(body, ["subject"]);
+  if (!validSubject(body.subject)) throw new InvalidInputError("invalid member input");
+  let results: readonly D1Result<unknown>[];
+  try {
+    results = await env.DB.batch<unknown>([
+      ownerContextStatement(env, identity, projectId, siteId),
+      env.DB.prepare(`
+        DELETE FROM project_members
+         WHERE project_id = ?2 AND access_subject = ?4
+           AND EXISTS (
+             SELECT 1 FROM project_members AS actor
+             JOIN sites AS s ON s.project_id = actor.project_id
+              WHERE actor.access_subject = ?1 AND actor.role = 'owner'
+                AND actor.project_id = ?2 AND s.id = ?3
+           )
+      `).bind(identity.subject, projectId, siteId, body.subject),
+      env.DB.prepare(`
+        INSERT INTO studio_audit_records (project_id, actor_subject, action, target)
+        SELECT ?2, ?1, 'member.removed', ?3 WHERE changes() = 1
+      `).bind(identity.subject, projectId, body.subject)
+    ]);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("cannot remove the final owner")) return json({ error: "final_owner_required" }, 409);
+    throw error;
+  }
+  if (!firstRow<AdminContextRow>(results[0])) return json({ error: "forbidden" }, 403);
+  if (!changed(results[1])) return json({ error: "operation_rejected" }, 409);
+  return json({ status: "removed" });
+}
+
+async function enforceMutationBoundary(request: Request): Promise<Record<string, unknown>> {
   const requestUrl = new URL(request.url);
   if (request.headers.get("Origin") !== requestUrl.origin) throw new AuthenticationError("invalid request origin");
-  const fetchSite = request.headers.get("Sec-Fetch-Site");
-  if (fetchSite !== null && fetchSite !== "same-origin") throw new AuthenticationError("invalid request site");
+  if (request.headers.get("Sec-Fetch-Site") !== "same-origin") throw new AuthenticationError("invalid request site");
   const mediaType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") throw new AuthenticationError("JSON required");
   const declaredLength = request.headers.get("Content-Length");
@@ -275,6 +629,7 @@ async function enforceMutationBoundary(request: Request): Promise<void> {
   try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
   catch { throw new AuthenticationError("invalid JSON"); }
   if (!isRecord(parsed)) throw new AuthenticationError("invalid JSON input");
+  return parsed;
 }
 
 function withStaticSecurity(response: Response): Response {
@@ -290,6 +645,35 @@ function withStaticSecurity(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+async function scopedApi(request: Request, env: Env, identity: AccessIdentity, url: URL): Promise<Response | null> {
+  const match = /^\/api\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})(\/[^?]*)?$/u.exec(url.pathname);
+  if (!match) return null;
+  const projectId = match[1]!;
+  const siteId = match[2]!;
+  const action = match[3] ?? "";
+  if (request.method === "GET") {
+    if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
+    if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
+    return json({ error: "not_found" }, 404);
+  }
+  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  let body: Record<string, unknown>;
+  try { body = await enforceMutationBoundary(request); }
+  catch { return json({ error: "invalid_request" }, 400); }
+  try {
+    if (action === "/invitations") return await createInvitation(request, env, identity, projectId, siteId, body);
+    if (action === "/invitations/preview") return await invitationPreview(env, identity, projectId, siteId, body);
+    if (action === "/invitations/accept") return await acceptInvitation(env, identity, projectId, siteId, body);
+    if (action === "/invitations/revoke") return await revokeInvitation(env, identity, projectId, siteId, body);
+    if (action === "/members/role") return await changeMemberRole(env, identity, projectId, siteId, body);
+    if (action === "/members/remove") return await removeMember(env, identity, projectId, siteId, body);
+  } catch (error) {
+    if (error instanceof InvalidInputError) return json({ error: "invalid_request" }, 400);
+    throw error;
+  }
+  return json({ error: "not_found" }, 404);
+}
+
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const isApi = url.pathname === "/api" || url.pathname.startsWith("/api/");
@@ -300,22 +684,16 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return isApi ? json({ error: "session_expired" }, 401) : htmlError("セッションを確認できません。Cloudflare Access から再度ログインしてください。", 401);
   }
 
-  if (!["GET", "HEAD"].includes(request.method)) {
-    try { await enforceMutationBoundary(request); }
-    catch { return isApi ? json({ error: "invalid_request" }, 400) : htmlError("リクエストを処理できません。", 400); }
-    return isApi ? json({ error: "method_not_allowed" }, 405) : htmlError("この操作は利用できません。", 405);
-  }
-
   if (isApi) {
-    if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-    if (url.pathname === "/api/session") return json({ status: "authenticated", subject: identity.subject });
-    if (url.pathname === "/api/projects") return directory(env, identity);
-    const match = /^\/api\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/dashboard$/u.exec(url.pathname);
-    if (match) return dashboard(env, identity, match[1]!, match[2]!);
-    return json({ error: "not_found" }, 404);
+    if (request.method === "GET" && url.pathname === "/api/session") return json({ status: "authenticated", subject: identity.subject, email: identity.email });
+    if (request.method === "GET" && url.pathname === "/api/projects") return directory(env, identity);
+    const scoped = await scopedApi(request, env, identity, url);
+    if (scoped) return scoped;
+    return json({ error: request.method === "GET" ? "not_found" : "method_not_allowed" }, request.method === "GET" ? 404 : 405);
   }
 
-  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname)) {
+  if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
+  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname)) {
     const indexUrl = new URL("/index.html", url);
     return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })));
   }

@@ -1,10 +1,15 @@
 name = "niho-web-studio"
+account_id = "bf9271e82c9c53c9ca408f50504ad597"
 main = "./dist/worker.js"
 compatibility_date = "2026-10-21"
 workers_dev = false
 
+[[routes]]
+pattern = "studio.niho.life"
+custom_domain = true
+
 [vars]
-ACCESS_ISSUER = "https://YOUR_TEAM.cloudflareaccess.com"
+ACCESS_ISSUER = "https://niho-coliving.cloudflareaccess.com"
 ACCESS_AUDIENCE = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
 
 [assets]
@@ -16,5 +21,5 @@ html_handling = "none"
 [[d1_databases]]
 binding = "DB"
 database_name = "niho-web-studio"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "b2af4e2e-34c2-496f-b735-6d285fcf7365"
 migrations_dir = "migrations"

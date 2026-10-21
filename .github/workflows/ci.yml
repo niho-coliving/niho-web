@@ -22,5 +22,7 @@ jobs:
       - if: matrix.react == '18'
         run: npm install --no-save --package-lock=false react@18.3.1 react-dom@18.3.1 @types/react@18.3.27 @types/react-dom@18.3.7
       - run: npm run typecheck
+      - run: npm run studio:typecheck
+      - run: npm run studio:build
       - run: npm test
       - run: npm pack --dry-run
