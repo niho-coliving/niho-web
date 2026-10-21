@@ -332,7 +332,12 @@ function App() {
 
   const directoryAdapter = useMemo(() => ({
     loadDirectory: async (signal: AbortSignal) => {
-      try { return await api("/api/projects", { signal }); }
+      try {
+        const value = await api("/api/projects", { signal });
+        const directory = parseProjectDirectoryResult(value, () => false);
+        if (!signal.aborted) setSession((current) => current.status === "ready" ? { ...current, directory } : current);
+        return value;
+      }
       catch (error) { if (error instanceof SessionExpiredError) expire(); throw error; }
     },
     isThumbnailUrlAllowed: () => false
