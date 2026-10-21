@@ -15,7 +15,9 @@ import { textStyleUsage, tokenUsage } from "./style-model.js";
 type Promotion = { kind: "token" | "textStyle"; name: string; styles: SiteStyles; document: PageDocument; collisions: string[] };
 type Props = StyleLibraryProps & {
   adapter: EditorAdapter; pages: readonly EditorPage[]; blocks: EditorBlockRegistry; components: ComponentLibrary | undefined;
-  siteDisabled: boolean; allowSite: boolean; state: SiteSettingsState; rawDocument: PageDocument; pageDirty: boolean;
+  /** 部品の編集中。rawDocument の tokens はライブラリの値で、document はサイト共通の同名の定義を優先した表示用の値。 */
+  editingComponent: boolean;
+  siteDisabled: boolean; state: SiteSettingsState; rawDocument: PageDocument; pageDirty: boolean;
   migrate: (document: PageDocument, styles: SiteStyles) => string | undefined;
   /** 「サイト共通」の欄の入力途中を知らせる。pageDirty（ページの未保存の変更・ページの欄の入力途中）には含めない。 */
   sitePending: Pending;
@@ -24,6 +26,9 @@ type Props = StyleLibraryProps & {
 const pageHold = "ページの変更を保存してからサイト共通スタイルを編集してください。";
 type Impact = { key: string; affected: string[]; failed: boolean };
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** 部品の編集で、サイト共通に同名の定義がある値を変更できない理由。ページでの描画と同じくサイトの定義が優先され、ライブラリの写しを変えても見た目が変わらない。 */
+export const sharedTokenReason = (siteEditable: boolean): string =>
+  `サイト共通の値のため、部品の編集では変更できません。${siteEditable ? "ページに戻り、スタイルの「サイト共通」で変更してください。" : ""}`;
 
 function usedChanges(document: PageDocument, before: SiteStyles, after: SiteStyles): boolean {
   const detached = detachRemovedSiteStyles(document, before, after);
@@ -41,10 +46,10 @@ function usedChanges(document: PageDocument, before: SiteStyles, after: SiteStyl
 }
 
 /** サイトとページの所有権・変更の影響・移行の確認を共通ライブラリの上に表示する。 */
-export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, allowSite, state, rawDocument, pageDirty, sitePending, migrate, ...props }: Props) {
+export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, editingComponent, state, rawDocument, pageDirty, sitePending, migrate, ...props }: Props) {
   const [scope, setScope] = useState<"page" | "site">("page"), [promotion, setPromotion] = useState<Promotion | null>(null), [problem, setProblem] = useState("");
   const [impact, setImpact] = useState<Impact | null>(null), [impactEpoch, setImpactEpoch] = useState(0);
-  const supported = allowSite && state.supported && state.editable && state.status === "ready";
+  const supported = !editingComponent && state.supported && state.editable && state.status === "ready";
   const before: SiteStyles = state.settings ?? {}, after = state.styles;
   const impactKey = JSON.stringify([impactEpoch, rawDocument.siteId, before.tokens, before.textStyles, after, pages.map((page) => [page.pageId, page.locale, page.title])]);
   useEffect(() => {
@@ -63,6 +68,16 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
       .catch(() => { if (!controller.signal.aborted) setImpact({ key: impactKey, affected: [], failed: true }); });
     return () => controller.abort();
   }, [adapter, blocks, components, impactKey, supported, state.stylesDirty]);
+  if (editingComponent) {
+    // 部品の値はライブラリ（「共通部品」）が持つ。サイト共通に同名の定義がある値はページでの描画と同じくサイトの定義で表示され、
+    // ライブラリの写しを変えても見た目が変わらないため、ここでは変更・削除しない。新しい値の名前にもサイト共通の名前を使わない。
+    const shared = after.tokens ?? {}, names = Object.keys(props.document.tokens);
+    return <>
+      {names.some((name) => Object.hasOwn(shared, name)) && <p className="e-help">サイト共通と同じ名前の値は、ページに置いたときと同じくサイト共通の値で表示します。</p>}
+      <StyleLibrary {...props} origins={state.supported ? Object.fromEntries(names.map((name) => [`token:${name}`, Object.hasOwn(shared, name) ? "サイト共通" : "共通部品"])) : undefined}
+        readOnlyToken={(name) => Object.hasOwn(shared, name) ? sharedTokenReason(state.editable) : undefined} reservedNames={Object.keys(shared)} />
+    </>;
+  }
   const siteDocument: PageDocument = { ...rawDocument, body: [], tokens: after.tokens ?? {}, ...(after.textStyles ? { textStyles: after.textStyles } : {}) };
   if (!after.textStyles) delete siteDocument.textStyles;
   function applySite(operation: EditorOperation): string | undefined {

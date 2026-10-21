@@ -870,3 +870,86 @@ test("部品にする copies site-wide tokens used inside the selection and keep
     assert.deepEqual([created.root.style, savedLibrary.tokens], [doc.body[0].children[1].style, siteStyles.tokens]);
   } finally { await app.cleanup(); }
 });
+
+test("the component editor draws library tokens with the same-named site-wide definitions like the page and saves only the library copy", async () => {
+  // brand は部品にした時点の写しで、その後サイト共通の値が変わった。accent はライブラリにだけ、paper はサイト共通にだけある。
+  const siteStyles = { tokens: { brand: { type: "color", value: "#336655", label: "ブランド" }, paper: { type: "color", value: "#f7f4ec" } } };
+  const tokens = { brand: { type: "color", value: "#aa0000", label: "ブランド" }, accent: { type: "color", value: "#0055aa", label: "アクセント" } };
+  const styled = withComponent("site_header", (component) => ({ ...component, root: { ...component.root, style: { base: { color: { token: "brand" }, backgroundColor: { token: "accent" } } } } }));
+  const app = await setup({ library: { ...styled(library()), tokens }, adapter: { readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", ...siteStyles }, version: "s1" }) } });
+  const css = () => canvas().contentDocument.querySelector("style[data-nw-style]").textContent;
+  try {
+    assert.ok(css().includes("--nw-brand:#336655;") && css().includes("--nw-accent:#0055aa;"), "the page draws the instance with the site-wide brand");
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    assert.ok(css().includes("--nw-brand:#336655;") && css().includes("--nw-accent:#0055aa;"), "the component editor draws the same colors as the page");
+    assert.ok(css().includes('[data-nw-node="n1"]{background-color:var(--nw-accent);color:var(--nw-brand);}'));
+    assert.ok(!css().includes("--nw-paper"), "site-wide definitions the library does not have are not added to the component");
+    await click("a · n2"); await change(input("テキスト"), "トップ");
+    assert.ok(css().includes("--nw-brand:#336655;"), "edits keep drawing the site-wide brand");
+    await click("下書き保存");
+    assert.equal(app.calls.saves.length, 0);
+    assert.deepEqual(app.calls.librarySaves[0].library.tokens, tokens, "the library keeps its own copy and gets no site-wide definition");
+  } finally { await app.cleanup(); }
+});
+
+test("the component editor's style panel names who owns each library token and leaves site-wide values to the site settings", async () => {
+  // brand はサイト共通と同名の写し、accent はライブラリにだけ、color-1 はサイト共通にだけある。
+  const siteStyles = { tokens: { brand: { type: "color", value: "#336655", label: "ブランド" }, "color-1": { type: "color", value: "#f7f4ec", label: "カラー 1" } } };
+  const tokens = { brand: { type: "color", value: "#aa0000", label: "ブランドの写し" }, accent: { type: "color", value: "#0055aa", label: "アクセント" } };
+  const styled = withComponent("site_header", (component) => ({ ...component, root: { ...component.root, style: { base: { color: { token: "brand" }, backgroundColor: { token: "accent" } } } } }));
+  const app = await setup({ library: { ...styled(library()), tokens }, adapter: {
+    readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", ...siteStyles }, version: "s1" }), saveSiteSettings: async () => { throw new Error("not used"); } } });
+  const styles = () => document.querySelector('section[aria-label="共通スタイル"]'), rows = () => [...styles().querySelectorAll("button.e-lib-row")];
+  const row = (name) => rows().find((node) => node.querySelector(".e-lib-name")?.textContent === name);
+  const css = () => canvas().contentDocument.querySelector("style[data-nw-style]").textContent;
+  try {
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+    assert.ok(styles().textContent.includes("サイト共通と同じ名前の値は、ページに置いたときと同じくサイト共通の値で表示します。"));
+    assert.deepEqual(rows().map((node) => node.textContent), ["ブランドサイト共通 · #336655 · 1 か所", "アクセント共通部品 · #0055AA · 1 か所"], "site-only values are not offered");
+    // サイト共通の値は名前・色の変更と削除ができない。部品の中の要素へは適用できる。
+    await click("a · n2"); await click(row("ブランド"));
+    assert.ok(styles().textContent.includes("サイト共通の値のため、部品の編集では変更できません。ページに戻り、スタイルの「サイト共通」で変更してください。"));
+    assert.deepEqual([input("名前", styles()).disabled, input("色", styles()).disabled, !!button("このカラーを削除", styles())], [true, true, false]);
+    await click(button("選択中の要素の文字色に適用", styles()));
+    assert.ok(css().includes('[data-nw-node="n2"]{color:var(--nw-brand);}'));
+    // ライブラリにだけある値は、これまでどおり部品の編集で変えられる。
+    await click(row("アクセント")); await change(input("色", styles()), "#123456");
+    assert.ok(css().includes("--nw-accent:#123456;"));
+    // 新しい値の名前は、サイト共通の名前（color-1）を避ける。
+    await click(styles().querySelector('button[aria-label="カラーを追加"]'));
+    assert.equal(row("カラー 2")?.textContent, "カラー 2共通部品 · #336655 · 0 か所");
+    await click("下書き保存");
+    const saved = app.calls.librarySaves[0].library;
+    assert.deepEqual(saved.tokens, { ...tokens, accent: { ...tokens.accent, value: "#123456" }, "color-2": { type: "color", value: "#336655", label: "カラー 2" } });
+    assert.deepEqual(saved.components.find((component) => component.id === "site_header").root.children[0].style, { base: { color: { token: "brand" } } });
+  } finally { await app.cleanup(); }
+});
+
+test("component undo cannot change a library token after the site takes ownership of its name", async () => {
+  let savedSettings;
+  const app = await setup({ library: { ...library(), tokens: { "color-1": { type: "color", value: "#111111", label: "カラー 1" } } }, adapter: {
+    readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja" }, version: "s1" }),
+    saveSiteSettings: async ({ settings }) => { savedSettings = structuredClone(settings); return { status: "saved", version: "s2" }; }
+  } });
+  const styles = () => document.querySelector('section[aria-label="共通スタイル"]');
+  try {
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+    const libraryRow = styles().querySelector("button.e-lib-row"); assert.ok(libraryRow);
+    await click(libraryRow); await change(input("色", styles()), "#222222"); await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.librarySaves[0].library.tokens["color-1"].value, "#222222");
+
+    await click(button("ページに戻る", document.querySelector(".e-part-banner")));
+    await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+    await click("サイト共通", styles()); await click(styles().querySelector('button[aria-label="カラーを追加"]'));
+    await wait(20); await click("サイト共通スタイルを保存"); await flush();
+    assert.equal(savedSettings?.tokens?.["color-1"]?.type, "color");
+
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click("元に戻す");
+    assert.ok(text().includes("サイト共通の値のため、部品の編集では変更できません。"));
+    assert.equal(button("下書き保存").disabled, true, "blocked undo does not dirty the library");
+    assert.equal(app.calls.librarySaves.length, 1, "blocked undo cannot save an older shared-token value");
+  } finally { await app.cleanup(); }
+});
