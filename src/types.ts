@@ -125,6 +125,15 @@ export type PageDocument = {
   body: PageNode[];
 };
 
+/** サイトに明示的に所属し、ページとは別に版管理する共通スタイル。 */
+export type SiteStyleLibrary = {
+  schemaVersion: 1;
+  siteId: string;
+  revision: number;
+  tokens: Record<string, DesignToken>;
+  textStyles: Record<string, TextStyle>;
+};
+
 export type ComponentKind = "header" | "footer" | "navigation" | "section" | "part";
 export type ComponentPropField = "text" | "href" | "src" | "alt";
 export type ComponentPropDefinition = { label: string; node: string; field: ComponentPropField };

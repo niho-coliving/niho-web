@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PageRenderer, type BlockRegistry } from "./react.js";
 import type { ResolvedAssetMap } from "./assets.js";
 
+export type RenderPageOptions = { assets?: ResolvedAssetMap; siteStyles?: unknown };
 /** Astro 等の build/server 用。本文と scoped style を含む断片を返す。 */
-export function renderPageToHtml(document: unknown, blocks: BlockRegistry = {}, options: { assets?: ResolvedAssetMap } = {}): string {
-  return renderToStaticMarkup(createElement(PageRenderer, { document, blocks, ...(options.assets === undefined ? {} : { assets: options.assets }) }));
+export function renderPageToHtml(document: unknown, blocks: BlockRegistry = {}, options: RenderPageOptions = {}): string {
+  return renderToStaticMarkup(createElement(PageRenderer, { document, blocks,
+    ...(options.assets === undefined ? {} : { assets: options.assets }),
+    ...(options.siteStyles === undefined ? {} : { siteStyles: options.siteStyles }) }));
 }

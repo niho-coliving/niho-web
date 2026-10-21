@@ -1,5 +1,6 @@
 import type { AppearEffect, BlockContracts, NodeStyle, PageDocument, PageNode, StateName, StateProperty, StyleDeclarations, StyleProperty } from "./types.js";
 import { parsePageDocument } from "./document.js";
+import { materializeSiteStyles } from "./site-styles.js";
 import { declarationCss, motionProperties, tokenCssValue } from "./style-values.js";
 import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
 
@@ -124,6 +125,9 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
   if (extra) rules.push(extra);
   return rules.join("\n");
 }
-export function generatePageCss(input: unknown, blocks: BlockContracts = {}, assets?: unknown): string {
-  return cssForDocument(parsePageDocument(input, blocks), assets === undefined ? {} : parseResolvedAssets(assets));
+export type PageCssOptions = { siteStyles?: unknown };
+/** 素材mapの第3引数を維持し、共通スタイルは第4引数で明示する。 */
+export function generatePageCss(input: unknown, blocks: BlockContracts = {}, assets?: unknown, options: PageCssOptions = {}): string {
+  const document = options.siteStyles === undefined ? parsePageDocument(input, blocks) : materializeSiteStyles(input, options.siteStyles, blocks);
+  return cssForDocument(document, assets === undefined ? {} : parseResolvedAssets(assets));
 }

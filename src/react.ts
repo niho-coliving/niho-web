@@ -3,6 +3,7 @@ import type { BlockContract, PageNode, PublicPropValue } from "./types.js";
 import { parsePageDocument } from "./document.js";
 import { cssForDocument, pageScope } from "./css.js";
 import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
+import { materializeSiteStyles } from "./site-styles.js";
 
 export type BlockDefinition = BlockContract & {
   /** ホストアプリが所有する同期 React コンポーネント。JSON から実行コードを読まない。 */
@@ -13,13 +14,15 @@ export type PageRendererProps = {
   document: unknown; blocks?: BlockRegistry;
   /** ホストが解決した素材。描画前に検証する。 */
   assets?: ResolvedAssetMap;
+  /** ホストが明示的に選んだ、同じ siteId の版固定済み共通スタイル snapshot。 */
+  siteStyles?: unknown;
   /** 解決できない素材画像。既定は描画しない。placeholder はエディター用。 */
   missingAssets?: "omit" | "placeholder";
 };
 
 /** useEffect を使わず、Next.js の初期 HTML と静的 SSR の両方で本文を返す。 */
-export function PageRenderer({ document: input, blocks = {}, assets: assetInput, missingAssets = "omit" }: PageRendererProps): ReactElement {
-  const document = parsePageDocument(input, blocks);
+export function PageRenderer({ document: input, blocks = {}, assets: assetInput, siteStyles, missingAssets = "omit" }: PageRendererProps): ReactElement {
+  const document = siteStyles === undefined ? parsePageDocument(input, blocks) : materializeSiteStyles(input, siteStyles, blocks);
   const assets = assetInput === undefined ? {} : parseResolvedAssets(assetInput);
   const scope = pageScope(document);
   function render(node: PageNode): ReactElement | string | null {

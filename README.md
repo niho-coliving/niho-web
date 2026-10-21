@@ -26,6 +26,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | --- | --- |
 | `@niho/web` | JSON 型、`validateDocument` / `parsePageDocument`、CSS、React SSR に使える `PageRenderer` |
 | `@niho/web/core` | 検証・文書型・CSS・共通部品の検証と展開だけの入口。React の runtime import を含みません |
+| `@niho/web/site-styles` | サイト共通token・文字スタイルの検証、ページとの合成、切離し、取り込み計画。React不要 |
 | `@niho/web/react` | `PageRenderer` とブロック registry の型 |
 | `@niho/web/server` | Astro の build / server で使える `renderPageToHtml` |
 | `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |
@@ -83,6 +84,8 @@ const checked = parsePageDocument(document);
 ```
 
 `validateDocument(input, blocks?)` は `parsePageDocument` と同じ検証入口です。検証済みの新しい文書を返し、不正入力には例外を返します。サーバーの JSON 受け取り処理でも利用できます。
+
+サイト共通のtoken・文字スタイルは、ページとは別の版付き `SiteStyleLibrary` として保持できます。`materializeSiteStyles(rawPage, sharedSnapshot)` はページのローカル上書きを優先して有効文書を作ります。保存時は必ず元のraw pageを正本にし、公開時は選択したsnapshotで有効文書を固定してください。描画時は `PageRenderer` の `siteStyles` prop、`renderPageToHtml` / `generatePageCss` の `{ siteStyles }` optionへ同じsnapshotを渡せます。詳細は [サイト共通スタイル契約](docs/site-styles-contract.md) を参照してください。
 
 [公開サンプル](examples/page.json)にはリンク、トークン、Flex、レスポンシブ指定を含めています。`schemaVersion` は文書契約の版、`revision` はページ内容の更新番号です。同じ site / page / locale / revision の内容は不変として扱い、内容を変えたら revision を増やします。
 
