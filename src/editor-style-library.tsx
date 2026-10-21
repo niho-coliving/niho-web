@@ -13,6 +13,10 @@ export type StyleLibraryProps = {
   origins?: Readonly<Record<string, string>> | undefined;
   onPromote?: ((kind: "token" | "textStyle", name: string) => void) | undefined;
   canPromote?: ((kind: "token" | "textStyle", name: string) => boolean) | undefined;
+  /** ここでは定義を変更・削除できない共通の値（token）と、その理由。要素への適用はできる。 */
+  readOnlyToken?: ((name: string) => string | undefined) | undefined;
+  /** 新しく作る値の名前に使わない、文書の外の名前。 */
+  reservedNames?: readonly string[] | undefined;
   selection: NodePath | null;
   apply: (operation: EditorOperation) => string | undefined;
   select: (path: NodePath) => void;
@@ -35,7 +39,7 @@ const defaultLabel = (node: PageNode) => node.type === "text" ? "テキスト" :
 const sizeText = (value: StyleValue | undefined, document: PageDocument) => { const resolved = resolveValue(document, value); return resolved === undefined ? "—" : typeof resolved === "number" ? `${resolved}px` : resolved; };
 
 /** 左レールの「スタイル」。共通カラー・テキストスタイル・その他の共通の値を props だけで編集する独立部品。 */
-export function StyleLibrary({ document, selection, apply, select, disabled, breakpoints = defaultBreakpoints, breakpoint = "base", until, preview, pending = noop, fieldKey = "library", nodeLabel = defaultLabel, scopeLabel, origins, onPromote, canPromote }: StyleLibraryProps) {
+export function StyleLibrary({ document, selection, apply, select, disabled, breakpoints = defaultBreakpoints, breakpoint = "base", until, preview, pending = noop, fieldKey = "library", nodeLabel = defaultLabel, scopeLabel, origins, onPromote, canPromote, readOnlyToken, reservedNames = [] }: StyleLibraryProps) {
   const [tab, setTab] = useState<Tab>("color"), [open, setOpen] = useState<string | null>(null), [confirm, setConfirm] = useState(false), [problem, setProblem] = useState("");
   const selected = selection ? (() => { try { const node = nodeAt(document, selection); return node.type === "text" ? undefined : node; } catch { return undefined; } })() : undefined;
   const run = (operation: EditorOperation) => { const inheritedRemoval = (operation.type === "token" && !operation.token || operation.type === "textStyle" && !operation.style) && origins?.[`${operation.type}:${operation.name}`] === "サイト共通"; const error = inheritedRemoval ? "サイト共通の定義は「サイト共通」で削除してください。" : apply(operation); setProblem(error ?? ""); return error; };
@@ -51,11 +55,11 @@ export function StyleLibrary({ document, selection, apply, select, disabled, bre
       name = nextName(styles.map(([key]) => key), "text");
       operation = { type: "textStyle", name, style: { label: `テキスト ${name.slice(5)}`, base: { fontSize: 16, fontWeight: 400, lineHeight: 1.6 } } };
     } else if (tab === "color") {
-      name = nextName(tokens.map(([key]) => key), "color");
+      name = nextName([...tokens.map(([key]) => key), ...reservedNames], "color");
       const current = resolveValue(document, selected?.style?.base?.color);
       operation = { type: "token", name, token: { type: "color", value: typeof current === "string" ? current : "#195640", label: `カラー ${name.slice(6)}` } };
     } else {
-      name = nextName(tokens.map(([key]) => key), "size");
+      name = nextName([...tokens.map(([key]) => key), ...reservedNames], "size");
       operation = { type: "token", name, token: { type: "length", value: 16, label: `サイズ ${name.slice(5)}` } };
     }
     if (!run(operation)) { setOpen(name); setConfirm(false); }
@@ -69,31 +73,33 @@ export function StyleLibrary({ document, selection, apply, select, disabled, bre
     ? <div className="e-confirm" role="group" aria-label="削除の確認"><p>{count ? `使用中の ${count} か所は今の見た目のまま個別の指定に変わります。` : `この${what}を削除します。`}</p>
       <div className="e-actions"><button type="button" className="e-danger" disabled={disabled} onClick={() => { if (!run(operation)) { setOpen(null); setConfirm(false); } }}>削除する</button><button type="button" onClick={() => setConfirm(false)}>やめる</button></div></div>
     : <button type="button" className="e-danger e-small" disabled={disabled} onClick={() => setConfirm(true)}>この{what}を削除</button>;
-  const nameField = (name: string, label: string | undefined, save: (label: string | undefined) => EditorOperation) =>
-    <Field key={`${fieldKey}-${name}-label`} name="名前" value={label ?? ""} placeholder={name} fieldKey={`${fieldKey}-${name}-label`} pending={pending} disabled={disabled}
+  const nameField = (name: string, label: string | undefined, save: (label: string | undefined) => EditorOperation, off = disabled) =>
+    <Field key={`${fieldKey}-${name}-label`} name="名前" value={label ?? ""} placeholder={name} fieldKey={`${fieldKey}-${name}-label`} pending={pending} disabled={off}
       apply={(value) => value.trim().length > 60 ? "名前は 60 文字以内で入力してください。" : apply(save(value.trim() ? value.trim() : undefined))} />;
   const tokenChoices = (kind: TokenKind): Choice[] => tokens.filter(([, token]) => token.type === kind).map(([key, token]) => [key, token.label ?? key]);
 
   function tokenEditor(name: string, token: DesignToken): ReactNode {
     const usage = tokenUsage(document, name), count = usage.nodes.length + usage.textStyles.length;
+    const reason = readOnlyToken?.(name), fixed = disabled || !!reason;
     const update = (next: Partial<DesignToken>): EditorOperation => ({ type: "token", name, token: { ...token, ...next } as DesignToken });
     const label = (value: string | undefined): EditorOperation => { const { label: _label, ...rest } = token; return { type: "token", name, token: value ? { ...rest, label: value } : rest }; };
     return <div className="e-lib-edit">
-      {nameField(name, token.label, label)}
-      {token.type === "color" ? <ColorField key={`${fieldKey}-${name}-value`} caption="色" value={token.value} tokens={[]} fieldKey={`${fieldKey}-${name}-value`} pending={pending} disabled={disabled}
+      {reason && <p className="e-help">{reason}</p>}
+      {nameField(name, token.label, label, fixed)}
+      {token.type === "color" ? <ColorField key={`${fieldKey}-${name}-value`} caption="色" value={token.value} tokens={[]} fieldKey={`${fieldKey}-${name}-value`} pending={pending} disabled={fixed}
         apply={(value) => typeof value === "string" ? apply(update({ value })) : "色を入力してください。"} preview={preview && ((value) => preview(typeof value === "string" ? update({ value }) : null))} />
         : <>
-          <SelectField caption="種類" value={token.type} options={kinds} disabled={disabled || count > 0} apply={(value) => typeof value === "string" ? apply(update({ type: value as TokenKind, value: value === "fontFamily" ? "sans-serif" : value === "number" ? 1 : 16 })) : undefined} />
-          {count > 0 && <small className="e-help">使用中は種類を変えられません。</small>}
-          <Field key={`${fieldKey}-${name}-value-${token.type}`} name="値" value={String(token.value)} fieldKey={`${fieldKey}-${name}-value`} pending={pending} disabled={disabled}
+          <SelectField caption="種類" value={token.type} options={kinds} disabled={fixed || count > 0} apply={(value) => typeof value === "string" ? apply(update({ type: value as TokenKind, value: value === "fontFamily" ? "sans-serif" : value === "number" ? 1 : 16 })) : undefined} />
+          {count > 0 && !reason && <small className="e-help">使用中は種類を変えられません。</small>}
+          <Field key={`${fieldKey}-${name}-value-${token.type}`} name="値" value={String(token.value)} fieldKey={`${fieldKey}-${name}-value`} pending={pending} disabled={fixed}
             apply={(value) => { const trimmed = value.trim(); return apply(update({ value: token.type !== "fontFamily" && /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed) ? Number(trimmed) : trimmed })); }} />
         </>}
-      {count > 0 && <p className="e-help e-reach">{count} か所に反映されます</p>}
+      {count > 0 && !reason && <p className="e-help e-reach">{count} か所に反映されます</p>}
       {usageList(usage.nodes, [...new Set(usage.textStyles.map((entry) => `テキストスタイル『${document.textStyles?.[entry.name]?.label ?? entry.name}』`))])}
       {selected && token.type === "color" && <div className="e-actions">
         <button type="button" className="e-small" disabled={disabled} onClick={() => run(paint("color", name))}>選択中の要素の文字色に適用</button>
         <button type="button" className="e-small" disabled={disabled} onClick={() => run(paint("backgroundColor", name))}>背景色に適用</button></div>}
-      {removal(count, token.type === "color" ? "カラー" : "値", { type: "token", name, token: undefined })}
+      {!reason && removal(count, token.type === "color" ? "カラー" : "値", { type: "token", name, token: undefined })}
     </div>;
   }
 

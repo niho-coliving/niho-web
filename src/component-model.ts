@@ -112,7 +112,7 @@ export function setComponentProp(library: ComponentLibrary, componentId: string,
   const { id, name: componentName, kind, version, root } = current;
   return parseComponentLibrary(replaced(library, index, { id, name: componentName, kind, version, root, ...(entries.length ? { props: Object.fromEntries(entries) } : {}) }), blocks);
 }
-/** 部品の root を1つだけ持つ編集用の文書。tokens はライブラリの値。 */
+/** 部品の root を1つだけ持つ編集用の文書。tokens はライブラリの値（表示・検証では resolveComponentStyles でサイト共通の同名の定義を優先する）。 */
 export function componentDocument(library: ComponentLibrary, componentId: string, locale: string): PageDocument {
   const definition = library.components[componentIndex(library, componentId)]!;
   return { schemaVersion: 1, siteId: library.siteId, pageId: "component", locale, revision: library.revision, title: definition.name, tokens: structuredClone(library.tokens), body: [structuredClone(definition.root)] };
