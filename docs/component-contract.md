@@ -136,6 +136,8 @@ type ComponentUsageEntry = {
 
 - `readLibrary` は opaque な楽観ロック値 `version` と検証前のライブラリを返します。ライブラリがまだないサイトでは `revision: 1`、`components: []` の空ライブラリを返してください。
 - `saveLibrary` はページの下書き保存と同じく（自動保存のときは `trigger: "autosave"`）、`expectedVersion` の比較・revision の採番・409 の `{ status: "conflict" }` 変換をホストが原子的に行います。ホストは保存前に `parseComponentLibrary` で検証し、削除された部品をどの文書（下書き・公開版）も参照していないこと、各部品の version が減っていないことを確認してください。
+- `saveLibrary` が競合した後、エディターはスタッフの「部品を読み直す」で `readLibrary` を呼び直し、返ったライブラリと `version` を次の保存の基準にします。`readLibrary` は常に保存先の現在の内容と `version` を返してください（キャッシュした古い内容を返さない）。
+- 部品の未保存の変更は、ホストが渡した復元ストアがあればサイト単位で端末へ退避できます。復元するときは、退避した後に保存先で変わった部品を部品の `version` で見分けて復元しません（[保存・作業復元・版履歴の契約](save-history-contract.md#共通部品の退避)）。そのため、部品の内容を変える保存では `version` を上げてください（エディターは保存時に上げ、`rewriteComponentLinks` も上げます）。
 - `listUsage` は保存済みの下書きを対象にした使用状況です。ホストは各文書へ `componentUsage(document, library)` を使って集計できます。
 - 部品の中の素材（`img` の `asset`・背景画像）と内部リンクは、ページの文書ではなくライブラリにあります。素材の使用状況・削除の可否には `componentAssetReferences(library)` を含めてください。ページのパス変更では `findComponentLinks` / `findInstanceLinks` を影響に含め、`rewriteComponentLinks`（変わった部品の version を上げる）と `rewriteInstanceLinks`（インスタンスのページごとのリンク先）で書き換えます（[ページ契約](page-contract.md)）。
 - インスタンスを含む下書きの保存（`saveDraft`）では、ホストはライブラリを渡して `parsePageDocument` で検証してください。

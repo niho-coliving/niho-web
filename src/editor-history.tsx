@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { changeLabels, hasRecoveredChanges, libraryChanges, mergeRecoveredLibrary, parseRecoveredLibrary, type LibraryMerge, type RecoveredLibrary } from "./component-session.js";
 import { parsePageDocument } from "./document.js";
 import { Dialog } from "./editor-dialog.js";
 import { fingerprint, sameTarget } from "./editor-model.js";
@@ -22,7 +23,7 @@ const copyTarget = (target: EditorTarget): EditorTarget => ({ siteId: target.sit
 const control = /[\u0000-\u001f\u007f]/u;
 const silent = (task: () => void | Promise<void>) => { void Promise.resolve().then(task).catch(() => undefined); };
 
-export type SaveProblem = "failed" | "conflict" | "auth" | "offline";
+export type SaveProblem = "failed" | "conflict" | "library-conflict" | "auth" | "offline";
 export const isOffline = () => typeof window !== "undefined" && window.navigator?.onLine === false;
 /** 409 は競合、401/403 はログイン切れ、失敗時に navigator.onLine が false ならオフライン。 */
 export function classifySaveError(error: unknown): SaveProblem {
@@ -42,22 +43,24 @@ export function saveProblemNotice(problem: SaveProblem, auto: boolean, thrown: b
   if (problem === "offline") return auto ? "オフラインのため自動保存できませんでした。編集内容を保持しています。接続が戻ると再試行します。" : "オフラインのため保存できませんでした。編集内容を保持しています。接続が戻ってから「再試行」を押してください。";
   return auto ? "自動保存できませんでした。編集内容を保持しています。「再試行」で保存できます。" : "下書きを保存できませんでした。編集内容を保持しています。時間をおいて再試行してください。";
 }
-const problemLabels: Record<SaveProblem, string> = { failed: "保存できませんでした", conflict: "競合しています", auth: "ログインを確認してください", offline: "オフラインです" };
-/** ツールバーの保存状態。競合とログイン切れは内容が戻っても残し、失敗とオフラインは未保存の間だけ出す。 */
+const problemLabels: Record<SaveProblem, string> = { failed: "保存できませんでした", conflict: "競合しています", "library-conflict": "部品が競合しています", auth: "ログインを確認してください", offline: "オフラインです" };
+/** ツールバーの保存状態。競合・部品の競合とログイン切れは内容が戻っても残し（保存の基準が古いため）、失敗とオフラインは未保存の間だけ出す。 */
 export function saveStatus(state: { busy: string; hasInput: boolean; problem: SaveProblem | null; dirty: boolean; online: boolean; autosave: boolean; savedAt: Date | null; loaded: boolean }): { text: string; tone: "saved" | "dirty" | "problem"; problem: SaveProblem | null } {
-  const problem = state.problem === "conflict" || state.problem === "auth" || state.dirty ? state.problem : null;
+  const problem = state.problem === "conflict" || state.problem === "library-conflict" || state.problem === "auth" || state.dirty ? state.problem : null;
   const tone = problem || state.dirty && !state.online ? "problem" : state.dirty ? "dirty" : "saved";
   const text = state.busy ? `${state.busy}…` : state.hasInput ? "入力を確認中" : problem ? problemLabels[problem] : state.dirty && !state.online ? "オフラインです"
     : state.dirty ? state.autosave ? "自動保存を待っています" : "未保存の変更あり" : !state.loaded ? "文書を選択してください" : state.savedAt ? `保存済み（${formatTime(state.savedAt)}）` : "保存済み";
   return { text, tone, problem };
 }
-export function SaveStatus({ text, tone, problem, retry, compare, retryDisabled, compareDisabled }: {
-  text: string; tone: "saved" | "dirty" | "problem"; problem: SaveProblem | null; retry: () => void; compare: () => void; retryDisabled: boolean; compareDisabled: boolean;
+/** 失敗・ログイン切れ・オフラインは「再試行」、ページの競合は「比較する」、部品の競合は「部品を読み直す」。 */
+export function SaveStatus({ text, tone, problem, retry, compare, reload, retryDisabled, compareDisabled, reloadDisabled }: {
+  text: string; tone: "saved" | "dirty" | "problem"; problem: SaveProblem | null; retry: () => void; compare: () => void; reload: () => void; retryDisabled: boolean; compareDisabled: boolean; reloadDisabled: boolean;
 }) {
   return <>
     <span className={`e-status${tone === "saved" ? "" : " is-dirty"}${tone === "problem" ? " is-problem" : ""}`} role="status">{text}</span>
-    {problem && problem !== "conflict" && <button type="button" className="e-small e-status-action" disabled={retryDisabled} onClick={retry}>再試行</button>}
+    {(problem === "failed" || problem === "auth" || problem === "offline") && <button type="button" className="e-small e-status-action" disabled={retryDisabled} onClick={retry}>再試行</button>}
     {problem === "conflict" && <button type="button" className="e-small e-status-action" disabled={compareDisabled} onClick={compare}>比較する</button>}
+    {problem === "library-conflict" && <button type="button" className="e-small e-status-action" disabled={reloadDisabled} onClick={reload}>部品を読み直す</button>}
   </>;
 }
 export function AutosaveSwitch({ on, set }: { on: boolean; set: (on: boolean) => void }) {
@@ -189,6 +192,96 @@ export function RecoveryCompareDialog({ base, baseLabel, recovered, stale, close
     <DiffTable changes={diffDocuments(base, recovered.document)} columns={["変更箇所", baseLabel, "端末に残っていた内容"]} />
     <div className="e-actions"><button type="button" autoFocus onClick={close}>閉じる</button><button type="button" className="e-primary" onClick={apply}>復元した内容で編集を続ける</button></div>
   </Dialog>;
+}
+
+type LibraryRecoveryPhase = { epoch: number; siteId: string; state: "checking" | "offer" | "idle" | "discarded"; at?: ComponentLibrary | undefined };
+/**
+ * 部品ライブラリを読み込むごと（epoch）に、そのサイトの退避内容を確認する。それ以外は確定した部品の変更から 800ms 後に退避する。
+ * 復元の提案中は退避内容を上書き・削除しない。保存・破棄で未保存の部品の変更が無くなったら消す。
+ * store が readLibrary / writeLibrary / removeLibrary の3つを持つ場合だけ動く。
+ */
+export function useLibraryRecovery({ store, session, dirty, blocks, epoch, report }: {
+  store: EditorRecoveryStore | undefined;
+  session: { siteId: string; version: string; present: ComponentLibrary; saved: ComponentLibrary } | undefined;
+  dirty: boolean; blocks: EditorBlockRegistry; epoch: number; report: (text: string) => void;
+}): { offer: RecoveredLibrary | null; drop: (siteId: string) => void; discard: () => void; accepted: () => void } {
+  // ページだけの退避ストアでは部品の変更を退避しない。呼ぶときは library.readLibrary!(…) の形で this を保つ。
+  const library = store?.readLibrary && store.writeLibrary && store.removeLibrary ? store : undefined;
+  const [offer, setOffer] = useState<RecoveredLibrary | null>(null), [phase, setPhase] = useState<LibraryRecoveryPhase>({ epoch: -1, siteId: "", state: "idle" });
+  const latest = useRef(session), phaseRef = useRef(phase), reporter = useRef(report), written = useRef(false), warned = useRef(false), pendingWrite = useRef<(() => void) | null>(null);
+  latest.current = session; phaseRef.current = phase; reporter.current = report;
+  const siteId = session?.siteId ?? "", present = session?.present, version = session?.version;
+  useEffect(() => {
+    setOffer(null); written.current = false; warned.current = false; pendingWrite.current = null;
+    const current = latest.current, currentSite = current?.siteId ?? "";
+    if (!library || !current) { setPhase({ epoch, siteId: currentSite, state: "idle" }); return; }
+    setPhase({ epoch, siteId: currentSite, state: "checking" });
+    let cancelled = false;
+    const saved = current.saved;
+    Promise.resolve().then(() => library.readLibrary!(currentSite)).then((stored) => {
+      if (cancelled) return;
+      if (!stored) { setPhase({ epoch, siteId: currentSite, state: "idle" }); return; }
+      // 別サイトの内容・形が合わない内容・保存済みと変わらない内容は提案せずに消す。
+      const entry = parseRecoveredLibrary(stored, currentSite, blocks);
+      if (entry && hasRecoveredChanges(mergeRecoveredLibrary(entry, saved, blocks), saved)) { setOffer(entry); setPhase({ epoch, siteId: currentSite, state: "offer" }); return; }
+      silent(() => library.removeLibrary!(currentSite));
+      setPhase({ epoch, siteId: currentSite, state: "idle" });
+    }, () => { if (!cancelled) setPhase({ epoch, siteId: currentSite, state: "idle" }); });
+    return () => { cancelled = true; };
+  }, [library, epoch, blocks]);
+  useEffect(() => {
+    pendingWrite.current = null;
+    const current = latest.current;
+    if (!library || !current || phase.epoch !== epoch || phase.siteId !== siteId || phase.state === "checking" || phase.state === "offer" || phase.state === "discarded" && phase.at === present) return;
+    if (!dirty) { if (written.current) { written.current = false; silent(() => library.removeLibrary!(current.siteId)); } return; }
+    const write = () => {
+      pendingWrite.current = null;
+      const now = latest.current;
+      if (!now || now.siteId !== siteId) return;
+      written.current = true;
+      const changed = Object.fromEntries(libraryChanges(now.saved, now.present).map((change) => [change.id, change.base]));
+      void Promise.resolve().then(() => library.writeLibrary!({ siteId: now.siteId, baseVersion: now.version, changed, library: now.present, updatedAt: new Date().toISOString() })).catch((error: unknown) => {
+        if (warned.current) return;
+        warned.current = true;
+        reporter.current(error instanceof RecoveryTooLargeError ? "部品の変更が大きすぎるため端末へ退避していません。保存して作業を残してください。" : "部品の変更を端末へ退避できませんでした。保存して作業を残してください。");
+      });
+    };
+    pendingWrite.current = write;
+    const timer = setTimeout(write, 800);
+    return () => clearTimeout(timer);
+  }, [library, present, version, dirty, phase, epoch, siteId]);
+  useEffect(() => {
+    const flush = () => pendingWrite.current?.();
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, []);
+  /** 部品の変更の破棄に合わせて退避内容を消す。未解決の提案は残す。 */
+  const drop = useCallback((siteId: string) => {
+    const current = phaseRef.current;
+    if (!library || current.siteId === siteId && (current.state === "offer" || current.state === "checking")) return;
+    pendingWrite.current = null; written.current = false;
+    setPhase({ ...current, state: "discarded", at: latest.current?.present });
+    silent(() => library.removeLibrary!(siteId));
+  }, [library]);
+  const discard = () => {
+    if (!offer || !library) return;
+    const siteId = offer.siteId; setOffer(null); setPhase((previous) => ({ ...previous, state: "idle" }));
+    silent(() => library.removeLibrary!(siteId));
+  };
+  // 端末の内容はこの作業コピーの元になったため、後の保存・破棄で消す。
+  const accepted = () => { setOffer(null); setPhase((previous) => ({ ...previous, state: "idle" })); written.current = true; };
+  return { offer, drop, discard, accepted };
+}
+/** 端末に残っていた部品の変更の提案。復元できる部品が無ければ「破棄」だけを出す。 */
+export function LibraryRecoveryBanner({ offer, merge, disabled, restore, discard }: { offer: RecoveredLibrary; merge: LibraryMerge; disabled: boolean; restore: () => void; discard: () => void }) {
+  return <div className="e-recovery" role="status" aria-label="端末に残っていた部品の変更">
+    <p><strong>保存されていない部品の変更があります（{formatDateTime(offer.updatedAt)}）</strong>
+      {merge.library && merge.restored.length > 0 && <span>復元する部品: {merge.restored.map((change) => `${change.name}（${changeLabels[change.change]}）`).join("、")}</span>}
+      {merge.conflicts.length > 0 && <span>ほかの保存で変更されたため復元しない部品: {merge.conflicts.join("、")}</span>}
+      {!merge.library && <span>最新の共通部品と合わないため、復元できません。</span>}</p>
+    <div className="e-recovery-actions">{merge.library && merge.restored.length > 0 && <button type="button" className="e-small e-primary" disabled={disabled} onClick={restore}>復元する</button>}
+      <button type="button" className="e-small" onClick={discard}>破棄</button></div>
+  </div>;
 }
 
 export type LatestSnapshot = { snapshot: EditorSnapshot; document: PageDocument };

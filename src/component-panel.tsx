@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { ownElements } from "./component-expand.js";
 import { fitsPropField } from "./components.js";
 import {
-  componentKinds, componentPreview, fieldCaptions, kindLabel, masterValue, placementProblem, removalProblem, roleLabels, sortedComponents, usageText, type ComponentUsageSummary
+  changeLabels, componentKinds, componentPreview, fieldCaptions, kindLabel, masterValue, placementProblem, removalProblem, roleLabels, sortedComponents, usageText, type ComponentUsageSummary, type LibraryReloadPlan
 } from "./component-session.js";
 import type { EditorBlockRegistry } from "./editor-types.js";
 import type { NodePath } from "./node-tree.js";
@@ -224,4 +224,14 @@ export function ComponentDialogBody({ dialog, library, cancel, submit, notice }:
     {error && <p className="e-help e-problem" role="alert">{error}</p>}
     <div className="e-actions"><button type="button" autoFocus={!named} onClick={cancel}>キャンセル</button>
       <button type="button" className={named ? "e-primary" : "e-danger"} onClick={run}>{({ create: "登録する", rename: "変更する", remove: "削除する", detach: "解除する" } as const)[dialog.type]}</button></div></>;
+}
+
+/** 部品を読み直す前の確認。problem があれば読み直さない。 */
+export function LibraryReloadDialogBody({ plan, close, apply }: { plan: LibraryReloadPlan; close: () => void; apply: () => void }) {
+  return <><h2>共通部品を読み直す</h2><p>保存されている最新の共通部品を読み込みます。</p>
+    {plan.discarded.length > 0 && <><p>この画面で保存していない次の部品の変更は破棄されます。</p><ul className="e-part-usage">{plan.discarded.map((change) => <li key={change.id}><span>{change.name}</span><small>{changeLabels[change.change]}</small></li>)}</ul></>}
+    {plan.detached.length > 0 && <><p>編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。</p><ul className="e-part-usage">{plan.detached.map((name) => <li key={name}><span>{name}</span><small>解除</small></li>)}</ul></>}
+    {plan.problem && <p className="e-help e-problem" role="alert">{plan.problem}</p>}
+    <div className="e-actions"><button type="button" autoFocus onClick={close}>閉じて編集を続ける</button>
+      {!plan.problem && <button type="button" className={plan.discarded.length ? "e-danger" : "e-primary"} onClick={apply}>{plan.discarded.length ? "最新の部品を読み込む（部品の変更を破棄）" : "最新の部品を読み込む"}</button>}</div></>;
 }

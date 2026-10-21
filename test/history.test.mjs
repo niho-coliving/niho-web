@@ -139,6 +139,34 @@ test("browser recovery store purges expired and invalid entries, rejects oversiz
   assert.throws(() => createBrowserRecoveryStore({ scope: "staff", storage: quota }).write(entryFor()), /quota/);
 });
 
+test("browser recovery store keeps component library copies per scope and site next to page copies", () => {
+  const storage = memoryStorage();
+  let time = 1_000_000;
+  const staff = createBrowserRecoveryStore({ scope: "staff:a", storage, now: () => time, maxAgeMs: 1000, maxBytes: 200_000 }), other = createBrowserRecoveryStore({ scope: "staff:b", storage, now: () => time });
+  const library = { schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [] };
+  const libraryEntry = (overrides = {}) => ({ siteId: "demo", baseVersion: "lib-1", changed: { spare: 1, component_1: null }, library, updatedAt: new Date(time).toISOString(), ...overrides });
+  const key = "niho-web:recovery:v1:staff%3Aa:library/demo";
+  staff.writeLibrary({ ...libraryEntry(), token: "secret" }); staff.write(entryFor());
+  assert.deepEqual(Object.keys(JSON.parse(storage.data.get(key))), ["v", "siteId", "baseVersion", "changed", "library", "updatedAt"]);
+  assert.ok(!storage.data.get(key).includes("secret"));
+  assert.deepEqual(staff.readLibrary("demo"), libraryEntry());
+  assert.equal(staff.readLibrary("other"), null); assert.equal(other.readLibrary("demo"), null);
+  assert.deepEqual(staff.read(target), entryFor(), "page copies are unaffected");
+  // 鍵と中身のサイトが違えば読まずに消す。changed の値が不正な場合も同じ。
+  const foreign = "niho-web:recovery:v1:staff%3Aa:library/other";
+  storage.setItem(foreign, JSON.stringify({ v: 1, ...libraryEntry() }));
+  assert.equal(staff.readLibrary("other"), null); assert.equal(storage.getItem(foreign), null);
+  storage.setItem(key, JSON.stringify({ v: 1, ...libraryEntry({ changed: { spare: "1" } }) }));
+  assert.equal(staff.readLibrary("demo"), null); assert.equal(storage.getItem(key), null);
+  assert.throws(() => staff.writeLibrary(libraryEntry({ library: { ...library, padding: "あ".repeat(120_000) } })), RecoveryTooLargeError);
+  staff.writeLibrary(libraryEntry()); staff.removeLibrary("demo"); assert.equal(storage.getItem(key), null);
+  staff.writeLibrary(libraryEntry()); storage.setItem("niho-web:recovery:v1:staff%3Aa:library/broken", "{broken");
+  time += 1001; createBrowserRecoveryStore({ scope: "staff:a", storage, now: () => time, maxAgeMs: 1000 });
+  assert.deepEqual([...storage.data.keys()], [], "expired and broken page and library copies are purged together");
+  time = 1_000_000; staff.writeLibrary(libraryEntry()); other.writeLibrary(libraryEntry()); staff.clear();
+  assert.deepEqual([...storage.data.keys()], ["niho-web:recovery:v1:staff%3Ab:library/demo"], "clear() removes this scope's library copies only");
+});
+
 test("browser recovery store tolerates an inaccessible localStorage", () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("SecurityError"); } });
@@ -147,6 +175,8 @@ test("browser recovery store tolerates an inaccessible localStorage", () => {
     assert.equal(store.read(target), null);
     store.remove(target); store.clear();
     assert.throws(() => store.write(entryFor()), /recovery storage unavailable/);
+    assert.equal(store.readLibrary("demo"), null); store.removeLibrary("demo");
+    assert.throws(() => store.writeLibrary({ siteId: "demo", baseVersion: "lib-1", changed: {}, library: {}, updatedAt: new Date(0).toISOString() }), /recovery storage unavailable/);
   } finally {
     if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor); else delete globalThis.localStorage;
   }

@@ -17,7 +17,7 @@ import { carouselPreset, togglePreset } from "./interaction-presets.js";
 import { editorTiers, hiddenAt, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
 import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
-import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
+import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, LibraryRecoveryBanner, RecoveryBanner, RecoveryCompareDialog, ReleaseAffected, SaveStatus, VersionPanel, autosaveDelay, classifySaveError, formatDateTime, isOffline, saveProblemNotice, saveStatus, targetKeyOf, useAutosave, useLibraryRecovery, useOnline, useRecovery, useVersionHistory, type LatestSnapshot, type SaveProblem } from "./editor-history.js";
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicUrl } from "./validation-utils.js";
 import type { ComponentUsageEntry, EditorBlockRegistry, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
@@ -27,11 +27,11 @@ import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
 import { bumpChangedComponentVersions, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
-import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
+import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
 import { BlockSlotInspector, BlockSlotList, applyToSlot, declaredSlot, previewRegistry, slotFromTarget } from "./block-slot-panel.js";
 import {
-  acceptSavedLibrary, commitLibrary, componentProblem, exposeComponentProp, fitsLibrary, libraryFingerprint, librarySessionFrom, parseUsage, placementProblem,
-  relabelComponentProp, releaseAffected, resolveCanvas, summarizeUsage, textStylePaths, travelLibrary, usageText, type LibrarySession
+  acceptSavedLibrary, commitLibrary, componentProblem, exposeComponentProp, fitsLibrary, libraryFingerprint, librarySessionFrom, mergeRecoveredLibrary, parseUsage, placementProblem, planLibraryReload,
+  relabelComponentProp, releaseAffected, resolveCanvas, summarizeUsage, textStylePaths, travelLibrary, trimReloadedHistory, usageText, type LibraryReloadPlan, type LibrarySession
 } from "./component-session.js";
 import { LanguageSelector, LocalizationPanel, localizationEditorCss, localizedOperationProblem, useEditorLocalization, type EditorLocalizationCommandOutcome, type EditorLocalizationManualBuffer } from "./editor-localization.js";
 import { parseEditorLocaleReleaseApplyResult, parseEditorLocaleReleasePlan, parseEditorLocaleReleaseState } from "./editor-locale-release.js";
@@ -40,6 +40,8 @@ import { documentLocaleFor, localizationLocaleFor, validateLocalizedDocumentSave
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
 type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; hasSavedDraft?: boolean | undefined; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
+/** 部品を読み直す確認中の状態。library・page は確認を始めた時点の作業コピーの fingerprint（変わっていれば適用しない）。 */
+type LibraryReload = { fresh: LibrarySession; plan: LibraryReloadPlan; library: string; page: string | undefined };
 type Inspector = "element" | "page" | "site" | "localization";
 type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorTarget } | { type: "reload" }
   | { type: "inspector"; inspector: Inspector } | { type: "node"; path: NodePath; canvasId?: string }
@@ -304,6 +306,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const components = adapter.components, [library, setLibrary] = useState<LibrarySession | null>(null), libraryRef = useRef(library); libraryRef.current = library;
   const libraryPresent = library?.history.present;
   const [libraryFailed, setLibraryFailed] = useState(false), [usage, setUsage] = useState<readonly ComponentUsageEntry[] | null | undefined>(undefined);
+  // libraryEpoch はサイトの部品ライブラリを開くたびに増やし、端末の退避内容を確かめ直す（部品を読み直すでは増やさない）。
+  const [libraryReload, setLibraryReload] = useState<LibraryReload | null>(null), [libraryEpoch, setLibraryEpoch] = useState(0);
   const [editing, setEditing] = useState<string | null>(null), [componentDialog, setComponentDialog] = useState<ComponentDialogState | null>(null), usageRequest = useRef<AbortController | null>(null);
   const request = useRef<AbortController | null>(null), action = useRef<AbortController | null>(null), pageList = useRef<AbortController | null>(null), releaseRead = useRef<AbortController | null>(null);
   useEffect(() => () => action.current?.abort(), [adapter]);
@@ -336,15 +340,18 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     pageOperationalBlocked = (blocked && busy !== "保存中" && busy !== "部品を保存中") || historyMode || !localizationReady,
     pageBlocked = pageOperationalBlocked || !!documentReadOnly;
   const editBlocked = masterId ? libraryBlocked : pageBlocked;
-  // 退避はページの作業コピーだけ。共通部品の現在の内容で展開できない退避内容は復元させない。
+  // ページの作業コピーは文書ごとに退避する。共通部品の現在の内容で展開できない退避内容は復元させない。
   const recoveryState = useRecovery({ store: recovery, session: session && !session.readOnly ? { target: session.target, version: session.version, present: session.history.present } : undefined, dirty: dirty && !session?.readOnly, blocks, components: libraryPresent, epoch: loadEpoch, report: setNotice });
+  // 部品ライブラリはサイトごとに退避する（ストアが部品の退避に対応する場合だけ）。提案は保存済みの最新の部品に重ねた結果で示す。
+  const libraryRecovery = useLibraryRecovery({ store: recovery, session: library ? { siteId: library.siteId, version: library.version, present: library.history.present, saved: library.savedLibrary } : undefined, dirty: libraryDirty, blocks, epoch: libraryEpoch, report: setNotice });
+  const libraryMerge = useMemo(() => libraryRecovery.offer && library && libraryRecovery.offer.siteId === library.siteId ? mergeRecoveredLibrary(libraryRecovery.offer, library.savedLibrary, blocks) : null, [libraryRecovery.offer, library?.siteId, library?.savedLibrary, blocks]);
   const autosaveMs = autosaveDelay(autosave), autosaveActive = autosaveMs !== undefined && autosaveOn;
   // オフラインで失敗した後、接続が戻ったら自動保存は1回だけ再試行する。
   const online = useOnline(() => { if (problemRef.current !== "offline") return; if (!autosaveActive) setProblem("failed"); else if (!pendingChanges) setProblem(null); else void save("auto"); });
-  const modal = !!plan || !!localeReleasePlan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null || !!componentDialog;
+  const modal = !!plan || !!localeReleasePlan || !!navigation || !!pageChange || conflictView > 0 || recoveryCompare || versions.dialog !== null || !!componentDialog || !!libraryReload;
   // 自動保存は手動保存と同じく部品 → ページの順に保存する。部品とページのどちらが変わっても待ち直す。
   const autosaveSubject = useMemo(() => [session?.history.present, libraryPresent], [session?.history.present, libraryPresent]);
-  // ページが無いサイトでも、部品の変更は部品ライブラリ単位の key で自動保存する（部品は端末の退避の対象外のため）。
+  // ページが無いサイトでも、部品の変更は部品ライブラリ単位の key で自動保存する（部品の端末への退避は、ストアが対応する場合だけのため）。
   const autosaveKey = (target: EditorTarget | undefined, lib: LibrarySession | null) => target ? targetKeyOf(target) : lib ? JSON.stringify(["library", lib.siteId]) : "";
   useAutosave(autosaveMs, autosaveActive && pendingChanges && (!dirty || !session?.readOnly) && !hasInput && !busy && !modal && !historyMode && online && !problem && localizationReady, autosaveSubject, autosaveKey(session?.target, library),
     (key) => { if (autosaveKey(sessionRef.current?.target, libraryRef.current) === key) void save("auto"); });
@@ -372,7 +379,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     try {
       const snapshot = await components.readLibrary(siteId, signal);
       if (signal.aborted) return;
-      replaceLibrary(librarySessionFrom(snapshot, siteId, blocks)); refreshUsage(siteId);
+      replaceLibrary(librarySessionFrom(snapshot, siteId, blocks)); setLibraryEpoch((value) => value + 1); refreshUsage(siteId);
     } catch { if (!signal.aborted) setLibraryFailed(true); }
   }, [components, blocks, replaceLibrary, refreshUsage]);
   const load = useCallback(async (target: EditorTarget, options?: { preserveView?: boolean }): Promise<boolean> => {
@@ -399,7 +406,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   useEffect(() => {
     if (!siteId) return;
     const controller = new AbortController(); setPages([]); setBusy("読込中");
-    replaceLibrary(null); setLibraryFailed(false); setUsage(undefined); setEditing(null); usageRequest.current?.abort();
+    replaceLibrary(null); setLibraryReload(null); setLibraryFailed(false); setUsage(undefined); setEditing(null); usageRequest.current?.abort();
     const listed = components ? openLibrary(siteId, controller.signal).then(() => controller.signal.aborted ? [] : adapter.listPages(siteId, controller.signal)) : adapter.listPages(siteId, controller.signal);
     listed.then((result) => {
       if (controller.signal.aborted) return;
@@ -515,11 +522,11 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   }
   /**
    * 成功時だけ true。競合・失敗時は部品とページの変更を保持し、保存状態に問題を出して自動保存を止める。
-   * 部品の競合を見比べる画面は無いため、保存状態は「保存できませんでした」にする。
+   * 競合は「部品が競合しています」とし、「部品を読み直す」で最新の部品を読み直す。
    */
   async function saveComponents(current: LibrarySession, signal: AbortSignal, auto: boolean): Promise<boolean> {
     if (!components) return true;
-    const conflicted = "共通部品の保存が競合しました（409）。部品とページの変更を保持しています。最新の状態を確認してからやり直してください。";
+    const conflicted = "共通部品の保存が競合しました（409）。ほかの保存で部品が更新されています。部品とページの変更は保持しています。「部品を読み直す」で最新の部品を読み込んでください。";
     const failure = auto ? "共通部品を自動保存できませんでした。部品とページの変更を保持しています。「再試行」で保存できます。" : "共通部品を保存できませんでした。部品とページの変更を保持しています。時間をおいて再試行してください。";
     const failed = (next: SaveProblem, text: string) => { if (libraryRef.current?.siteId !== current.siteId) return; setProblem(next); setNotice(text); };
     setBusy("部品を保存中");
@@ -527,7 +534,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       const library = parseComponentLibrary(bumpChangedComponentVersions(current.history.present, current.savedLibrary), blocks);
       const result = await components.saveLibrary({ siteId: current.siteId, library: structuredClone(library), expectedVersion: current.version, ...(auto ? { trigger: "autosave" as const } : {}) }, signal);
       if (signal.aborted) return false;
-      if (result.status === "conflict") { failed("failed", conflicted); return false; }
+      if (result.status === "conflict") { failed("library-conflict", conflicted); return false; }
       if (typeof result.version !== "string" || !result.version || result.version === current.version) throw new Error("version must advance");
       const latest = libraryRef.current;
       if (latest && latest.siteId === current.siteId && latest.version === current.version) replaceLibrary(acceptSavedLibrary(latest, current.history.present, library, result));
@@ -535,7 +542,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     } catch (error) {
       if (signal.aborted) return false;
       const kind = classifySaveError(error);
-      failed(kind === "conflict" ? "failed" : kind, kind === "conflict" ? conflicted : kind === "failed" ? failure : saveProblemNotice(kind, auto, true));
+      failed(kind === "conflict" ? "library-conflict" : kind, kind === "conflict" ? conflicted : kind === "failed" ? failure : saveProblemNotice(kind, auto, true));
       return false;
     }
   }
@@ -694,6 +701,17 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     if (problem) { setNotice(problem); return; }
     recoveryState.accepted(); setNotice("端末に残っていた変更を復元しました。保存すると新しい版として記録されます。");
   }
+  /** 端末に残っていた部品の変更を、保存済みの最新の部品に重ねて作業コピーにする。編集中のページを展開できなくなる場合は復元しない。 */
+  function restoreLibrary() {
+    const offer = libraryRecovery.offer, current = libraryRef.current;
+    if (!offer || !current || offer.siteId !== current.siteId || libraryBlocked || hasInput || masterId) return;
+    const merged = mergeRecoveredLibrary(offer, current.savedLibrary, blocks);
+    if (!merged.library) { setNotice("端末に残っていた部品の変更は、最新の共通部品と合わないため復元できません。"); return; }
+    const page = sessionRef.current?.history.present;
+    if (page && !fitsLibrary(page, merged.library, blocks)) { setNotice("端末に残っていた部品の変更は、編集中のページと合わないため復元できません。"); return; }
+    replaceLibrary({ ...current, history: commitLibrary(current.history, merged.library) });
+    libraryRecovery.accepted(); setNotice("端末に残っていた部品の変更を復元しました。保存すると使用中の文書に反映されます。");
+  }
   async function restoreRevision() {
     const viewing = versions.viewing; if (!viewing) return;
     const problem = await restoreDocument(viewing.document);
@@ -722,6 +740,45 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     setConflictView(0); setProblem(null);
     if (fingerprint(history.present) === fingerprint(latest)) { setNotice("最新の保存内容と同じ内容です。"); return; }
     void save("manual");
+  }
+  /**
+   * 部品の保存が競合した後、保存されている最新の部品を読み直す。手元の部品の変更を破棄する場合・ページの部品を解除する場合・読み直せない場合は
+   * 確認を出し、それ以外はそのまま切り替える。ページの作業コピーは保持する。
+   */
+  async function reloadLibrary() {
+    const current = libraryRef.current;
+    if (!components || !current || action.current || blocked || hasInput || historyMode || targetMode || !localizationReady) return;
+    const controller = new AbortController(), siteId = current.siteId; action.current = controller; setBusy("部品を読込中"); setNotice("");
+    try {
+      const fresh = librarySessionFrom(await components.readLibrary(siteId, controller.signal), siteId, blocks);
+      const local = libraryRef.current, page = sessionRef.current;
+      if (controller.signal.aborted || !local || local.siteId !== siteId) return;
+      const plan = planLibraryReload({ local: local.history.present, saved: local.savedLibrary, latest: fresh.history.present, page: page?.history.present, editable: !!page && !page.readOnly, blocks });
+      const state: LibraryReload = { fresh, plan, library: libraryFingerprint(local.history.present), page: page ? fingerprint(page.history.present) : undefined };
+      if (!plan.discarded.length && !plan.detached.length && !plan.problem) applyLibraryReload(state); else setLibraryReload(state);
+    } catch { if (!controller.signal.aborted) setNotice("最新の共通部品を読み込めませんでした。編集内容は保持しています。時間をおいて再試行してください。"); }
+    finally { if (!controller.signal.aborted) setBusy(""); if (action.current === controller) action.current = null; }
+  }
+  /** 確認した内容で最新の部品に切り替える。確認中に部品・ページの作業コピーが変わっていれば適用しない。 */
+  function applyLibraryReload(state: LibraryReload) {
+    setLibraryReload(null);
+    const current = libraryRef.current, page = sessionRef.current;
+    if (!current || current.siteId !== state.fresh.siteId || libraryFingerprint(current.history.present) !== state.library || (page ? fingerprint(page.history.present) : undefined) !== state.page) {
+      setNotice("確認中に編集内容が変わりました。もう一度「部品を読み直す」を押してください。"); return;
+    }
+    if (state.plan.discarded.length) libraryRecovery.drop(current.siteId);
+    replaceLibrary(state.fresh);
+    // 解除は通常の編集として積む。最新では同じ部品として表示できない部品を参照する版へは、元に戻すで戻れないようにする。
+    if (page) {
+      const history = trimReloadedHistory(state.plan.page ? commitHistory(page.history, state.plan.page) : page.history, { local: current.history.present, saved: current.savedLibrary, latest: state.fresh.history.present });
+      if (history !== page.history) replace({ ...page, history });
+    }
+    if (masterId && !state.fresh.history.present.components.some((component) => component.id === masterId)) resetMode();
+    else { setSelection(null); setSlotChoice(null); setInspector("page"); setDraft(null); setFieldEpoch((value) => value + 1); }
+    if (problemRef.current === "library-conflict") setProblem(null);
+    refreshUsage(current.siteId);
+    setNotice(["最新の共通部品を読み込みました。", state.plan.discarded.length ? "保存していなかった部品の変更は破棄しました。" : "",
+      state.plan.detached.length ? `このページの「${state.plan.detached.join("」「")}」は、部品を解除して通常の要素にしました。` : ""].join(""));
   }
   async function saveAndNavigate(next: Navigation) {
     setNavigation(null);
@@ -1013,7 +1070,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
     <header className="e-toolbar" ref={(element) => { if (element) element.inert = modal; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {panelPages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       {localization.site && selectedLocale && <LanguageSelector config={localization.site.config} locale={selectedLocale} disabled={blocked} select={selectLocale} />}
-      <SaveStatus {...status} retry={() => void save()} compare={() => setConflictView((value) => value + 1)} retryDisabled={blocked || hasInput || historyMode || !localizationReady} compareDisabled={targetMode || !!busy || hasInput || historyMode || !localizationReady} />
+      <SaveStatus {...status} retry={() => void save()} compare={() => setConflictView((value) => value + 1)} reload={() => void reloadLibrary()} retryDisabled={blocked || hasInput || historyMode || !localizationReady} compareDisabled={targetMode || !!busy || hasInput || historyMode || !localizationReady}
+        reloadDisabled={!library || blocked || hasInput || historyMode || targetMode || !localizationReady} />
       {autosaveMs !== undefined && <AutosaveSwitch on={autosaveOn} set={setAutosaveOn} />}
       <button onClick={() => travel("undo")} disabled={!activeHistory?.past.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>元に戻す</button>
       <button onClick={() => travel("redo")} disabled={!activeHistory?.future.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>やり直す</button>
@@ -1085,6 +1143,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     </aside>
     <section className="e-canvas" aria-label="ライブプレビュー">{masterComponent && <ComponentBanner name={masterComponent.name} count={usageSummary?.get(masterComponent.id)?.rows.length} back={leaveComponent} />}<div className="e-canvas-tools"><div className="e-canvas-caption"><strong>{historyMode ? "版を表示中" : preview ? "プレビュー" : "キャンバス"}</strong><small>{historyMode ? "読み取り専用です" : preview ? "公開前の表示を確認" : "クリックで選択・ダブルクリックで文字編集"}</small></div>{resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}<label>表示幅 <select aria-label="表示幅" value={width} onChange={(event) => setWidth(Number(event.target.value))}>{[...new Set([320, 375, 768, 1280, 1440, width])].sort((a, b) => a - b).map((value) => <option key={value} value={value}>{({ 320: "小さいモバイル · ", 375: "モバイル · ", 768: "タブレット · ", 1280: "PC · ", 1440: "ワイド · " } as Record<number, string>)[value] ?? ""}{value}px</option>)}</select></label>{document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}{document && <button type="button" className="e-small e-motion-toggle" aria-pressed={motion || preview} disabled={preview} title={preview ? "プレビュー中は動きを再生します" : "登場や状態の変化の動きを再生します"}
         onClick={() => { setMotion((value) => !value); if (!motion) setReplay((value) => value + 1); }}>動きを再生</button>}</div>
+      {libraryRecovery.offer && libraryMerge && <LibraryRecoveryBanner offer={libraryRecovery.offer} merge={libraryMerge} disabled={libraryBlocked || hasInput || !!masterId} restore={restoreLibrary} discard={libraryRecovery.discard} />}
       {recoveryState.offer && session && !session.readOnly && <RecoveryBanner offer={recoveryState.offer} stale={recoveryStale} disabled={!localizationReady || historyMode || (blocked && busy !== "保存中") || !!masterId} compare={() => setRecoveryCompare(true)}
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : session?.hasSavedDraft === false ? publishHold : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
@@ -1131,7 +1190,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
           onClear={() => { const error = apply({ type: "background", path: selection, breakpoint: tier, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint: tier, property, value }); if (error) setNotice(error); }} />} />}
       </>}</section>}
     </>}</aside></div>
-    {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => { if (session && ["site", "page", "reload"].includes(navigation.type)) recoveryState.drop(session.target); navigate(navigation); }}>変更を破棄して移動</button>
+    {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => { if (session && ["site", "page", "reload"].includes(navigation.type)) recoveryState.drop(session.target); if (navigation.type === "site" && libraryDirty && library) libraryRecovery.drop(library.siteId); navigate(navigation); }}>変更を破棄して移動</button>
       {(dirty || navigation.type === "site" && libraryDirty) && !hasInput && !historyMode && (navigation.type === "site" || navigation.type === "page" || navigation.type === "reload") && !(navigation.type === "site" && siteSettings.dirty) && <button className="e-primary" onClick={() => void saveAndNavigate(navigation)}>保存して移動</button>}</div></Dialog>}
     {plan && <Dialog name="公開前の対象と差分" dismiss={() => { if (!busy) setPlan(null); }}><h2>{plan.action === "rollback" ? `版 ${plan.revision} に戻す前の確認` : "公開前の確認"}</h2><p>反映先のドメイン</p><p className="e-domain">{plan.domain}</p><p>{session?.target.pageId} · {session?.target.locale}</p>
       <ReleaseSearchSummary document={pageDocument} page={page} domain={plan.domain} settings={siteSettings.settings} rollback={plan.action === "rollback"} url={plan.url} /><ReleaseAffected affected={releaseAffected(plan.affected, pageDocument, libraryPresent)} /><table><thead><tr><th>変更箇所</th><th>現在の公開内容</th><th>反映する内容</th></tr></thead><tbody>{plan.changes.length ? plan.changes.map((change, index) => <tr key={index}><td>{change.path}</td><td>{change.before}</td><td>{change.after}</td></tr>) : <tr><td colSpan={3}>内容の差分はありません。</td></tr>}</tbody></table>
@@ -1155,6 +1214,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       applied={(page, change) => void pageApplied(page, change)} conflicted={() => void reloadPages()} close={() => setPageChange(null)}
       reload={() => { const current = sessionRef.current?.target; setPageChange(null); void reloadPages().then(() => current && load(current)); }} />}
     {conflictView > 0 && session && pageDocument && <ConflictDialog key={conflictView} adapter={adapter} target={session.target} present={pageDocument} blocks={blocks} components={libraryPresent} close={() => setConflictView(0)} discard={loadLatest} overwrite={overwriteWith} />}
+    {libraryReload && <Dialog name="共通部品を読み直す" dismiss={() => setLibraryReload(null)}><LibraryReloadDialogBody plan={libraryReload.plan} close={() => setLibraryReload(null)} apply={() => applyLibraryReload(libraryReload)} /></Dialog>}
     {recoveryCompare && recoveryState.offer && pageDocument && <RecoveryCompareDialog base={pageDocument} baseLabel={dirty ? "現在の編集内容" : "保存済みの内容"} recovered={recoveryState.offer} stale={recoveryStale} close={() => setRecoveryCompare(false)} apply={restoreRecovered} />}
     <HistoryDialogs history={versions} present={pageDocument} />
   </div>;
