@@ -83,7 +83,8 @@ async function setup(options = {}) {
   const components = {
     readLibrary: async (siteId) => {
       calls.order.push("readLibrary"); calls.libraryReads.push(siteId);
-      if (options.readLibrary) return options.readLibrary();
+      const custom = options.readLibrary && await options.readLibrary(siteId);
+      if (custom) return custom;
       return { library: structuredClone(storedLibrary), version: `lib-${libraryVersion}` };
     },
     saveLibrary: async (request) => {
@@ -115,8 +116,23 @@ async function setup(options = {}) {
   await act(async () => root.render(createElement(PageEditor, { adapter, ...(options.blocks ? { blocks: options.blocks } : {}), ...(options.insertableBlocks ? { insertableBlocks: options.insertableBlocks } : {}), ...options.props })));
   for (let attempt = 0; attempt < 5 && !canvas(); attempt++) await flush();
   if (canvas()) await loadCanvas();
-  return { calls, adapter, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  // ほかのスタッフが部品ライブラリを保存した状態を作る。
+  const host = { saveRemotely: (update) => { storedLibrary = update(structuredClone(storedLibrary)); libraryVersion++; } };
+  return { calls, adapter, host, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
+const memoryStorage = () => {
+  const data = new Map();
+  return { data, get length() { return data.size; }, key: (index) => [...data.keys()][index] ?? null, getItem: (key) => data.has(key) ? data.get(key) : null,
+    setItem: (key, value) => { data.set(key, String(value)); }, removeItem: (key) => { data.delete(key); } };
+};
+const libraryBanner = () => document.querySelector('[aria-label="端末に残っていた部品の変更"]');
+const withComponent = (id, update) => (source) => ({ ...source, components: source.components.map((component) => component.id === id ? update(component) : component) });
+async function renameCard(from, to) { await click(button("名前を変更", card(from))); await change(input("部品名", dialog()), to); await click(button("変更する", dialog())); }
+const twoSites = {
+  listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }, { id: "other", name: "別サイト", domains: ["https://other.example.test"] }],
+  listPages: async (siteId) => siteId === "demo" ? [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }] : []
+};
+const otherSiteLibrary = (siteId) => siteId === "other" ? { library: { ...library(), siteId: "other" }, version: "other-1" } : undefined;
 
 test("hosts without a component adapter keep today's panels, inspector and requests", async () => {
   const app = await setup({ components: false, document: fixture });
@@ -329,8 +345,9 @@ test("library save conflicts and failures keep both edits and skip the page save
     assert.ok(card("予備の帯 改")); assert.equal(document.querySelector(".e-status").textContent, "未保存の変更あり");
     await change(input("ページタイトル"), "保持するタイトル");
     await click("下書き保存");
-    assert.ok(text().includes("共通部品の保存が競合しました（409）。部品とページの変更を保持しています。最新の状態を確認してからやり直してください。"));
-    mode = "throw409"; await click("下書き保存"); assert.ok(text().includes("共通部品の保存が競合しました（409）"));
+    assert.ok(text().includes("共通部品の保存が競合しました（409）。ほかの保存で部品が更新されています。部品とページの変更は保持しています。「部品を読み直す」で最新の部品を読み込んでください。"));
+    assert.equal(status(), "部品が競合しています");
+    mode = "throw409"; await click("下書き保存"); assert.ok(text().includes("共通部品の保存が競合しました（409）")); assert.equal(status(), "部品が競合しています");
     mode = "throw"; await click("下書き保存"); assert.ok(text().includes("共通部品を保存できませんでした。部品とページの変更を保持しています。時間をおいて再試行してください。"));
     assert.equal(app.calls.saves.length, 0); assert.equal(app.calls.librarySaves.length, 3);
     assert.ok(app.calls.librarySaves.every((request) => request.expectedVersion === "lib-1"));
@@ -421,7 +438,7 @@ test("autosave saves changed components before the page and pauses without savin
     fail = true;
     await click(button("複製", card("予備の帯 改"))); await change(input("ページタイトル"), "部品に失敗した後のタイトル"); await wait(400);
     assert.equal(app.calls.librarySaves.length, 3); assert.equal(app.calls.saves.length, 1, "the page is not saved after the component library failed");
-    assert.equal(status(), "保存できませんでした"); assert.ok(text().includes("共通部品の保存が競合しました（409）"));
+    assert.equal(status(), "部品が競合しています"); assert.ok(text().includes("共通部品の保存が競合しました（409）"));
     await wait(400); assert.equal(app.calls.librarySaves.length, 3, "autosave pauses after a failure");
   } finally { await app.cleanup(); }
 });
@@ -490,6 +507,222 @@ test("component-only changes are autosaved on a site without pages", async () =>
     assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.librarySaves[0].trigger, "autosave");
     assert.ok(app.calls.librarySaves[0].library.components.some((component) => component.name === "ページのない帯"));
     assert.equal(app.calls.saves.length, 0);
+  } finally { await app.cleanup(); }
+});
+
+test("部品を読み直す reads the latest components after a 409 and asks before discarding unsaved component changes", async () => {
+  let conflicted = true;
+  const app = await setup({ saveLibrary: async () => conflicted ? { status: "conflict" } : undefined });
+  try {
+    await openPanel(); await renameCard("予備の帯", "予備の帯 改");
+    await change(input("ページタイトル"), "保持するタイトル");
+    // ほかの人が先に部品を保存した。
+    app.host.saveRemotely((source) => ({ ...withComponent("section_heading", (component) => ({ ...component, name: "見出し（更新済み）", version: 2 }))(source), revision: source.revision + 1 }));
+    await click("下書き保存");
+    assert.equal(status(), "部品が競合しています"); assert.ok(text().includes("「部品を読み直す」で最新の部品を読み込んでください。"));
+    assert.equal(button("再試行"), undefined); assert.equal(button("比較する"), undefined); assert.equal(app.calls.saves.length, 0);
+    await click("部品を読み直す");
+    assert.deepEqual(app.calls.libraryReads, ["demo", "demo"]);
+    assert.equal(dialog().getAttribute("aria-label"), "共通部品を読み直す");
+    assert.ok(dialog().textContent.includes("この画面で保存していない次の部品の変更は破棄されます。"));
+    assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["予備の帯 改変更"]);
+    await click(button("閉じて編集を続ける", dialog()));
+    assert.equal(dialog(), null); assert.ok(card("予備の帯 改"), "closing keeps the unsaved change"); assert.equal(status(), "部品が競合しています");
+    await click("部品を読み直す");
+    const discard = button("最新の部品を読み込む（部品の変更を破棄）", dialog());
+    assert.equal(discard.className, "e-danger"); await click(discard);
+    assert.equal(dialog(), null);
+    assert.ok(card("見出し（更新済み）")); assert.ok(card("予備の帯")); assert.equal(card("予備の帯 改"), null);
+    assert.ok(text().includes("最新の共通部品を読み込みました。保存していなかった部品の変更は破棄しました。"));
+    assert.equal(input("ページタイトル").value, "保持するタイトル", "the page draft is kept"); assert.equal(status(), "未保存の変更あり");
+    assert.equal(button("部品を読み直す"), undefined); assert.equal(button("元に戻す").disabled, false, "page edits stay undoable");
+    conflicted = false; await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1, "the discarded component change is not saved");
+    assert.deepEqual(app.calls.saves.map((request) => request.document.title), ["保持するタイトル"]);
+  } finally { await app.cleanup(); }
+});
+
+test("部品を読み直す applies the latest components at once when no component change is unsaved", async () => {
+  let conflicted = true;
+  const app = await setup({ saveLibrary: async () => conflicted ? { status: "conflict" } : undefined });
+  try {
+    await openPanel(); await renameCard("予備の帯", "予備の帯 改"); await click("下書き保存");
+    assert.equal(status(), "部品が競合しています");
+    await renameCard("予備の帯 改", "予備の帯");
+    assert.equal(button("下書き保存").disabled, true); assert.equal(status(), "部品が競合しています", "the outdated base stays reported");
+    app.host.saveRemotely((source) => ({ ...withComponent("section_heading", (component) => ({ ...component, name: "見出し（更新済み）", version: 2 }))(source), revision: source.revision + 1 }));
+    const usage = app.calls.usage.length;
+    await click("部品を読み直す");
+    assert.equal(dialog(), null, "nothing is discarded, so nothing is confirmed");
+    assert.ok(card("見出し（更新済み）")); assert.ok(text().includes("最新の共通部品を読み込みました。"));
+    assert.equal(status(), "保存済み"); assert.equal(app.calls.usage.length, usage + 1, "usage is read again");
+    conflicted = false; await renameCard("予備の帯", "予備の帯 改"); await click("下書き保存");
+    assert.equal(app.calls.librarySaves.at(-1).expectedVersion, "lib-2", "the next save is based on the version read again");
+    assert.ok(status().startsWith("保存済み"));
+  } finally { await app.cleanup(); }
+});
+
+test("部品を読み直す keeps the page content when the page uses a discarded or replaced component", async () => {
+  let conflicted = true;
+  const app = await setup({ saveLibrary: async () => conflicted ? { status: "conflict" } : undefined });
+  try {
+    await click("section · hero"); await click("部品にする"); await change(input("部品名", dialog()), "紹介セクション"); await click(button("登録する", dialog()));
+    assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
+    // ほかの人も同じ ID で別の部品を登録して保存した。
+    const others = { id: "component_1", name: "お知らせの帯", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "div", children: [{ type: "element", id: "n2", tag: "p", children: [{ type: "text", text: "別の人の部品" }] }] } };
+    app.host.saveRemotely((source) => ({ ...source, revision: source.revision + 1, components: [...source.components, others] }));
+    await click("下書き保存"); assert.equal(status(), "部品が競合しています");
+    await click("部品を読み直す");
+    assert.ok(dialog().textContent.includes("編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。"));
+    assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["紹介セクション追加", "ink変更", "bodyFont変更", "space変更", "紹介セクション解除"]);
+    await click(button("最新の部品を読み込む（部品とスタイルの変更を破棄）", dialog()));
+    assert.ok(text().includes("このページの「紹介セクション」は、部品を解除して通常の要素にしました。"));
+    assert.ok(button("section · hero")); assert.equal(rendered("n2").textContent, "海のそばで過ごす");
+    assert.ok(!canvas().contentDocument.body.textContent.includes("別の人の部品"), "the page does not silently show someone else's component");
+    assert.equal(button("元に戻す").disabled, true, "undo cannot bring back the instance that would now show someone else's component");
+    await openPanel(); assert.ok(card("お知らせの帯")); assert.equal(card("紹介セクション"), null);
+    conflicted = false; await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1, "only the conflicting save reached the library");
+    const saved = app.calls.saves[0].document;
+    assert.deepEqual([saved.body[1].type, saved.body[1].id, saved.body[1].tag], ["element", "hero", "section"]);
+  } finally { await app.cleanup(); }
+});
+
+test("部品を読み直す names the component the open page cannot use and succeeds once that instance is detached", async () => {
+  const badge = { id: "badge", name: "強調ラベル", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "span", children: [{ type: "text", text: "新着" }] } };
+  const doc = structuredClone(fixture); doc.body[0].children[1].children.push({ type: "instance", id: "lead_badge", component: "badge" });
+  let conflicted = true;
+  const app = await setup({ document: doc, library: { ...library(), components: [...library().components, badge] }, saveLibrary: async () => conflicted ? { status: "conflict" } : undefined });
+  try {
+    await openPanel(); await renameCard("予備の帯", "予備の帯 改");
+    // ほかの人が強調ラベルの外枠を div に変え、段落の中には置けなくなった。
+    app.host.saveRemotely((source) => ({ ...withComponent("badge", (component) => ({ ...component, version: 2, root: { ...component.root, tag: "div" } }))(source), revision: source.revision + 1 }));
+    await click("下書き保存"); await click("部品を読み直す");
+    assert.equal(dialog().querySelector('[role="alert"]').textContent, "最新の共通部品では、編集中のページを表示できないため読み直せません。ページの「強調ラベル」を「部品を解除」で通常の要素にするか削除してから、もう一度読み直してください。");
+    assert.equal(button("最新の部品を読み込む（部品の変更を破棄）", dialog()), undefined);
+    await click(button("閉じて編集を続ける", dialog()));
+    assert.ok(card("予備の帯 改"), "nothing changes"); assert.equal(status(), "部品が競合しています");
+    await click("◇ 強調ラベル"); await click("部品を解除"); await click(button("解除する", dialog()));
+    await click("部品を読み直す"); await click(button("最新の部品を読み込む（部品の変更を破棄）", dialog()));
+    assert.ok(card("予備の帯")); assert.ok(button("span · lead_badge")); assert.equal(rendered("lead_badge").textContent, "新着");
+  } finally { await app.cleanup(); }
+});
+
+test("unsaved component changes are kept on the device per site and offered again after reopening", async () => {
+  const { createBrowserRecoveryStore } = await import("@niho/web/history");
+  const storage = memoryStorage(), key = "niho-web:recovery:v1:staff-a:library/demo", store = () => createBrowserRecoveryStore({ scope: "staff-a", storage });
+  const first = await setup({ props: { recovery: store() } });
+  try {
+    await openPanel(); await renameCard("予備の帯", "端末の帯");
+    await wait(900);
+    const stored = JSON.parse(storage.data.get(key));
+    assert.deepEqual(Object.keys(stored), ["v", "siteId", "baseVersion", "changed", "baseTokens", "library", "updatedAt"]);
+    assert.deepEqual([stored.siteId, stored.baseVersion, stored.changed], ["demo", "lib-1", { spare: 1 }]);
+    assert.ok(stored.library.components.some((component) => component.name === "端末の帯"));
+  } finally { await first.cleanup(); }
+  // 保存しないまま開き直した（ホストのライブラリは元のまま）。
+  const second = await setup({ props: { recovery: store() } });
+  try {
+    await flush();
+    const banner = libraryBanner();
+    assert.ok(banner.textContent.includes("保存されていない部品の変更があります")); assert.ok(banner.textContent.includes("復元する部品: 端末の帯（変更）"));
+    await openPanel(); assert.ok(card("予備の帯"), "nothing is applied before restoring");
+    await click(button("復元する", libraryBanner()));
+    assert.equal(libraryBanner(), null); assert.ok(card("端末の帯")); assert.equal(status(), "未保存の変更あり");
+    assert.ok(text().includes("端末に残っていた部品の変更を復元しました。保存すると使用中の文書に反映されます。"));
+    await click("下書き保存"); await flush();
+    assert.equal(second.calls.librarySaves[0].library.components.find((component) => component.id === "spare").name, "端末の帯");
+    assert.equal(storage.data.has(key), false, "a successful save removes the device copy");
+  } finally { await second.cleanup(); }
+});
+
+test("recovered component changes skip components saved again later, and 破棄 removes them", async () => {
+  const removed = [], recovered = withComponent("site_header", (component) => ({ ...component, name: "端末のヘッダー" }))(withComponent("spare", (component) => ({ ...component, name: "端末の帯" }))(library()));
+  const original = { siteId: "demo", baseVersion: "lib-1", changed: { spare: 1, site_header: 1 }, library: recovered, updatedAt: "2026-10-21T01:02:00.000Z" };
+  let entry = structuredClone(original);
+  const store = { read: () => null, write: () => {}, remove: () => {}, readLibrary: () => entry && structuredClone(entry), writeLibrary: (next) => { entry = structuredClone(next); }, removeLibrary: (siteId) => { removed.push(siteId); entry = null; } };
+  // 退避した後、ほかの人がヘッダーを変更して保存した。
+  const newer = () => ({ ...withComponent("site_header", (component) => ({ ...component, version: 2, root: { ...component.root, attrs: { "aria-label": "グローバル" } } }))(library()), revision: 2 });
+  const app = await setup({ library: newer(), props: { recovery: store } });
+  try {
+    await flush();
+    const banner = libraryBanner();
+    assert.ok(banner.textContent.includes("復元する部品: 端末の帯（変更）"));
+    assert.ok(banner.textContent.includes("ほかの保存で変更されたため復元しない部品: 端末のヘッダー"));
+    await click(button("復元する", libraryBanner()));
+    await openPanel(); assert.ok(card("端末の帯")); assert.ok(card("サイトヘッダー"), "the newer header is kept"); assert.equal(card("端末のヘッダー"), null);
+    await click("下書き保存");
+    const sent = app.calls.librarySaves[0].library.components;
+    assert.equal(sent.find((component) => component.id === "site_header").root.attrs["aria-label"], "グローバル");
+    assert.equal(sent.find((component) => component.id === "spare").name, "端末の帯");
+  } finally { await app.cleanup(); }
+  entry = structuredClone(original);
+  const again = await setup({ library: newer(), props: { recovery: store } });
+  try {
+    await flush();
+    await click(button("破棄", libraryBanner()));
+    assert.equal(libraryBanner(), null); assert.equal(entry, null); assert.equal(removed.at(-1), "demo");
+    await openPanel(); assert.ok(card("予備の帯"), "破棄 does not change the library");
+  } finally { await again.cleanup(); }
+});
+
+test("device copies of component changes are never offered on another site", async () => {
+  const { createBrowserRecoveryStore } = await import("@niho/web/history");
+  const storage = memoryStorage(), store = createBrowserRecoveryStore({ scope: "staff-a", storage });
+  const entry = { siteId: "demo", baseVersion: "lib-1", changed: { spare: 1 }, library: withComponent("spare", (component) => ({ ...component, name: "デモの帯" }))(library()), updatedAt: new Date().toISOString() };
+  store.writeLibrary(entry);
+  const otherFirst = { ...twoSites, listSites: async () => (await twoSites.listSites()).reverse() };
+  const app = await setup({ adapter: otherFirst, readLibrary: otherSiteLibrary, props: { recovery: store } });
+  try {
+    await flush();
+    assert.deepEqual(app.calls.libraryReads, ["other"]); assert.equal(libraryBanner(), null, "the demo copy is not offered on the other site");
+    await openPanel(); assert.ok(card("予備の帯")); assert.equal(card("デモの帯"), null);
+    await change(input("編集するサイト"), "demo"); await flush(); await flush();
+    assert.ok(libraryBanner().textContent.includes("デモの帯"), "the copy is offered on its own site");
+  } finally { await app.cleanup(); }
+  // 退避先が別サイトの内容を返しても使わず、その鍵を消す。
+  const removed = [], foreign = { read: () => null, write: () => {}, remove: () => {}, readLibrary: () => structuredClone(entry), writeLibrary: () => {}, removeLibrary: (siteId) => { removed.push(siteId); } };
+  const other = await setup({ adapter: otherFirst, readLibrary: otherSiteLibrary, props: { recovery: foreign } });
+  try {
+    await flush();
+    assert.equal(libraryBanner(), null); assert.deepEqual(removed, ["other"]);
+    await openPanel(); assert.ok(card("予備の帯")); assert.equal(card("デモの帯"), null);
+  } finally { await other.cleanup(); }
+});
+
+test("discarding unsaved component changes also removes their device copy", async () => {
+  const { createBrowserRecoveryStore } = await import("@niho/web/history");
+  const storage = memoryStorage(), key = "niho-web:recovery:v1:staff-a:library/demo";
+  const app = await setup({ adapter: twoSites, readLibrary: otherSiteLibrary, saveLibrary: async () => ({ status: "conflict" }), props: { recovery: createBrowserRecoveryStore({ scope: "staff-a", storage }) } });
+  try {
+    await openPanel(); await renameCard("予備の帯", "予備の帯 改"); await wait(900);
+    assert.ok(storage.data.has(key));
+    await click("下書き保存"); await click("部品を読み直す"); await click(button("最新の部品を読み込む（部品の変更を破棄）", dialog())); await flush();
+    assert.equal(storage.data.has(key), false, "部品を読み直す removes the discarded copy");
+    await renameCard("予備の帯", "予備の帯 再"); await wait(900);
+    assert.ok(storage.data.has(key));
+    await change(input("編集するサイト"), "other");
+    assert.equal(dialog().getAttribute("aria-label"), "未保存の変更");
+    await click(button("変更を破棄して移動", dialog())); await flush();
+    assert.equal(storage.data.has(key), false, "leaving the site with 変更を破棄して移動 removes the copy");
+    assert.equal(app.calls.libraryReads.at(-1), "other"); assert.equal(libraryBanner(), null);
+  } finally { await app.cleanup(); }
+});
+
+test("component device copies need a component adapter and a store with the library methods", async () => {
+  const calls = [];
+  const spy = { read: () => null, write: () => {}, remove: () => {}, readLibrary: (siteId) => { calls.push(`read ${siteId}`); return null; }, writeLibrary: () => { calls.push("write"); }, removeLibrary: () => { calls.push("remove"); } };
+  const plain = await setup({ components: false, document: fixture, props: { recovery: spy } });
+  try {
+    await flush(); await change(input("ページタイトル"), "部品のないサイト"); await wait(900); await click("下書き保存");
+    assert.deepEqual(calls, [], "hosts without components never touch the component copy");
+  } finally { await plain.cleanup(); }
+  // ページだけの退避ストアでは、部品の変更を退避せず、従来どおり編集・保存できる。
+  const app = await setup({ props: { recovery: { read: () => null, write: () => {}, remove: () => {} } } });
+  try {
+    await openPanel(); await renameCard("予備の帯", "ページだけの退避"); await wait(900);
+    assert.equal(libraryBanner(), null); await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1); assert.ok(status().startsWith("保存済み"));
   } finally { await app.cleanup(); }
 });
 

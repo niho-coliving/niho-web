@@ -1,5 +1,5 @@
 import type { EditorTarget } from "./editor-types.js";
-import type { ComponentNode, ElementNode, InstanceNode, NodeStyle, PageDocument, PageImage, PageNode } from "./types.js";
+import type { ComponentLibrary, ComponentNode, DesignToken, ElementNode, InstanceNode, NodeStyle, PageDocument, PageImage, PageNode } from "./types.js";
 
 /** 人が読む差分。path は日本語の箇所名、before / after は表示用の文字列。 */
 export type DocumentChange = { path: string; before: string; after: string };
@@ -166,10 +166,18 @@ export function parseRevisionPage(input: unknown): EditorRevisionPage {
 export type EditorRecoveryEntry = { target: EditorTarget; baseVersion: string; baseRevision: number; document: PageDocument; updatedAt: string };
 /** 読み出した退避内容。document はエディターが検証するまで信頼しない。 */
 export type StoredRecoveryEntry = Omit<EditorRecoveryEntry, "document"> & { document: unknown };
+/** 端末内の共通部品ライブラリの退避（サイト単位）。changed は手元で変えた部品 ID ごとの変更前（保存済み）の version。手元で追加した部品は null。 */
+export type EditorLibraryRecoveryEntry = { siteId: string; baseVersion: string; changed: Readonly<Record<string, number | null>>; /** token の変更前。競合時に別の保存を上書きしないため保持する。 */ baseTokens?: Readonly<Record<string, DesignToken>>; library: ComponentLibrary; updatedAt: string };
+/** 読み出した部品の退避内容。library はエディターが検証するまで信頼しない。 */
+export type StoredLibraryRecoveryEntry = Omit<EditorLibraryRecoveryEntry, "library"> & { library: unknown };
 export interface EditorRecoveryStore {
   read(target: EditorTarget): StoredRecoveryEntry | null | Promise<StoredRecoveryEntry | null>;
   write(entry: EditorRecoveryEntry): void | Promise<void>;
   remove(target: EditorTarget): void | Promise<void>;
+  /** 共通部品ライブラリの退避（サイト単位）。3つとも実装した場合だけ、エディターは部品の変更を退避する。 */
+  readLibrary?(siteId: string): StoredLibraryRecoveryEntry | null | Promise<StoredLibraryRecoveryEntry | null>;
+  writeLibrary?(entry: EditorLibraryRecoveryEntry): void | Promise<void>;
+  removeLibrary?(siteId: string): void | Promise<void>;
 }
 export type RecoveryStorage = { readonly length: number; key(index: number): string | null; getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void };
 export class RecoveryTooLargeError extends Error {
@@ -189,11 +197,26 @@ function storedEntry(raw: string | null): (StoredRecoveryEntry & { time: number 
     typeof baseRevision !== "number" || !Number.isSafeInteger(baseRevision) || !Number.isFinite(time) || document === undefined) return null;
   return { target: { siteId: place.siteId, pageId: place.pageId, locale: place.locale }, baseVersion, baseRevision, document, updatedAt: updatedAt as string, time };
 }
+// 部品ライブラリの鍵は "/" を1つだけ含む。ページの鍵は "/" を2つ含むため、サイト ID が library のページとも区別できる。
+const libraryKey = (siteId: string) => `library/${encodeURIComponent(siteId)}`;
+const isLibraryKey = (rest: string) => /^library\/[^/]*$/u.test(rest);
+function storedLibraryEntry(raw: string | null): (StoredLibraryRecoveryEntry & { time: number }) | null {
+  if (raw === null) return null;
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { v, siteId, baseVersion, changed, baseTokens, library, updatedAt } = value as Record<string, unknown>;
+  const time = typeof updatedAt === "string" ? Date.parse(updatedAt) : NaN;
+  if (v !== 1 || typeof siteId !== "string" || typeof baseVersion !== "string" || !changed || typeof changed !== "object" || Array.isArray(changed) ||
+    baseTokens !== undefined && (!baseTokens || typeof baseTokens !== "object" || Array.isArray(baseTokens)) ||
+    !Object.values(changed).every((base) => base === null || typeof base === "number" && Number.isSafeInteger(base) && base > 0) || library === undefined || !Number.isFinite(time)) return null;
+  return { siteId, baseVersion, changed: changed as Record<string, number | null>, ...(baseTokens === undefined ? {} : { baseTokens: baseTokens as Record<string, DesignToken> }), library, updatedAt: updatedAt as string, time };
+}
 /**
- * localStorage 等へ作業コピーを退避する。scope はログイン中のスタッフごとの opaque な値にし、
+ * localStorage 等へ作業コピーを退避する。ページは文書ごと、部品ライブラリはサイトごとに1件。scope はログイン中のスタッフごとの opaque な値にし、
  * ホストはログアウト時に clear() を呼ぶ。他の scope の内容は読まず、消さない。
  */
-export function createBrowserRecoveryStore(options: { scope: string; storage?: RecoveryStorage; maxAgeMs?: number; maxBytes?: number; now?: () => number }): EditorRecoveryStore & { clear(): void } {
+export function createBrowserRecoveryStore(options: { scope: string; storage?: RecoveryStorage; maxAgeMs?: number; maxBytes?: number; now?: () => number }): EditorRecoveryStore & Required<Pick<EditorRecoveryStore, "readLibrary" | "writeLibrary" | "removeLibrary">> & { clear(): void } {
   const { scope, maxAgeMs = 72 * 60 * 60 * 1000, maxBytes = 2_000_000, now = Date.now } = options;
   if (!plain(scope, 128, 1)) throw new Error("recovery scope must be 1-128 characters without control characters");
   if (![maxAgeMs, maxBytes].every((value) => typeof value === "number" && Number.isFinite(value) && value > 0)) throw new Error("invalid recovery limits");
@@ -210,7 +233,7 @@ export function createBrowserRecoveryStore(options: { scope: string; storage?: R
   const expired = (time: number) => now() - time > maxAgeMs;
   try {
     const target = storage();
-    if (target) for (const key of scopedKeys(target)) { const entry = storedEntry(target.getItem(key)); if (!entry || expired(entry.time)) target.removeItem(key); }
+    if (target) for (const key of scopedKeys(target)) { const raw = target.getItem(key), entry = isLibraryKey(key.slice(prefix.length)) ? storedLibraryEntry(raw) : storedEntry(raw); if (!entry || expired(entry.time)) target.removeItem(key); }
   } catch { /* 退避先が使えない場合は何もしない */ }
   return {
     read(target) {
@@ -236,6 +259,32 @@ export function createBrowserRecoveryStore(options: { scope: string; storage?: R
     },
     remove(target) {
       try { storage()?.removeItem(prefix + targetKey(target)); } catch { /* 退避先が使えない */ }
+    },
+    readLibrary(siteId) {
+      let place: RecoveryStorage | null;
+      try { place = storage(); } catch { return null; }
+      if (!place) return null;
+      const key = prefix + libraryKey(siteId);
+      try {
+        const raw = place.getItem(key);
+        if (raw === null) return null;
+        const entry = storedLibraryEntry(raw);
+        if (!entry || entry.siteId !== siteId || expired(entry.time)) { place.removeItem(key); return null; }
+        return { siteId: entry.siteId, baseVersion: entry.baseVersion, changed: entry.changed, ...(entry.baseTokens === undefined ? {} : { baseTokens: entry.baseTokens }), library: entry.library, updatedAt: entry.updatedAt };
+      } catch { return null; }
+    },
+    writeLibrary(entry) {
+      const place = storage();
+      if (!place) throw new Error("recovery storage unavailable");
+      // changed は自身のキーだけの新しい object にし、指定した退避情報だけを書く。
+      const changed = Object.fromEntries(Object.entries(entry.changed));
+      const serialized = JSON.stringify({ v: 1, siteId: entry.siteId, baseVersion: entry.baseVersion, changed,
+        ...(entry.baseTokens === undefined ? {} : { baseTokens: entry.baseTokens }), library: entry.library, updatedAt: entry.updatedAt });
+      if (serialized.length * 2 > maxBytes) throw new RecoveryTooLargeError();
+      place.setItem(prefix + libraryKey(entry.siteId), serialized);
+    },
+    removeLibrary(siteId) {
+      try { storage()?.removeItem(prefix + libraryKey(siteId)); } catch { /* 退避先が使えない */ }
     },
     clear() {
       try { const place = storage(); if (place) for (const key of scopedKeys(place)) place.removeItem(key); } catch { /* 退避先が使えない */ }
