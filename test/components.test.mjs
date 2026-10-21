@@ -483,7 +483,7 @@ test("createComponentFromNode validates with site-wide styles, copies the effect
   const document = parsePageDocument(input, {}, { siteStyles }), empty = parseComponentLibrary({ ...library(), tokens: {}, components: [] });
   rejects(() => createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }), /unknown token/);
   const created = createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }, {}, [], siteStyles);
-  assert.deepEqual(created.document.body[0].children[2], { type: "instance", id: "link", component: "component_1" });
+  assert.deepEqual(created.document.body[0].children[2], { type: "instance", id: "link", component: created.componentId });
   assert.deepEqual(created.document.body[0].children.slice(0, 2), document.body[0].children.slice(0, 2));
   assert.deepEqual([created.document.tokens, Object.hasOwn(created.document, "textStyles")], [fixture.tokens, false], "site-wide definitions are not written back to the page");
   assert.deepEqual(created.library.tokens, { accent: siteStyles.tokens.accent, ink: fixture.tokens.ink });
