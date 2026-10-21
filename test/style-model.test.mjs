@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { colorParts, editorTiers, expandBox, fieldState, formatColor, nextName, normalizeBreakpoints, splitLength, textStyleUsage, tierForWidth, tokenUsage, withAlpha } from "../dist/style-model.js";
+import { parseComponentLibrary, parsePageDocument } from "@niho/web/core";
+import { affectedBySiteStyles, colorParts, editorTiers, expandBox, fieldState, formatColor, nextName, normalizeBreakpoints, splitLength, textStyleUsage, tierForWidth, tokenUsage, withAlpha } from "../dist/style-model.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
 const styled = () => {
@@ -49,6 +50,42 @@ test("usage lists nodes and text styles that reference a token or text style", (
   assert.deepEqual(tokenUsage(doc, "missing"), { nodes: [], textStyles: [] });
   assert.deepEqual(textStyleUsage(doc, "heading"), [{ nodeId: "heading", path: [0, 0] }]);
   assert.deepEqual(textStyleUsage(doc, "other"), []);
+});
+
+test("site style impact compares pages with their component instances expanded", () => {
+  const color = (value) => ({ type: "color", value });
+  // 強調ラベルは brand（ライブラリの写し）で色を付け、カードは強調ラベルを入れ子に置く。accent は写しにだけある。
+  const library = parseComponentLibrary({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: { brand: color("#336655"), accent: color("#cc5500") }, components: [
+    { id: "badge", name: "強調ラベル", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "span", style: { base: { color: { token: "brand" } } }, children: [{ type: "text", text: "新着" }] } },
+    { id: "card", name: "カード", kind: "section", version: 1, root: { type: "element", id: "n1", tag: "div", children: [{ type: "instance", id: "n2", component: "badge" }] } }
+  ] });
+  const placing = (component, { tokens = {}, style } = {}, siteStyles = {}) => {
+    const doc = structuredClone(fixture); Object.assign(doc.tokens, tokens);
+    doc.body[0].children.push({ type: "instance", id: "placed", component, ...(style ? { style } : {}) });
+    return parsePageDocument(doc, {}, { components: library, siteStyles });
+  };
+  const site = { tokens: { brand: color("#336655") } }, changed = { tokens: { brand: color("#aa2200") } };
+  // 部品の中だけで使う値も、入れ子の部品の中の値も、置いたページの見た目を変える。
+  assert.equal(affectedBySiteStyles(placing("badge"), site, changed, library), true);
+  assert.equal(affectedBySiteStyles(placing("card"), site, changed, library), true);
+  // 表示用ラベルだけ変えても、部品が描く CSS は変わらない。
+  assert.equal(affectedBySiteStyles(placing("badge"), { tokens: {} }, { tokens: { brand: { ...color("#336655"), label: "ブランド色" } } }, library), false);
+  assert.equal(affectedBySiteStyles(placing("badge"), { tokens: { brand: { ...color("#336655"), label: "旧名称" } } }, { tokens: { brand: { ...color("#336655"), label: "新名称" } } }, library), false);
+  // ページの同名の定義が優先されるページと、部品を置かないページは変わらない。
+  assert.equal(affectedBySiteStyles(placing("badge", { tokens: { brand: color("#336655") } }), site, changed, library), false);
+  assert.equal(affectedBySiteStyles(parsePageDocument(fixture, {}, { components: library }), site, changed, library), false);
+  // サイトから消すと写しで描くため、写しと違う値だったときだけ変わる。
+  assert.equal(affectedBySiteStyles(placing("badge"), site, {}, library), false);
+  assert.equal(affectedBySiteStyles(placing("badge"), changed, {}, library), true);
+  // インスタンスの外枠が使う写しの値にサイトが同名を足しても、同じ値なら変わらない。
+  const framed = placing("badge", { style: { base: { backgroundColor: { token: "accent" } } } });
+  assert.equal(affectedBySiteStyles(framed, site, { tokens: { ...site.tokens, accent: color("#cc5500") } }, library), false);
+  assert.equal(affectedBySiteStyles(framed, site, { tokens: { ...site.tokens, accent: color("#000000") } }, library), true);
+  // インスタンスの外枠に指定したサイト共通の文字スタイルの変更も数える。
+  const headline = (fontWeight) => ({ textStyles: { headline: { base: { fontWeight } } } });
+  assert.equal(affectedBySiteStyles(placing("badge", { style: { textStyle: "headline" } }, headline(700)), headline(700), headline(400), library), true);
+  // 部品ライブラリが無いと展開できないため、判定しない。
+  assert.throws(() => affectedBySiteStyles(placing("badge"), site, changed), /component instance requires a component library/);
 });
 
 test("names, lengths and colors are formatted for the inspector", () => {
