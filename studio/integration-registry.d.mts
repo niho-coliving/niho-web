@@ -11,12 +11,14 @@ export type ResolvedTrustedIntegration = Readonly<{
 }>;
 export type TrustedIntegrationRegistry = Readonly<{
   registrations: readonly TrustedIntegration[];
+  isEditorAction(action: string): boolean;
   resolve(projectId: string, siteId: string, environment?: string): ResolvedTrustedIntegration | null;
   resolveApi(projectId: string, siteId: string, action: string): ResolvedTrustedIntegration | null;
   resolvePage(pathname: string): ResolvedTrustedIntegration | null;
   editorPath(projectId: string, siteId: string, environment?: string): string | null;
 }>;
 export const TRUSTED_INTEGRATIONS: readonly TrustedIntegration[];
+export function isTrustedEditorAction(action: string): boolean;
 export function integrationIdentity(projectId: string, siteId: string): string;
 export function createTrustedIntegrationRegistry(definitions: readonly TrustedIntegration[]): TrustedIntegrationRegistry;
 export function resolveTrustedIntegration(projectId: string, siteId: string, environment?: string): ResolvedTrustedIntegration | null;

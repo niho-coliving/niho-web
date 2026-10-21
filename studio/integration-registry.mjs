@@ -41,6 +41,11 @@ export function createTrustedIntegrationRegistry(definitions) {
   });
   const frozen = Object.freeze(registrations);
   const byIdentity = new Map(frozen.map((entry) => [integrationIdentity(entry.projectId, entry.siteId), entry]));
+  const apiPrefixes = [...new Set(frozen.flatMap((entry) => Object.values(entry.environments).map((config) => config.apiPrefix)))];
+
+  function isEditorAction(action) {
+    return apiPrefixes.some((prefix) => pathMatchesPrefix(action, prefix));
+  }
 
   function resolve(projectId, siteId, environment = "production") {
     const registration = byIdentity.get(integrationIdentity(projectId, siteId));
@@ -72,7 +77,7 @@ export function createTrustedIntegrationRegistry(definitions) {
     const resolved = resolve(projectId, siteId, environment);
     return resolved ? `/projects/${encodeURIComponent(projectId)}/sites/${encodeURIComponent(siteId)}/editor${resolved.config.editorPathSuffix}` : null;
   }
-  return Object.freeze({ registrations: frozen, resolve, resolveApi, resolvePage, editorPath });
+  return Object.freeze({ registrations: frozen, isEditorAction, resolve, resolveApi, resolvePage, editorPath });
 }
 
 const registry = createTrustedIntegrationRegistry([
@@ -95,6 +100,7 @@ const registry = createTrustedIntegrationRegistry([
 
 /** Studio が信頼する固定の project / site / alias / environment だけを公開する。 */
 export const TRUSTED_INTEGRATIONS = registry.registrations;
+export const isTrustedEditorAction = registry.isEditorAction;
 export const resolveTrustedIntegration = registry.resolve;
 export const resolveTrustedEditorApi = registry.resolveApi;
 export const resolveTrustedEditorPage = registry.resolvePage;

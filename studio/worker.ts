@@ -1,5 +1,5 @@
 import { parseProjectAliasPath } from "./project-routes.mjs";
-import { integrationIdentity, resolveTrustedEditorApi, resolveTrustedEditorPage, type ResolvedTrustedIntegration } from "./integration-registry.mjs";
+import { integrationIdentity, isTrustedEditorAction, resolveTrustedEditorApi, resolveTrustedEditorPage, type ResolvedTrustedIntegration } from "./integration-registry.mjs";
 import { KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, KamakuraCatalogContractError, KAMAKURA_COMMON_PAGE_ID, KAMAKURA_EDITOR_SITE_ID, parseKamakuraCatalog } from "./kamakura-catalog.js";
 
 type D1Meta = { readonly changes?: number };
@@ -1101,7 +1101,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
-  if (action === "/editor" || action.startsWith("/editor/") || action === "/editor-staging" || action.startsWith("/editor-staging/")) return editorApi(request, env, identity, url, projectId, siteId, action);
+  if (isTrustedEditorAction(action)) return editorApi(request, env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
