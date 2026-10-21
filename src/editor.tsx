@@ -62,7 +62,7 @@ const releasePreparationNotice = (error: unknown): string => {
   return "公開先と差分を確認できませんでした。接続を確認して再試行してください。編集内容は保持しています。";
 };
 const label = (node: PageNode, blocks: EditorBlockRegistry, names?: ReadonlyMap<string, string>) => node.type === "text" ? `文字: ${node.text.slice(0, 24) || "（空）"}` : node.type === "component" ? `${blocks[node.block]?.label ?? node.block} · ${node.id}` : node.type === "instance" ? names?.get(node.component) ?? "共通部品" : `${node.tag} · ${node.id}`;
-type ToolName = "add" | "pages" | "layers" | "styles" | "assets" | "components";
+type ToolName = "add" | "pages" | "layers" | "styles" | "assets" | "upload" | "stock" | "connect" | "components";
 function ToolGlyph({ tool }: { tool: ToolName }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   const paths: Record<ToolName, ReactNode> = {
@@ -71,6 +71,9 @@ function ToolGlyph({ tool }: { tool: ToolName }) {
     layers: <><path d="m12 3.5 8.5 4.8L12 13.1 3.5 8.3 12 3.5Z" /><path d="m4 12.5 8 4.6 8-4.6M4 16.5l8 4.6 8-4.6" /></>,
     styles: <><path d="M4.5 19 10 5l5.5 14M6.5 14h7" /><path d="m16 8 3.5-3.5 2 2L18 10l-2.5.5.5-2.5Z" /></>,
     assets: <><path d="M3.5 7.5h6l2 2h9v9.8a1.2 1.2 0 0 1-1.2 1.2H4.7a1.2 1.2 0 0 1-1.2-1.2V7.5Z" /><path d="M3.5 7.5V5.7a1.2 1.2 0 0 1 1.2-1.2h4.6l2 2h8.2a1.2 1.2 0 0 1 1.2 1.2v1.8" /></>,
+    upload: <><path d="M4 15.5v4h16v-4" /><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" /></>,
+    stock: <><rect x="3.5" y="4" width="17" height="16" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="m5 17 4-4 3 3 3-5 4 6" /><path d="m17 2 .7 1.5 1.6.2-1.2 1.1.3 1.6L17 5.6l-1.4.8.3-1.6-1.2-1.1 1.6-.2L17 2Z" /></>,
+    connect: <><circle cx="6" cy="6" r="2.2" /><circle cx="18" cy="6" r="2.2" /><circle cx="12" cy="18" r="2.2" /><path d="m8 7 3 8M16 7l-3 8M8.2 6h7.6" /></>,
     components: <><path d="m7 3.5 3.5 3.5L7 10.5 3.5 7 7 3.5Z" /><path d="m17 3.5 3.5 3.5-3.5 3.5L13.5 7 17 3.5Z" /><path d="m7 13.5 3.5 3.5L7 20.5 3.5 17 7 13.5Z" /><path d="m17 13.5 3.5 3.5-3.5 3.5-3.5-3.5 3.5-3.5Z" /></>
   };
   return <svg className="e-tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...common}>{paths[tool]}</svg>;
@@ -323,12 +326,20 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   const [localeReleaseConfirmed, setLocaleReleaseConfirmed] = useState(false), [localeReleaseLoading, setLocaleReleaseLoading] = useState(false), [localeReleaseEpoch, setLocaleReleaseEpoch] = useState(0);
   const [localeRollbackId, setLocaleRollbackId] = useState("");
   const [addType, setAddType] = useState("p"), [parentId, setParentId] = useState(""), [rollbackRevision, setRollbackRevision] = useState("");
-  const [panel, setPanel] = useState<"add" | "pages" | "layers" | "styles" | "assets" | "components">("pages");
+  const [panel, setPanel] = useState<"add" | "pages" | "layers" | "styles" | "assets" | "upload" | "stock" | "connect" | "components">("pages");
   const [inspector, setInspector] = useState<Inspector>("page"), [elementTab, setElementTab] = useState<InspectorTab>("text"), [preview, setPreview] = useState(false);
   const [localizationManual, setLocalizationManual] = useState<EditorLocalizationManualBuffer | null>(null);
   const [layerDrop, setLayerDrop] = useState<{ id: string; position: "before" | "inside" | "after" } | null>(null);
   const dragItem = useRef<DragItem | null>(null);
   const [picker, setPicker] = useState<AssetPicker | null>(null), [localizationAssetUnit, setLocalizationAssetUnit] = useState<string | null>(null), visiblePanel = picker || localizationAssetUnit ? "assets" : panel;
+  const assetPanelKind = visiblePanel === "upload" ? "upload" : visiblePanel === "stock" ? "stock" : visiblePanel === "connect" ? "cms" : undefined;
+  const assetPanelLabel = visiblePanel === "upload" ? "アップロード" : visiblePanel === "stock" ? "ストック" : visiblePanel === "connect" ? "接続" : "素材";
+  const assetPanelVisible = visiblePanel === "assets" || visiblePanel === "upload" || visiblePanel === "stock" || visiblePanel === "connect";
+  const tools: readonly (readonly [ToolName, string])[] = [
+    ["add", "追加"], ["pages", "ページ"], ["layers", "レイヤー"], ["styles", "スタイル"],
+    ...(assets?.listProviders ? [["upload", "アップロード"], ["stock", "ストック"], ["connect", "接続"]] as const : [["assets", "素材"]] as const),
+    ["components", "部品"]
+  ];
   useEffect(() => { setPicker(null); }, [selection]);
   // 共通部品は adapter.components があるホストだけ。usage は undefined が取得中、null が取得失敗。editing は編集中の部品。
   const components = adapter.components, [library, setLibrary] = useState<LibrarySession | null>(null), libraryRef = useRef(library); libraryRef.current = library;
@@ -1178,9 +1189,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     {components && libraryFailed && <div className="e-notice" role="alert">共通部品を読み込めませんでした。部品を含むページは表示できません。</div>}
     {localizationGate && <div className="e-localization-gate" role={localization.siteState === "error" || localization.pageState === "error" ? "alert" : "status"}><span>{localizationGate}</span><button type="button" className="e-small" disabled={localization.siteState === "loading" || localization.pageState === "loading"} onClick={localization.reloadAll}>再試行</button></div>}
     <div className="e-body" ref={(element) => { if (element) element.inert = modal; }}><aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー">
-      <nav className="e-tools" aria-label="編集ツール">{([
-        ["add", "追加"], ["pages", "ページ"], ["layers", "レイヤー"], ["styles", "スタイル"], ["assets", "素材"], ["components", "部品"]
-      ] as const).map(([key, name]) => { const common = targetMode && ["add", "styles", "components"].includes(key); return <button key={key} type="button" aria-label={name} aria-pressed={visiblePanel === key} title={common ? "共通デザインは原文側で編集" : name} disabled={common} onClick={() => { setPicker(null); setPanel(key); }}><ToolGlyph tool={key} /><small className="e-vh">{name}</small></button>; })}</nav>
+      <nav className="e-tools" aria-label="編集ツール">{tools.map(([key, name]) => { const common = targetMode && ["add", "styles", "components"].includes(key); return <button key={key} type="button" aria-label={name} aria-pressed={visiblePanel === key} title={common ? "共通デザインは原文側で編集" : name} disabled={common} onClick={() => { setPicker(null); setPanel(key); }}><ToolGlyph tool={key} /><small className="e-vh">{name}</small></button>; })}</nav>
       <div className="e-panel">
         <section hidden={visiblePanel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
           {targetMode && <p className="e-help">共通デザインは原文側で編集してください。</p>}{["構造", "文字", "メディア", "インタラクション"].map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.type} draggable={!!document && !editBlocked && !hasInput && !targetMode} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.type })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.type)} disabled={!document || editBlocked || hasInput || targetMode}><span aria-hidden="true">{item.glyph}</span>{item.name}</button>)}</div></div>)}
@@ -1212,7 +1221,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
           </div>
         </section>
         <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <SharedStyleLibrary siteDisabled={blocked || historyMode || libraryDirty || !localizationReady} editingComponent={!!masterId} adapter={adapter} pages={pages} blocks={blocks} components={libraryPresent} state={siteSettings} pageDirty={dirty || pageInputPending || manualInputPending} sitePending={sitePending} rawDocument={rawDocument!} migrate={(next, styles) => { const current = sessionRef.current; if (!current || editBlocked) return "ページを編集できません。"; try { const parsed = editDocument(current.history.present, { type: "restore", document: next }, blocks, current.locks, libraryPresent, styles); if (JSON.stringify(styles) === JSON.stringify(parseSiteStyles(siteSettings.settings ?? {}))) { replace({ ...current, history: commitHistory(current.history, parsed) }); setStyleMigration(null); setNotice("保存済みのサイト共通定義へ移行しました。ページの下書きを保存してください。"); return undefined; } const error = siteSettings.editStyles(styles); if (error) return error; setStyleMigration({ target: current.target, source: fingerprint(current.history.present), document: next, styles }); return undefined; } catch (error) { return message(error); } }} document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
-        <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} pickTitle={localizationAssetUnit === "page.meta.ogImage.src" ? "ソーシャルカバーを選ぶ" : localizationAssetUnit ? "共通部品・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : picker?.purpose === "ogImage" || picker?.purpose === "siteOgImage" ? "ソーシャルカバーを選ぶ" : "画像を選ぶ"} localUsage={localUsage}
+        <section hidden={!assetPanelVisible} aria-label={assetPanelLabel}>{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} panelLabel={assetPanelLabel} {...(picker || localizationAssetUnit || !assetPanelKind ? {} : { providerKind: assetPanelKind })} pickTitle={localizationAssetUnit === "page.meta.ogImage.src" ? "ソーシャルカバーを選ぶ" : localizationAssetUnit ? "共通部品・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : picker?.purpose === "ogImage" || picker?.purpose === "siteOgImage" ? "ソーシャルカバーを選ぶ" : "画像を選ぶ"} localUsage={localUsage}
           actions={{ replace: !localizationAssetUnit && node?.type === "element" && node.tag === "img", background: !slotName && !localizationAssetUnit && !targetMode && (node?.type === "component" || node?.type === "instance" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)), insert: !localizationAssetUnit && !targetMode && !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={(asset, action) => localizationAssetUnit ? applyLocalizationAsset(asset) : applyAsset(asset, action)} onClose={() => { setPicker(null); setLocalizationAssetUnit(null); }} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
           : <><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>

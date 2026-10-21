@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ASSET_LIMITS, INSERTABLE_IMAGE_TYPES, assetErrorReason, assetKey, collectAssetReferences, formatBytes, isInsertableImage, parseAssetAcquireResult, parseAssetDeleteResult, parseAssetFolder,
   parseAssetListResult, parseAssetProviders, parseAssetUpdateResult, parseAssetUploadResult, parseAssetUsages, parseResolvedAssets, resolvedAsset, uniqueAssetReferences,
-  type AssetFolder, type AssetKind, type AssetLibraryAdapter, type AssetListQuery, type AssetProvider, type AssetQuota, type AssetRejectReason, type AssetUpdateRequest,
+  type AssetFolder, type AssetKind, type AssetLibraryAdapter, type AssetListQuery, type AssetProvider, type AssetProviderKind, type AssetQuota, type AssetRejectReason, type AssetUpdateRequest,
   type AssetUploadPolicy, type AssetUsage, type LibraryAsset, type ResolvedAsset, type ResolvedAssetMap
 } from "./assets.js";
 import { metaLimits } from "./document.js";
@@ -24,6 +24,8 @@ export const coverAlt = (asset: Pick<LibraryAsset, "alt">, current: string): str
 export type AssetAction = "replace" | "background" | "insert" | "pick";
 export type AssetLibraryPanelProps = {
   adapter: AssetLibraryAdapter; siteId: string; mode: "library" | "pick"; pickTitle?: string | undefined;
+  /** Library rail can scope results to a declared provider class. Image pickers keep the full list. */
+  providerKind?: AssetProviderKind | undefined; panelLabel?: string | undefined;
   /** 文書の再読込・公開のたびに増える値。変わったら出所と一覧を取り直す。 */
   epoch?: number;
   /** assetKey → 現在の文書内の使用数。 */
@@ -161,7 +163,7 @@ class SourceMismatch extends Error {}
 
 /** サイト別の素材ライブラリ。library は管理と配置、pick は画像の選択だけを行う。listProviders があれば出所ごとに分ける。 */
 export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
-  const { adapter, siteId, mode, pickTitle, localUsage, actions, disabledReason, onClose, onReplaceUsages, epoch = 0 } = props;
+  const { adapter, siteId, mode, pickTitle, providerKind, panelLabel = "素材", localUsage, actions, disabledReason, onClose, onReplaceUsages, epoch = 0 } = props;
   const [folderId, setFolderId] = useState<string | null>(null), [kind, setKind] = useState<AssetKind | "all">("all");
   const [searchInput, setSearchInput] = useState(""), [search, setSearch] = useState(""), [reload, setReload] = useState(0);
   const [list, setList] = useState<ListState>({ status: "loading", assets: [], folders: [], more: "idle" });
@@ -176,10 +178,11 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   latest.current = props;
   const listKind = mode === "pick" ? "image" : kind;
   const legacy = !adapter.listProviders, providers = !legacy && sources.status === "ready" ? sources.items : undefined;
+  const scopedProviders = useMemo(() => providers?.filter((item) => !providerKind || item.kind === providerKind), [providers, providerKind]);
   const providerOf = (asset: LibraryAsset) => providers?.find((item) => item.id === asset.provider);
-  const current = providers && source !== null ? providers.find((item) => item.id === source) : undefined, offline = current?.status === "unavailable";
+  const current = scopedProviders && source !== null ? scopedProviders.find((item) => item.id === source) : undefined, offline = current?.status === "unavailable";
   const uploadTarget = !providers ? undefined : current ? (current.status === "available" && current.capabilities.upload ? current : undefined)
-    : providers.find((item) => item.status === "available" && item.capabilities.upload);
+    : scopedProviders?.find((item) => item.status === "available" && item.capabilities.upload);
   const showFolders = legacy || (current?.status === "available" && current.capabilities.folders);
   const query = (cursor?: string): AssetListQuery => ({ siteId, search, kind: listKind, folderId, ...(cursor === undefined ? {} : { cursor }), limit: ASSET_LIMITS.pageSize, ...(source === null ? {} : { provider: source }), ...(recent ? { recent: true } : {}) });
   /** 宣言されていない出所や、選択中の出所と異なる素材を含む応答は採用しない。 */
@@ -193,14 +196,28 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       try {
         const items = parseAssetProviders(await adapter.listProviders!({ siteId }, controller.signal));
         if (controller.signal.aborted) return;
-        setSources({ status: "ready", items }); setSource((previous) => previous !== null && !items.some((item) => item.id === previous) ? null : previous);
+        setSources({ status: "ready", items }); setSource((previous) => {
+          if (previous !== null && items.some((item) => item.id === previous && (!providerKind || item.kind === providerKind))) return previous;
+          if (providerKind) return items.find((item) => item.kind === providerKind)?.id ?? null;
+          return previous !== null && !items.some((item) => item.id === previous) ? null : previous;
+        });
       } catch { if (!controller.signal.aborted) setSources({ status: "error", items: [] }); }
     })();
     return () => controller.abort();
   }, [adapter, siteId, sourceReload, epoch]);
   useEffect(() => {
+    if (mode === "pick") { setSource(null); return; }
+    if (!providerKind) { setSource(null); return; }
+    if (!providers) return;
+    setSource((previous) => previous !== null && providers.some((item) => item.id === previous && item.kind === providerKind)
+      ? previous : providers.find((item) => item.kind === providerKind)?.id ?? null);
+  }, [mode, providerKind, providers]);
+  useEffect(() => { setDetail(null); }, [mode, providerKind]);
+  useEffect(() => {
     if (!legacy && !providers) return;
     more.current?.abort(); more.current = null;
+    if (providerKind && providers && scopedProviders?.length === 0) { setList({ status: "ready", assets: [], folders: [], more: "idle" }); return; }
+    if (providerKind && providers && source === null) return;
     // 未接続の出所には一覧を要求しない。
     if (offline) { setList((previous) => ({ status: "ready", assets: [], folders: [], quota: previous.quota, more: "idle" })); return; }
     const controller = new AbortController();
@@ -213,7 +230,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       } catch (error) { if (!controller.signal.aborted) setList((previous) => ({ ...previous, status: "error", assets: [], nextCursor: undefined, problem: error instanceof SourceMismatch ? unknownSource : undefined })); }
     })();
     return () => controller.abort();
-  }, [adapter, siteId, search, listKind, folderId, reload, legacy, providers, source, offline, recent, legacy ? epoch : 0]);
+  }, [adapter, siteId, search, listKind, folderId, reload, legacy, sources, source, offline, recent, providerKind, legacy ? epoch : 0]);
   useEffect(() => () => more.current?.abort(), []);
   useEffect(() => {
     if (mode !== "pick") return;
@@ -322,15 +339,19 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   const filtered = !!search || folderId !== null || recent || (mode === "library" && kind !== "all");
   const quota = list.quota, showDetail = mode === "library" && detail, all = !!providers && source === null;
   const chips = mode === "library" ? <div className="e-asset-chips" role="group" aria-label="種類">{(["all", "image", "video", "pdf"] as const).map((value) => <button key={value} type="button" aria-pressed={kind === value} onClick={() => setKind(value)}>{value === "all" ? "全種類" : kindLabels[value]}</button>)}</div> : null;
+  const description = providerKind === "stock" ? "利用条件を確認してからページに配置"
+    : providerKind === "cms" ? "接続済みCMSの素材を参照・配置"
+      : providerKind === "upload" ? "サイトへアップロードした素材を管理・配置" : "素材をページに配置";
   return <section className="e-asset" aria-label="素材ライブラリ" onKeyDown={(event) => { if (mode === "pick" && event.key === "Escape") { event.preventDefault(); onClose(); } }}>
-    {mode === "pick" ? <div className="e-asset-head"><h2 ref={heading} tabIndex={-1}>{pickTitle ?? "画像を選ぶ"}</h2><button type="button" className="e-small" aria-label="画像の選択を閉じる" onClick={onClose}>閉じる</button></div> : <div className="e-panel-head"><h2>素材</h2><p>アップロードして、ページに配置</p></div>}
+    {mode === "pick" ? <div className="e-asset-head"><h2 ref={heading} tabIndex={-1}>{pickTitle ?? "画像を選ぶ"}</h2><button type="button" className="e-small" aria-label="画像の選択を閉じる" onClick={onClose}>閉じる</button></div> : <div className="e-panel-head"><h2>{panelLabel}</h2><p>{description}</p></div>}
     {!legacy && !providers ? sources.status === "error"
       ? <div role="alert"><p className="e-help e-problem">素材の出所を読み込めませんでした。</p><button type="button" onClick={() => setSourceReload((value) => value + 1)}>再読み込み</button></div>
       : <p className="e-help" role="status">読み込み中…</p> : <>
     {!showDetail && <>
-    {providers && <div className="e-asset-sources" role="group" aria-label="素材の出所"><button type="button" aria-pressed={source === null} onClick={() => selectSource(null)}>すべて</button>
-      {providers.map((item) => <button key={item.id} type="button" aria-pressed={source === item.id} aria-label={item.status === "unavailable" ? `${item.label}（未接続）` : undefined} onClick={() => selectSource(item.id)}>
+    {providers && (scopedProviders?.length ?? 0) > 0 && <div className="e-asset-sources" role="group" aria-label="素材の出所">{!providerKind && <button type="button" aria-pressed={source === null} onClick={() => selectSource(null)}>すべて</button>}
+      {scopedProviders?.map((item) => <button key={item.id} type="button" aria-pressed={source === item.id} aria-label={item.status === "unavailable" ? `${item.label}（未接続）` : undefined} onClick={() => selectSource(item.id)}>
         {item.label}{item.status === "unavailable" && <span className="e-asset-offline">未接続</span>}</button>)}</div>}
+    {providerKind && providers && scopedProviders?.length === 0 && <p className="e-help" role="status">{providerKind === "stock" ? "ストック素材はまだ接続されていません。" : providerKind === "cms" ? "接続済みのCMS素材はありません。" : "アップロード先が利用できません。"}</p>}
     {current && !offline && <small className="e-help e-asset-origin">{current.origin}</small>}
     {(showFolders || !!uploadTarget) && <div className="e-asset-tools">
       {showFolders && <select aria-label="フォルダ" value={folderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}><option value="">すべて</option>{list.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
