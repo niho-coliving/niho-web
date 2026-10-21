@@ -50,7 +50,17 @@ function catalog(pageTitle = "NIHO Kamakura") {
     project: { id: "kamakura-site", name: "NIHO kamakura", site },
     sites: [site],
     pages: [{ siteId: "kamakura", pageId: "kamakura-community-dinner", locale: "ja", title: pageTitle }],
-    legacy: [{ name: "home", path: "/" }]
+    legacy: [{ name: "home", path: "/" }],
+    blockContracts: {
+      KamakuraLegacyForm: {
+        props: { formId: { type: "enum", values: ["community-dinner", "parenting", "remotework"] } },
+        slots: {
+          form: { label: "体験予約フォーム", style: ["backgroundColor", "color", "padding", "borderRadius"], data: { reason: "Kamakuraサイトの既存フォームが管理します。", source: "Kamakuraサイト" } },
+          field: { label: "フォーム入力欄", style: ["backgroundColor", "color", "borderColor", "borderRadius", "padding"] },
+          submit: { label: "送信ボタン", style: ["color", "backgroundColor", "borderRadius", "padding"] }
+        }
+      }
+    }
   };
 }
 
@@ -73,12 +83,18 @@ test("shared catalog contract normalizes known fields and rejects unsafe or mism
   const result = contract.parseKamakuraCatalog(extended);
   assert.equal("unexpected" in result, false);
   assert.equal("untrusted" in result.pages[0], false);
+  assert.equal(result.blockContracts.KamakuraLegacyForm.props.formId.values[0], "community-dinner");
 
   for (const invalid of [
     { ...catalog(), project: { id: "other-project", name: "NIHO kamakura", site: catalog().project.site } },
     catalog("unsafe\nname"),
     { ...catalog(), pages: [catalog().pages[0], catalog().pages[0]] },
-    { ...catalog(), legacy: [{ name: "home", path: "/../admin" }] }
+    { ...catalog(), legacy: [{ name: "home", path: "/../admin" }] },
+    { ...catalog(), blockContracts: {} },
+    { ...catalog(), blockContracts: { constructor: { props: {} } } },
+    { ...catalog(), blockContracts: { unsafe: { props: { field: { type: "unknown" } } } } },
+    { ...catalog(), blockContracts: { unsafe: { props: {}, slots: { item: { label: "Unsafe", style: ["backgroundImage"] } } } } },
+    { ...catalog(), blockContracts: { unsafe: { props: {}, slots: { item: { label: "Unsafe", data: { reason: "missing source" } } } } } }
   ]) {
     assert.throws(
       () => contract.parseKamakuraCatalog(invalid),
@@ -132,7 +148,9 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
 
   const accepted = await callCatalog();
   assert.equal(accepted.status, 200);
-  assert.equal((await accepted.json()).pages[0].title, communityDinnerTitle);
+  const acceptedCatalog = await accepted.json();
+  assert.equal(acceptedCatalog.pages[0].title, communityDinnerTitle);
+  assert.deepEqual(acceptedCatalog.blockContracts, catalog().blockContracts);
 
   upstreamResponse = new Response(JSON.stringify(catalog("invalid\u0000title")), { headers: { "Content-Type": "application/json" } });
   const incompatible = await callCatalog();
