@@ -1,11 +1,11 @@
 import type { SiteStyles } from "./site-styles.js";
 import { expandDocument, instancesOf, ownElements, type ResolvedOrigin } from "./component-expand.js";
-import { componentDocument, detachInstance, setComponentProp } from "./component-model.js";
+import { componentDocument, setComponentProp } from "./component-model.js";
 import { componentUsage, parseComponentLibrary, resolvePageDocument } from "./components.js";
 import { parsePageDocument } from "./document.js";
 import { parseTokens } from "./style-values.js";
-import { nodeAt, sameTarget, walkNodes, type EditorHistory, type NodePath } from "./editor-model.js";
-import type { ComponentLibrarySnapshot, ComponentUsageEntry, EditorBlockRegistry, EditorPage, EditorReleaseAffected, EditorTarget, PageKind } from "./editor-types.js";
+import { editDocument, nodeAt, sameTarget, walkNodes, type EditorHistory, type NodePath } from "./editor-model.js";
+import type { ComponentLibrarySnapshot, ComponentUsageEntry, EditorBlockRegistry, EditorLock, EditorPage, EditorReleaseAffected, EditorTarget, PageKind } from "./editor-types.js";
 import type { ComponentDefinition, ComponentKind, ComponentLibrary, ComponentPropField, DesignToken, PageDocument, PageNode } from "./types.js";
 import { DocumentValidationError, identifier } from "./validation-utils.js";
 
@@ -83,10 +83,12 @@ export type LibraryReloadPlan = {
 /**
  * 最新の部品ライブラリ（latest）へ読み直す計画。手元の部品の変更は破棄する。編集中のページのインスタンスのうち、最新では同じ部品として
  * 表示できないものは手元の定義で解除し、文字と見た目を残す。まず最新に無い部品と、手元で追加した ID が最新では別の部品になっているものだけを
- * 解除し、それでも最新で展開できなければ、手元で変えた部品のうち最新と内容が違うものも解除する。
+ * 解除し、それでも最新で展開できなければ、手元で変えた部品のうち最新と内容が違うものも解除する。解除は「部品を解除」と同じ編集で、ページのロックと
+ * サイト共通スタイルも同じく扱う（共通スタイルを参照するページは、共通スタイル無しでは検証できないため）。
  */
-export function planLibraryReload(input: { local: ComponentLibrary; saved: ComponentLibrary; latest: ComponentLibrary; page: PageDocument | undefined; editable: boolean; blocks: EditorBlockRegistry }): LibraryReloadPlan {
-  const { local, saved, latest, page, editable, blocks } = input, discarded = libraryChanges(saved, local);
+export function planLibraryReload(input: { local: ComponentLibrary; saved: ComponentLibrary; latest: ComponentLibrary; page: PageDocument | undefined; editable: boolean;
+  locks: readonly EditorLock[]; siteStyles?: SiteStyles | undefined; blocks: EditorBlockRegistry }): LibraryReloadPlan {
+  const { local, saved, latest, page, editable, locks, siteStyles, blocks } = input, discarded = libraryChanges(saved, local);
   const discardedTokens = [...new Set([...Object.keys(saved.tokens), ...Object.keys(local.tokens)])]
     .filter((name) => JSON.stringify(saved.tokens[name]) !== JSON.stringify(local.tokens[name]));
   if (!page) return { discarded, discardedTokens, detached: [] };
@@ -103,13 +105,13 @@ export function planLibraryReload(input: { local: ComponentLibrary; saved: Compo
         const found = next(document);
         if (!found || found.node.type !== "instance") return { document, names };
         const name = nameOf(found.node.component); if (!names.includes(name)) names.push(name);
-        document = detachInstance(document, found.path, local, blocks);
+        document = editDocument(document, { type: "detach", path: found.path }, blocks, locks, local, siteStyles);
       }
       return next(document) ? null : { document, names };
     } catch { return null; }
   };
   let chosen = detachWhere(phase1);
-  if (!chosen || !fitsLibrary(chosen.document, latest, blocks)) { chosen = detachWhere(phase2); if (chosen && !fitsLibrary(chosen.document, latest, blocks)) chosen = null; }
+  if (!chosen || !fitsLibrary(chosen.document, latest, blocks, siteStyles)) { chosen = detachWhere(phase2); if (chosen && !fitsLibrary(chosen.document, latest, blocks, siteStyles)) chosen = null; }
   if (chosen && !chosen.names.length) return { discarded, discardedTokens, detached: [] };
   if (!editable) return { discarded, discardedTokens, detached: [], problem: "このページは読み取り専用のため、最新の共通部品に合わせて部品を解除できません。別のページを開いてから、もう一度読み直してください。" };
   if (chosen) return { discarded, discardedTokens, detached: chosen.names, page: chosen.document };

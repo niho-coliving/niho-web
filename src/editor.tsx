@@ -734,7 +734,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     const merged = mergeRecoveredLibrary(offer, current.savedLibrary, blocks);
     if (!merged.library) { setNotice("端末に残っていた部品の変更は、最新の共通部品と合わないため復元できません。"); return; }
     const page = sessionRef.current?.history.present;
-    if (page && !fitsLibrary(page, merged.library, blocks)) { setNotice("端末に残っていた部品の変更は、編集中のページと合わないため復元できません。"); return; }
+    if (page && !fitsLibrary(page, merged.library, blocks, siteSettings.styles)) { setNotice("端末に残っていた部品の変更は、編集中のページと合わないため復元できません。"); return; }
     replaceLibrary({ ...current, history: commitLibrary(current.history, merged.library) });
     libraryRecovery.accepted(); setNotice("端末に残っていた部品の変更を復元しました。保存すると使用中の文書に反映されます。");
   }
@@ -773,13 +773,14 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
    */
   async function reloadLibrary() {
     const current = libraryRef.current;
-    if (!components || !current || action.current || blocked || hasInput || historyMode || targetMode || !localizationReady) return;
+    if (!components || !current || action.current || siteWorkBlocked || blocked || hasInput || historyMode || targetMode || !localizationReady) return;
     const controller = new AbortController(), siteId = current.siteId; action.current = controller; setBusy("部品を読込中"); setNotice("");
     try {
       const fresh = librarySessionFrom(await components.readLibrary(siteId, controller.signal), siteId, blocks);
       const local = libraryRef.current, page = sessionRef.current;
       if (controller.signal.aborted || !local || local.siteId !== siteId) return;
-      const plan = planLibraryReload({ local: local.history.present, saved: local.savedLibrary, latest: fresh.history.present, page: page?.history.present, editable: !!page && !page.readOnly, blocks });
+      const plan = planLibraryReload({ local: local.history.present, saved: local.savedLibrary, latest: fresh.history.present, page: page?.history.present, editable: !!page && !page.readOnly,
+        locks: page?.locks ?? [], siteStyles: siteSettingsRef.current.styles, blocks });
       const state: LibraryReload = { fresh, plan, library: libraryFingerprint(local.history.present), page: page ? fingerprint(page.history.present) : undefined };
       if (!plan.discarded.length && !plan.discardedTokens.length && !plan.detached.length && !plan.problem) applyLibraryReload(state); else setLibraryReload(state);
     } catch { if (!controller.signal.aborted) setNotice("最新の共通部品を読み込めませんでした。編集内容は保持しています。時間をおいて再試行してください。"); }
