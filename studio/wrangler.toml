@@ -10,7 +10,7 @@ custom_domain = true
 
 [vars]
 ACCESS_ISSUER = "https://niho-coliving.cloudflareaccess.com"
-ACCESS_AUDIENCE = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
+ACCESS_AUDIENCE = "96abc0d3e1c4d97de7496d126d9119ba14761959cb3a10f7dabbf2718f668ce5"
 
 [assets]
 directory = "./dist/public"

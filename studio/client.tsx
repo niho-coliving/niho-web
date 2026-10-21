@@ -307,7 +307,9 @@ function App() {
 
   useEffect(loadSession, [loadSession]);
   useEffect(() => {
-    if (screen.kind === "invite" && window.location.hash) window.history.replaceState(null, "", window.location.pathname);
+    if (screen.kind === "invite" && (window.location.search || window.location.hash)) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   }, [screen]);
   useEffect(() => {
     const onPopState = () => { setPendingProject(null); setScreen(screenFromLocation()); };

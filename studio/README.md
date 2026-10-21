@@ -36,8 +36,8 @@ API mutation は `POST` のみです。request URL と完全一致する `Origin
 前提: Node.js 22、依存関係、Wrangler CLI。Wrangler は環境側で管理し、Cloudflare にログイン済みの operator が実行します。
 
 1. NIHO アカウントに作成済みの `niho-web-studio` D1 と `studio/wrangler.toml` の binding・account ID を照合する。token、credential、実メールアドレスはリポジトリへ書かない。
-2. Google IdP を使う専用 Cloudflare Access application を `studio.niho.life` 全体に作成する。許可対象は Access policy で明示する。Cloudflare dashboard membership を Studio role として使わない。
-3. Access application の AUD tag を `ACCESS_AUDIENCE` に設定する。issuer は `https://niho-coliving.cloudflareaccess.com` と照合する。
+2. 作成済みの専用 Cloudflare Access application `NIHO Web Studio` が `studio.niho.life` 全体を保護し、専用ポリシー `Allow NIHO Web Studio staff`（Google ログインと `@niho.life`）のみを使うことを照合する。Cloudflare dashboard membership を Studio role として使わない。Access session は 12 時間、Cookie は HttpOnly。
+3. 作成済み Access application の AUD tag と `ACCESS_AUDIENCE`、issuer `https://niho-coliving.cloudflareaccess.com` を照合する。
 4. build と migration を実行する。
 
 ```sh
