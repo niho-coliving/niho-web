@@ -18,6 +18,10 @@ binding = "ASSETS"
 run_worker_first = true
 html_handling = "none"
 
+[[services]]
+binding = "KAMAKURA_SITE"
+service = "kamakura-site"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "niho-web-studio"

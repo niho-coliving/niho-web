@@ -12,8 +12,8 @@ import { editorCss, historyCss, pagesCss } from "./editor-style.js";
 import { styleEditorCss } from "./editor-style-css.js";
 import { Field } from "./editor-fields.js";
 import { StyleInspector, type StyleRange } from "./editor-style-inspector.js";
-import { SharedStyleLibrary } from "./editor-shared-styles.js";
-import { detachRemovedSiteStyles, parseSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
+import { SharedStyleLibrary, sharedTokenReason } from "./editor-shared-styles.js";
+import { detachRemovedSiteStyles, parseSiteStyles, resolveComponentStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type { StyleState } from "./editor-style-motion.js";
 import { carouselPreset, togglePreset } from "./interaction-presets.js";
 import { editorTiers, hiddenAt, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
@@ -485,6 +485,16 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   /** 選択中の業務ブロックの表示領域を選ぶ。null は「ブロック全体に戻る」。 */
   function chooseSlot(name: string | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!targetMode && !editBlocked && selection) { setSlotChoice({ of: selection, name, ...(!name && slotName ? { back: slotName } : {}) }); setDraft(null); setStyleState("normal"); } }
 
+  /**
+   * 部品の文書へ操作を適用する。表示と同じく、サイト共通に同名の定義がある token はサイトの定義で検証する（ページでの描画と同じ優先順）。
+   * 返す文書の tokens はライブラリの定義のままで、サイトの定義を混ぜない。サイト共通と同名の token は部品の編集では作成・変更・削除しない。
+   */
+  function editMaster(base: PageDocument, operations: readonly EditorOperation[], library: ComponentLibrary | undefined): PageDocument {
+    if (operations.some((next) => next.type === "token" && Object.hasOwn(siteSettings.styles.tokens ?? {}, next.name))) throw new Error(sharedTokenReason(siteSettings.editable));
+    const edited = operations.reduce((master, next) => editDocument(master, next, blocks, [], library), base);
+    parsePageDocument(resolveComponentStyles(edited, siteSettings.styles), blocks, library ? { components: library } : {});
+    return edited;
+  }
   /** 複数の操作は1回の履歴にまとめる。部品の編集中は部品の root を1つだけ持つ文書を編集し、ライブラリへ書き戻す。 */
   function apply(operation: EditorOperation | readonly EditorOperation[]): string | undefined {
     const operations: readonly EditorOperation[] = "type" in operation ? [operation] : operation;
@@ -492,7 +502,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
       setDraft(null);
       // 部品はページのタイトル・公開情報・文字スタイルを持たない。
       if (operations.some((next) => next.type === "title" || next.type === "meta" || next.type === "textStyle" || next.type === "restore" || next.type === "nodeTextStyle" && next.name !== undefined)) return "部品の編集中は、文字スタイルとページの設定を変更できません。ページに戻ってから操作してください。";
-      return updateLibrary((library) => withComponentDocument(library, masterId, operations.reduce((master, next) => editDocument(master, next, blocks, [], library), componentDocument(library, masterId, locale)), blocks));
+      return updateLibrary((library) => withComponentDocument(library, masterId, editMaster(componentDocument(library, masterId, locale), operations, library), blocks));
     }
     const current = sessionRef.current; if (!current || editBlocked) return current?.readOnly?.reason ?? "処理が完了してから編集してください。";
     try {
@@ -512,7 +522,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     if (!operation || !base || editBlocked) { setDraft(null); return; }
     const operations: readonly EditorOperation[] = "type" in operation ? [operation] : operation;
     if (!master && targetMode && (!localization.context || operations.some((next) => localizedOperationProblem(current!.history.present, next, localization.context!.collection)))) { setDraft(null); return; }
-    try { setDraft({ base, document: operations.reduce((document, next) => editDocument(document, next, blocks, master ? [] : current?.locks ?? [], libraryRef.current?.history.present, master ? undefined : siteSettings.styles), base) }); } catch { /* 成功した入力だけを表示する */ }
+    try {
+      const lib = libraryRef.current?.history.present;
+      setDraft({ base, document: master ? editMaster(base, operations, lib) : operations.reduce((document, next) => editDocument(document, next, blocks, current?.locks ?? [], lib, siteSettings.styles), base) });
+    } catch { /* 成功した入力だけを表示する */ }
 
   }
   /** ライブラリを変更する。編集中のページを展開できなくなる変更は受け付けない。 */
@@ -533,6 +546,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     if (masterId) {
       const current = libraryRef.current; if (!current) return;
       const history = travelLibrary(current.history, direction), page = sessionRef.current?.history.present;
+      if (Object.keys(siteSettings.styles.tokens ?? {}).some((name) => JSON.stringify(history.present.tokens[name]) !== JSON.stringify(current.history.present.tokens[name]))) { setNotice(sharedTokenReason(siteSettings.editable)); return; }
       if (page && !fitsLibrary(page, history.present, blocks, siteSettings.styles)) { setNotice(mismatch); return; }
       replaceLibrary({ ...current, history }); setSelection(null); setNotice("");
       if (!history.present.components.some((component) => component.id === masterId)) resetMode();
@@ -816,10 +830,11 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   }
 
   // 部品の編集中は、キャンバス・レイヤー・選択・インスペクタが部品の root を1つだけ持つ文書を扱う。
+  // 表示はページでの描画と同じく、サイト共通に同名の定義がある token をライブラリの写しより優先する（rawDocument はライブラリの定義のまま）。
   const master = useMemo(() => libraryPresent && masterId ? componentDocument(libraryPresent, masterId, locale) : undefined, [libraryPresent, masterId, locale]);
   const rawDocument = master ?? session?.history.present;
   const siteStylesReady = !adapter.readSiteSettings || siteSettings.status === "ready" && !!siteSettings.settings;
-  const document = useMemo(() => rawDocument && siteStylesReady ? (master ? rawDocument : resolvePageStyles(detachRemovedSiteStyles(rawDocument, session?.siteStyles ?? {}, siteSettings.styles), siteSettings.styles)) : undefined, [rawDocument, master, siteSettings.styles, siteStylesReady, session?.siteStyles]);
+  const document = useMemo(() => rawDocument && siteStylesReady ? (master ? resolveComponentStyles(rawDocument, siteSettings.styles) : resolvePageStyles(detachRemovedSiteStyles(rawDocument, session?.siteStyles ?? {}, siteSettings.styles), siteSettings.styles)) : undefined, [rawDocument, master, siteSettings.styles, siteStylesReady, session?.siteStyles]);
   const entries = document ? walkNodes(document) : [];
   const names = useMemo(() => new Map(libraryPresent?.components.map((component) => [component.id, component.name] as const)), [libraryPresent]);
   const pageDocument = session?.history.present, pageTitle = session ? pages.find((page) => sameTarget(page, session.target))?.title ?? session.history.present.title : undefined;
@@ -836,7 +851,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   // 表示領域を選んでいる間は、選択中のブロックへの見た目の操作（キャンバスのサイズ変更・スタイルパネルの適用）をその領域へ写す。
   const applyStyle = (operation: EditorOperation) => slotName && document && selection && "path" in operation && operation.path.join(".") === selection.join(".") ? applyToSlot(document, selection, slotName, blocks, operation, apply) : apply(operation);
   const tiers = document ? editorTiers(document, breakpoints) : [], tier = tiers.some((entry) => entry.key === breakpoint) ? breakpoint : "base";
-  const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft && draft.base === rawDocument ? resolvePageStyles(draft.document, master ? {} : siteSettings.styles) : document;
+  const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft && draft.base === rawDocument ? master ? resolveComponentStyles(draft.document, siteSettings.styles) : resolvePageStyles(draft.document, siteSettings.styles) : document;
   const nextTier = tiers[tiers.findIndex((entry) => entry.key === tier) + 1], until = range === "only" ? nextTier?.start : undefined;
   // キャンバスは部品を展開した文書を描き、素材・状態の強制表示も展開後の文書から作る（部品の中の画像も表示する）。
   const shown = versions.viewing?.document ?? canvasDocument;
@@ -1158,7 +1173,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
             <button disabled={targetMode || !selection || editBlocked || hasInput} onClick={moveToEnd}>指定先の末尾へ</button>
           </div>
         </section>
-        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <SharedStyleLibrary siteDisabled={blocked || historyMode || libraryDirty || !localizationReady} allowSite={!masterId} adapter={adapter} pages={pages} blocks={blocks} components={libraryPresent} state={siteSettings} pageDirty={dirty || hasInput} rawDocument={rawDocument!} migrate={(next, styles) => { const current = sessionRef.current; if (!current || editBlocked) return "ページを編集できません。"; try { const parsed = editDocument(current.history.present, { type: "restore", document: next }, blocks, current.locks, libraryPresent, styles); if (JSON.stringify(styles) === JSON.stringify(parseSiteStyles(siteSettings.settings ?? {}))) { replace({ ...current, history: commitHistory(current.history, parsed) }); setStyleMigration(null); setNotice("保存済みのサイト共通定義へ移行しました。ページの下書きを保存してください。"); return undefined; } const error = siteSettings.editStyles(styles); if (error) return error; setStyleMigration({ target: current.target, source: fingerprint(current.history.present), document: next, styles }); return undefined; } catch (error) { return message(error); } }} document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
+        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <SharedStyleLibrary siteDisabled={blocked || historyMode || libraryDirty || !localizationReady} editingComponent={!!masterId} adapter={adapter} pages={pages} blocks={blocks} components={libraryPresent} state={siteSettings} pageDirty={dirty || hasInput} rawDocument={rawDocument!} migrate={(next, styles) => { const current = sessionRef.current; if (!current || editBlocked) return "ページを編集できません。"; try { const parsed = editDocument(current.history.present, { type: "restore", document: next }, blocks, current.locks, libraryPresent, styles); if (JSON.stringify(styles) === JSON.stringify(parseSiteStyles(siteSettings.settings ?? {}))) { replace({ ...current, history: commitHistory(current.history, parsed) }); setStyleMigration(null); setNotice("保存済みのサイト共通定義へ移行しました。ページの下書きを保存してください。"); return undefined; } const error = siteSettings.editStyles(styles); if (error) return error; setStyleMigration({ target: current.target, source: fingerprint(current.history.present), document: next, styles }); return undefined; } catch (error) { return message(error); } }} document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
         <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} pickTitle={localizationAssetUnit === "page.meta.ogImage.src" ? "ソーシャルカバーを選ぶ" : localizationAssetUnit ? "共通部品・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : picker?.purpose === "ogImage" || picker?.purpose === "siteOgImage" ? "ソーシャルカバーを選ぶ" : "画像を選ぶ"} localUsage={localUsage}
           actions={{ replace: !localizationAssetUnit && node?.type === "element" && node.tag === "img", background: !slotName && !localizationAssetUnit && !targetMode && (node?.type === "component" || node?.type === "instance" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)), insert: !localizationAssetUnit && !targetMode && !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={(asset, action) => localizationAssetUnit ? applyLocalizationAsset(asset) : applyAsset(asset, action)} onClose={() => { setPicker(null); setLocalizationAssetUnit(null); }} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
