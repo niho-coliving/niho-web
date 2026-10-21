@@ -1,3 +1,4 @@
+import { parseSiteStyles, type SiteStyles } from "./site-styles.js";
 import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
 import { metaLimits, parsePageMeta } from "./document.js";
 import type { ElementNode, PageDocument, PageImage, PageMeta, PageNode } from "./types.js";
@@ -20,7 +21,7 @@ export type SitePage = {
   /** false は一度も公開していないページ。 */
   published?: boolean;
 };
-export type SiteSettings = {
+export type SiteSettings = SiteStyles & {
   title: string;
   description?: string;
   ogImage?: PageImage;
@@ -165,12 +166,13 @@ export function rewriteInternalLinks<T extends Pick<PageDocument, "body">>(docum
 /** サイト共通の設定を検証し、未知の項目を拒否して新しいオブジェクトを返す。 */
 export function parseSiteSettings(input: unknown): SiteSettings {
   const source = record(input, "$.site");
-  keys(source, ["title", "description", "ogImage", "favicon", "locale", "noindex"], "$.site");
+  keys(source, ["title", "description", "ogImage", "favicon", "locale", "noindex", "tokens", "textStyles"], "$.site");
   const title = line(source.title, "$.site.title", PAGE_LIMITS.siteTitleLength), locale = localeCode(source.locale, "$.site.locale");
   const shared = Object.fromEntries(["description", "ogImage", "favicon", "noindex"].flatMap((key) => source[key] === undefined ? [] : [[key, source[key]]]));
   const meta = parsePageMeta(shared, "$.site");
   return {
     title,
+    ...parseSiteStyles(source as SiteStyles),
     ...(meta.description === undefined ? {} : { description: meta.description }),
     ...(meta.ogImage ? { ogImage: meta.ogImage } : {}),
     ...(meta.favicon === undefined ? {} : { favicon: meta.favicon }),

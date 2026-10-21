@@ -213,3 +213,17 @@ npm pack --dry-run
 ```
 
 テストは文書検証、拒否すべき URL / 属性 / CSS、レイアウト、スコープ分離、ブロック契約、React SSR と HTML helper の出力を確認します。public GitHub Actions は secrets・外部 API・非公開リポジトリに依存せず同じ確認を実行します。
+
+## サイト共通のカラー・文字スタイル
+
+`SiteSettings` に任意の `tokens` / `textStyles` を持たせると、サイト全ページで同じスタイルを参照できます。ページの同名定義は優先され、既存のページ JSON と `schemaVersion: 1` はそのまま使えます。
+
+```tsx
+const settings = parseSiteSettings(siteSettingsJson);
+const page = parsePageDocument(pageJson, blocks, { siteStyles: settings });
+<PageRenderer document={page} blocks={blocks} siteStyles={settings} />;
+// Astro / SSR
+renderPageToHtml(page, blocks, { siteStyles: settings });
+```
+
+`parseSiteSettings` は `@niho/web/pages`、`resolvePageStyles` / `detachRemovedSiteStyles` は `@niho/web/core` から利用できます。共通スタイルの保存は既存の `readSiteSettings` / `saveSiteSettings` に接続します。設定を省略したホストはページのスタイルだけで動作します。参照の厳格検証・scope・移行確認・削除時の原子的な切り離し・公開 snapshot の詳細は [文書契約](docs/document-contract.md#サイト共通スタイル) と [サイト設定の契約](docs/page-contract.md#サイト共通スタイルの保存と削除) を参照してください。

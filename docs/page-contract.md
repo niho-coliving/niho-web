@@ -168,3 +168,22 @@ Next.js では `metadata` の各項目へ対応付けます。Astro では `rend
 - ソーシャルカバー: `PageEditor` に `assets` adapter を渡したホストでは、プレビューの下の「画像を選ぶ」から素材ライブラリの選択パネルを開き、選んだ素材を参照として保存します。プレビューは `resolveAssets` で解決した画像です。SNS のリンクプレビューで表示できない形式（AVIF 等）は選べません（JPEG・PNG・WebP・GIF）。URL での指定は「URL で指定」の中に残り、URL を入れると素材の参照を外して URL の画像に切り替わります。「画像を外す」で未設定に戻せます。`assets` adapter が無いホストでは、従来どおり URL の入力だけを表示します。
 
 ホストがページ操作やサイト設定のメソッドを実装しない場合、該当する操作は表示せず、値は読み取り専用で表示します。
+
+### サイト共通スタイルの保存と削除
+
+`SiteSettings` は任意で `tokens?: Record<string, DesignToken>` と `textStyles?: Record<string, TextStyle>` を持ちます。値と参照の許可範囲はページと共通で、`parseSiteSettings` は未知フィールド・未解決参照・型不一致を拒否します。公開情報だけを編集・保存する場合も既存のスタイル定義を保持します。`readSiteSettings` / `saveSiteSettings` を持たないホストはページのスタイルだけで動作します。
+
+スタイル変更時の保存要求には、保存済み基準の `previousStyles?: SiteStyles` を追加します。エディターは保存前に全ページの実効参照を再検証し、最新のサイト設定と元の version / 内容を比較します。差異または409では入力・元のversion・移行前のページを保持し、競合した最新設定と比較できます。事前確認は補助で、以下の原子的処理はホストの必須責務です。
+
+1. 認証・サイト権限と `expectedVersion`、`previousStyles` と現在の設定の一致を検証します。
+2. 全ページの下書き・公開 snapshot・共有参照・保護対象を列挙し、ページ override を適用した実効参照を検証します。UIの閲覧可能ページ一覧だけを権限範囲の根拠にしません。
+3. 削除するサイト定義を各ページで切り離し、見た目を保ったページと新しい設定を同じトランザクションで保存します。各ページの CAS / revision、既存ロック、公開 snapshot の不変性を維持します。途中失敗では全体を反映しません。公開版は同じ見た目の新しい公開 snapshot として作り、過去版を書き換えません。
+4. 新しい opaque なサイト version を返します。公開差分・影響ページ・キャッシュ更新対象もサイト設定の変更として扱います。
+
+全参照の切り離しを原子的に保証するホストだけ `siteStyleCapabilities: { atomicReferenceDetachment: true }` を設定してください。省略したホストでは共通定義の削除を UI と保存前ガードの両方で拒否します。追加・更新は利用できます。ホストも capability 宣言だけに依存せず、保存 API で同じ条件を強制してください。
+
+切り離しの補助関数は `detachRemovedSiteStyles(page, previousStyles, nextStyles)`（`@niho/web/core`）です。削除 token を参照する宣言を旧 literal 値へ置き換え、削除文字スタイルは responsive を含むページ所有の定義へ移します。既存のページ override を優先し、共有参照から独立した状態で以前の見た目を保ちます。切り離し後は `parsePageDocument(result, blocks, { components, siteStyles: nextStyles })` で検証してから保存します。この関数はページ1件の純粋変換で、DBトランザクションや全参照列挙を代行しません。
+
+サイト設定の保存は下書き保存です。`prepareRelease` は現在の公開 snapshot と次の設定を比較し、サイト共通 token / 文字スタイルの before / after と全影響ページを `changes` / `affected` に含めてください。確認 token はサイト設定の version と対象ページ・部品の版に結び付け、`release` で再検証します。削除に伴う切り離しだけで見た目が変わらない場合も、参照の変更を公開差分に明示します。
+
+`readRevision` は共通スタイルを参照する版について、その版に対応する不変の `siteStyles` snapshot を文書とともに返してください。履歴表示・差分・復元では現在のサイト設定を過去版へ合成しません。旧来の自己完結した文書は `siteStyles` を省略できます。ホストは公開版とロールバック版でも同じ snapshot を固定し、後からサイト設定を更新・削除しても過去版の見た目を変えないでください。

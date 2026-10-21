@@ -1,3 +1,4 @@
+import type { SiteStyles } from "./site-styles.js";
 import type { ComponentType, ReactNode } from "react";
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
@@ -211,12 +212,18 @@ export interface EditorAdapter {
   /** ページ操作の影響と確認 token。両方を実装した場合だけページ操作を表示する。 */
   preparePageChange?(change: EditorPageChange, signal: AbortSignal): Promise<EditorPageChangePlan>;
   applyPageChange?(plan: EditorPageChangePlan, signal: AbortSignal): Promise<EditorPageChangeResult>;
+  /** 全ページの draft / 公開参照を同一トランザクションで切り離せるホストだけ true。 */
+  siteStyleCapabilities?: { atomicReferenceDetachment: true };
   /** サイト共通の設定。version は楽観ロック用の opaque な値。 */
   readSiteSettings?(siteId: string, signal: AbortSignal): Promise<EditorSiteSettingsSnapshot>;
-  saveSiteSettings?(request: { siteId: string; settings: SiteSettings; expectedVersion: string }, signal: AbortSignal): Promise<EditorSiteSettingsSaveResult>;
+  saveSiteSettings?(request: { siteId: string; settings: SiteSettings; expectedVersion: string;
+    /** スタイル変更時の保存済み基準。削除参照を全ページで切り離し、設定と原子的に保存する。 */
+    previousStyles?: SiteStyles;
+  }, signal: AbortSignal): Promise<EditorSiteSettingsSaveResult>;
   /** 版履歴。新しい順で、続きは next を cursor に渡す。実装した場合だけ「履歴」を表示する。 */
   listRevisions?(request: { target: EditorTarget; cursor?: string }, signal: AbortSignal): Promise<EditorRevisionPage>;
-  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown }>;
+  /** 共通スタイルを参照する版は、その版に対応する不変のスタイル snapshot も返す。 */
+  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown; siteStyles?: SiteStyles }>;
   /** 保存済みの状態に名前を付ける。ホストは expectedVersion を検証する。 */
   createSnapshot?(request: { target: EditorTarget; expectedVersion: string; label: string }, signal: AbortSignal): Promise<EditorSnapshotResult>;
 }

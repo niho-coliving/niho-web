@@ -1,3 +1,4 @@
+import type { SiteStyles } from "./site-styles.js";
 import { expandDocument, instancesOf, ownElements, type ResolvedOrigin } from "./component-expand.js";
 import { componentDocument, setComponentProp } from "./component-model.js";
 import { componentUsage, parseComponentLibrary, resolvePageDocument } from "./components.js";
@@ -38,8 +39,8 @@ export function acceptSavedLibrary(session: LibrarySession, base: ComponentLibra
     history: { past: session.history.past.map(rebase), present, future: session.history.future.map(rebase) } };
 }
 /** 文書がライブラリで展開・検証できるか。 */
-export function fitsLibrary(document: PageDocument, library: ComponentLibrary, blocks: EditorBlockRegistry): boolean {
-  try { parsePageDocument(document, blocks, { components: library }); return true; } catch { return false; }
+export function fitsLibrary(document: PageDocument, library: ComponentLibrary, blocks: EditorBlockRegistry, siteStyles?: SiteStyles): boolean {
+  try { parsePageDocument(document, blocks, { components: library, ...(siteStyles ? { siteStyles } : {}) }); return true; } catch { return false; }
 }
 /** 部品の検証で返る理由のうち、スタッフ向けの文言があるもの。 */
 export function componentProblem(error: unknown): string | undefined {
@@ -51,9 +52,9 @@ export function componentProblem(error: unknown): string | undefined {
 
 const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
 /** キャンバスに描く文書。インスタンスがなければそのまま使い、展開できなければ元の文書（描画側で表示不可になる）を返す。 */
-export function resolveCanvas(document: PageDocument, library: ComponentLibrary | undefined, blocks: EditorBlockRegistry): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
+export function resolveCanvas(document: PageDocument, library: ComponentLibrary | undefined, blocks: EditorBlockRegistry, siteStyles?: SiteStyles): { document: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin> } {
   if (!library || !instancesOf(document.body).length) return { document, origins: noOrigins };
-  try { return resolvePageDocument(document, library, blocks); } catch { return { document, origins: noOrigins }; }
+  try { return resolvePageDocument(document, library, blocks, siteStyles); } catch { return { document, origins: noOrigins }; }
 }
 /** path の要素と子孫のうち、文書の文字スタイルを参照するノードの path。部品は文書の文字スタイルを持てない。 */
 export function textStylePaths(document: PageDocument, path: NodePath): NodePath[] {
