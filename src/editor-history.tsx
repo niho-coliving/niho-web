@@ -95,7 +95,7 @@ export type RecoveryOffer = { target: EditorTarget; document: PageDocument; base
 type RecoveryPhase = { epoch: number; key: string; state: "checking" | "offer" | "idle" | "discarded"; at?: PageDocument | undefined };
 // 共通部品のインスタンスを含む文書。ライブラリで展開できない退避内容は、消さずに残す（部品が戻れば復元できる）。
 const hasInstance = (document: unknown) => { try { return JSON.stringify(document).includes('"type":"instance"'); } catch { return false; } };
-function recoveredEntry(stored: unknown, target: EditorTarget, blocks: EditorBlockRegistry, components?: ComponentLibrary, siteStyles?: SiteStyles): RecoveryOffer | "unresolved" | null {
+function recoveredEntry(stored: unknown, target: EditorTarget, blocks: EditorBlockRegistry, components?: ComponentLibrary, siteStyles?: SiteStyles): RecoveryOffer | "component-unresolved" | "style-unresolved" | null {
   if (!stored || typeof stored !== "object") return null;
   const { target: place, baseVersion, baseRevision, document, updatedAt } = stored as Record<string, unknown>;
   if (!place || typeof place !== "object" || !sameTarget(place as EditorTarget, target) || typeof baseVersion !== "string" || !baseVersion ||
@@ -103,7 +103,7 @@ function recoveredEntry(stored: unknown, target: EditorTarget, blocks: EditorBlo
   try {
     const parsed = parsePageDocument(document, blocks, { ...(components ? { components } : {}), ...(siteStyles ? { siteStyles } : {}) });
     return sameTarget(parsed, target) ? { target: copyTarget(target), document: parsed, baseVersion, updatedAt } : null;
-  } catch { return hasInstance(document) || siteStyles ? "unresolved" : null; }
+  } catch { return hasInstance(document) ? "component-unresolved" : siteStyles ? "style-unresolved" : null; }
 }
 /**
  * 文書の読込ごとに退避内容を確認し、それ以外は確定した編集から 800ms 後に退避する。
@@ -129,7 +129,12 @@ export function useRecovery({ store, session, dirty, blocks, components, siteSty
     Promise.resolve().then(() => store.read(target)).then((stored) => {
       if (cancelled) return;
       const recovered = stored ? recoveredEntry(stored, target, blocks, library.current, sharedStyles.current) : null;
-      if (recovered === "unresolved") { reporter.current("端末に残っていた変更がありますが、共通スタイル・共通部品の現在の内容と合わないため復元できません。"); setPhase({ epoch, key: currentKey, state: "idle" }); return; }
+      if (recovered === "component-unresolved" || recovered === "style-unresolved") {
+        reporter.current(recovered === "component-unresolved"
+          ? "端末に残っていた変更がありますが、共通部品の現在の内容と合わないため復元できません。"
+          : "端末に残っていた変更がありますが、共通スタイルの現在の内容と合わないため復元できません。");
+        setPhase({ epoch, key: currentKey, state: "idle" }); return;
+      }
       if (recovered && fingerprint({ ...recovered.document, revision: 0 }) !== fingerprint({ ...loaded, revision: 0 })) { setOffer(recovered); setPhase({ epoch, key: currentKey, state: "offer" }); return; }
       if (stored) silent(() => store.remove(target));
       setPhase({ epoch, key: currentKey, state: "idle" });

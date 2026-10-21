@@ -326,10 +326,12 @@ export function useSiteSettings(adapter: EditorAdapter, siteId: string, blocks: 
           parsePageDocument(detachRemovedSiteStyles(document, before, after), blocks, { ...(components ? { components } : {}), siteStyles: after });
         }));
       }
-      const current = await adapter.readSiteSettings!(loaded.siteId, controller.signal);
-      if (controller.signal.aborted) return;
-      const currentSettings = parseSiteSettings(current.settings);
-      if (current.version !== loaded.version || JSON.stringify(currentSettings) !== JSON.stringify(loaded.settings)) { setLatest(currentSettings); failed({ status: 409 }); return; }
+      if (stylesDirty) {
+        const current = await adapter.readSiteSettings!(loaded.siteId, controller.signal);
+        if (controller.signal.aborted) return;
+        const currentSettings = parseSiteSettings(current.settings);
+        if (current.version !== loaded.version || JSON.stringify(currentSettings) !== JSON.stringify(loaded.settings)) { setLatest(currentSettings); failed({ status: 409 }); return; }
+      }
       const result = await adapter.saveSiteSettings({ siteId: loaded.siteId, settings: structuredClone(settings), expectedVersion: loaded.version, ...(stylesDirty ? { previousStyles: parseSiteStyles(loaded.settings) } : {}) }, controller.signal);
       if (controller.signal.aborted) return;
       if (result.status === "conflict") { try { const conflictSnapshot = await adapter.readSiteSettings!(loaded.siteId, controller.signal); if (!controller.signal.aborted) setLatest(parseSiteSettings(conflictSnapshot.settings)); } catch { /* 比較の取得に失敗しても入力を保持する。 */ } failed({ status: 409 }); return; }
