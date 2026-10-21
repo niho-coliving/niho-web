@@ -33,7 +33,10 @@ export const INSERTABLE_IMAGE_TYPES = Object.freeze(["image/jpeg", "image/png", 
 export type ResolvedAsset = { src: string; width?: number; height?: number };
 /** キーは assetKey()。 */
 export type ResolvedAssetMap = Readonly<Record<string, ResolvedAsset>>;
-export type AssetPlacement = { reference: AssetReference; nodeId: string; target: "image" | "background"; breakpoint: number | "base" };
+/** ogImage = 文書の meta.ogImage（ソーシャルカバー）。ノードを持たない。 */
+export type AssetPlacement =
+  | { reference: AssetReference; nodeId: string; target: "image" | "background"; breakpoint: number | "base" }
+  | { reference: AssetReference; target: "ogImage" };
 
 export type AssetKind = "image" | "video" | "pdf" | "other";
 /** processing = ホストの検査・変換中。配置不可。 */
@@ -141,9 +144,12 @@ export function resolvedAsset(assets: ResolvedAssetMap, reference: AssetReferenc
   return Object.hasOwn(assets, key) ? assets[key] : undefined;
 }
 
+/** 本文の画像・背景と、meta.ogImage の素材参照。使用状況・削除可否・保存時の所属確認に使う。 */
 export function collectAssetReferences(document: PageDocument): AssetPlacement[] {
   const result: AssetPlacement[] = [];
   const copy = (reference: AssetReference): AssetReference => ({ provider: reference.provider, id: reference.id });
+  const cover = document.meta?.ogImage;
+  if (cover && "asset" in cover) result.push({ reference: copy(cover.asset), target: "ogImage" });
   function visit(nodes: readonly PageNode[]): void {
     for (const node of nodes) {
       if (node.type === "text") continue;

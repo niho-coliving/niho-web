@@ -209,6 +209,17 @@ test("replaceAsset swaps every image and background reference to the same asset"
   assert.throws(() => editDocument(next, { type: "replaceAsset", from: sea, to: wave }), /置き換える素材/);
   assert.throws(() => editDocument(original, { type: "replaceAsset", from: sea, to: wave }, {}, [{ nodeId: "photo", fields: ["asset"], reason: "連動画像" }]), /連動画像/);
 });
+test("the social cover can be an asset, follows replaceAsset and switches back to a URL", () => {
+  const sea = { provider: "uploads", id: "sea" }, wave = { provider: "uploads", id: "wave" };
+  let next = editDocument(doc(), { type: "meta", field: "ogImage", value: { asset: sea, alt: "海" } });
+  assert.deepEqual(next.meta.ogImage, { asset: sea, alt: "海" });
+  next = editDocument(next, { type: "replaceAsset", from: sea, to: wave });
+  assert.deepEqual(next.meta.ogImage, { asset: wave, alt: "海" });
+  next = editDocument(next, { type: "meta", field: "ogImage", value: { src: "/cover.jpg", alt: "海" } });
+  assert.deepEqual(next.meta.ogImage, { src: "/cover.jpg", alt: "海" });
+  assert.throws(() => editDocument(next, { type: "meta", field: "ogImage", value: { src: "/cover.jpg", asset: sea, alt: "" } }), DocumentValidationError);
+  assert.throws(() => editDocument(next, { type: "meta", field: "ogImage", value: { asset: { provider: "uploads", id: "a b" }, alt: "" } }), DocumentValidationError);
+});
 test("add can insert at a position within the destination", () => {
   const next = editDocument(doc(), { type: "add", parentId: "hero", index: 1, node: newElement("img", "photo") });
   assert.deepEqual(nodeAt(next, [0]).children.map((node) => node.id), ["heading", "photo", "lead", "link"]);

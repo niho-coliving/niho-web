@@ -102,7 +102,8 @@ export type InstanceNode = {
   style?: NodeStyle;
 };
 export type PageNode = TextNode | ElementNode | ComponentNode | InstanceNode;
-export type PageImage = { src: string; alt: string };
+/** URL か素材参照のどちらか一方。素材の URL はホストが描画時に解決し、文書には保存しない。 */
+export type PageImage = { src: string; alt: string } | { asset: AssetReference; alt: string };
 /** 公開メタ情報。値が無い項目は保存しない。 */
 export type PageMeta = {
   description?: string;

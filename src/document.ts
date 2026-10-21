@@ -81,10 +81,13 @@ export const metaLimits = { descriptionLength: 500, altLength: 300, structuredDa
 function assetUrl(value: unknown, path: string): string {
   return publicImageUrl(value, path);
 }
+/** src（URL）か asset（素材参照）のどちらか一方を持つ。 */
 export function parsePageImage(input: unknown, path: string): PageImage {
   const source = record(input, path);
-  keys(source, ["src", "alt"], path);
-  return { src: assetUrl(source.src, `${path}.src`), alt: line(source.alt, `${path}.alt`, metaLimits.altLength, true) };
+  keys(source, ["src", "asset", "alt"], path);
+  if ((source.src === undefined) === (source.asset === undefined)) fail(path, "image uses either src or asset");
+  const alt = line(source.alt, `${path}.alt`, metaLimits.altLength, true);
+  return source.asset === undefined ? { src: assetUrl(source.src, `${path}.src`), alt } : { asset: parseAssetReference(source.asset, `${path}.asset`), alt };
 }
 /** 公開メタ情報を検証して新しいオブジェクトを返す。false・空配列は保存しない。 */
 export function parsePageMeta(input: unknown, path = "$.meta"): PageMeta {
