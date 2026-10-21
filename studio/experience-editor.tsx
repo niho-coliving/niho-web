@@ -4,6 +4,7 @@ import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSite, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
 import type { PublicPropValue } from "../src/types.js";
+import { projectRoutePath } from "./project-routes.mjs";
 
 const BASE = "/api/projects/project-experience/sites/experience/editor";
 const STAGING_BASE = "/api/projects/project-experience/sites/experience/editor-staging";
@@ -220,7 +221,7 @@ export function ExperienceEditor({ project, environment = "production" }: { read
   return <main className="studio-editor">
     <header className="studio-editor-heading">
       <div><p className="studio-kicker">NIHO EXPERIENCE{environment === "staging" ? " · STG" : ""}</p><h1>{environment === "staging" ? "サイト編集（STG）" : "サイト編集"}</h1><p>英語サイトを編集します。キャンバス内の体験・提供者・予約情報は表示用サンプルです。</p></div>
-      <a href={`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}`}>ダッシュボードに戻る</a>
+      <a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")}>ダッシュボードに戻る</a>
     </header>
     {environment === "staging" && <aside className="studio-editor-note studio-editor-staging-note" role="status"><h2>STG環境・オーナー専用</h2><p>この画面の読み書き・公開確認・公開・復元は NIHO API STG に送信します。本番APIと本番bridge keyは使用しません。</p></aside>}
     {status !== null && <div className={`studio-editor-alert studio-editor-alert-${status}`} role="alert">

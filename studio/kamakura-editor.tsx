@@ -3,6 +3,7 @@ import { PageEditor } from "../src/editor.js";
 import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
 import type { EditorAdapter, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSite, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
+import { projectRoutePath } from "./project-routes.mjs";
 import { kamakuraAssetLibrary } from "./kamakura-assets.js";
 
 const BASE = "/api/projects/project-kamakura/sites/kamakura/editor";
@@ -198,7 +199,7 @@ export function KamakuraEditor({ project }: { readonly project: Project }) {
   return <main className="studio-editor">
     <header className="studio-editor-heading">
       <div><p className="studio-kicker">NIHO KAMAKURA</p><h1>サイト編集</h1><p>新形式へ移行済みの共通ページだけを Studio で編集します。CMS と旧形式ページは従来の管理画面に残ります。</p></div>
-      <a href={`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}`}>ダッシュボードに戻る</a>
+      <a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")}>ダッシュボードに戻る</a>
     </header>
     {status !== null && <EditorAlert status={status} />}
     {catalog.status === "loading" && <section className="studio-editor-note" role="status"><h2>ページ一覧を確認しています</h2><p>kamakura-site の新形式ページと旧形式ページを読み込んでいます。</p></section>}

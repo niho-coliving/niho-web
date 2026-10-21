@@ -8,11 +8,22 @@ Issue #68 / #69 / #70 の Studio host です。共有 `@niho/web` ライブラ�
 - `1 Project = 1 Site` の registry と `owner` / `editor` membership
 - owner による期限付き one-time 招待、権限変更、参加解除、招待取消
 - `project-kamakura` / `kamakura` と `project-experience` / `experience` の安定した Project / Site ID
-- 参加 Project の一覧と、Project・Site ID を含む安定 URL の Dashboard
+- 参加 Project の一覧と、Project・Site ID を含む安定 URL の Dashboard、人向けの固定別名 URL
 - `project-experience` / `experience` に限定した、下書き・プレビュー・公開・公開版への復元用 editor BFF
 - `project-kamakura` / `kamakura` に限定し、Cloudflare service binding で `kamakura-site` の新形式共通ページだけへ接続する editor BFF
 
 D1 が Project / Site / Member / Role / Invitation / Audit の正本です。NIHO account、niho-app の User / Project DB、NIHO cookie、Cloudflare dashboard membership は権限根拠にしません。Kamakura の content CMS はそのサイト側、Experience の contributor content は niho-app 側に残ります。
+
+## Project URL
+
+既存の Project / Site ID 付き URL は引き続き有効です。読みやすい入口として、各 Project に固定 alias を用意しています。`/admin` は Dashboard、`/admin/editor` はサイト編集画面です。
+
+| Project | Dashboard | Editor |
+| --- | --- | --- |
+| Kamakura (`project-kamakura` / `kamakura`) | `/projects/kamakura-site/admin` | `/projects/kamakura-site/admin/editor` |
+| NIHO Experience (`project-experience` / `experience`) | `/projects/niho-experience/admin` | `/projects/niho-experience/admin/editor` |
+
+Alias は Worker と client router の固定対応表で内部の Project / Site ID へ解決します。別名 URL 自体をブラウザに保ち、alias から Dashboard と Editor の間を移動しても同じ表記を使います。API/BFF の path、membership 判定、Project / Site ID は変わりません。招待 URL と Experience STG 専用 URL は引き続き ID 付き route です。
 
 Experience と Kamakura の Editor UI / BFF は実装されています。Experience の本番編集は niho-app Backend Draft PR #19268 の本番反映と本番 bridge secret の設定まで有効化しません。STG検証画面は `/projects/project-experience/sites/experience/editor/staging` に限り、D1 の Experience owner のみ開けます。画面・APIの両方で owner を確認し、固定した `https://api-stg.niho.life` と別の `NIHO_STUDIO_BRIDGE_SECRET_STG` を使います。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
 

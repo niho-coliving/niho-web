@@ -1,3 +1,5 @@
+import { parseProjectAliasPath } from "./project-routes.mjs";
+
 type D1Meta = { readonly changes?: number };
 type D1Result<T> = { readonly results?: readonly T[]; readonly success: boolean; readonly meta?: D1Meta };
 type D1Statement = {
@@ -1132,10 +1134,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
+  const projectAlias = parseProjectAliasPath(url.pathname);
   const isStagingExperienceEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(url.pathname);
-  const isKamakuraEditor = /^\/projects\/project-kamakura\/sites\/kamakura\/editor\/?$/u.test(url.pathname);
-  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname) || isKamakuraEditor || isStagingExperienceEditor;
-  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
+  const isKamakuraEditor = /^\/projects\/project-kamakura\/sites\/kamakura\/editor\/?$/u.test(url.pathname) || (projectAlias?.projectId === "project-kamakura" && projectAlias.page === "editor");
+  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname) || isKamakuraEditor || isStagingExperienceEditor || projectAlias?.page === "editor";
+  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor || projectAlias !== null) {
     if (isStagingExperienceEditor && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
     return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, isKamakuraEditor);
