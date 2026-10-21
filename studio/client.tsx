@@ -174,9 +174,9 @@ function dateLabel(value: string): string {
 
 function roleLabel(value: Role): string { return value === "owner" ? "オーナー" : "編集者"; }
 
-// Experience は Backend #19268 の本番反映と bridge secret 設定後に有効化する。
 function editorEnabled(project: Project): boolean {
-  return project.id === "project-kamakura" && project.site.id === "kamakura";
+  return (project.id === "project-kamakura" && project.site.id === "kamakura")
+    || (project.id === "project-experience" && project.site.id === "experience");
 }
 
 function Notice({ title, children, retry }: { readonly title: string; readonly children: string; readonly retry?: () => void }) {
@@ -408,7 +408,9 @@ function App() {
               : <Notice title="エディターを表示できません">STGエディターは NIHO Experience でのみ利用できます。</Notice>
             : editorEnabled(selected) && selected.id === "project-kamakura" && selected.site.id === "kamakura"
               ? <KamakuraEditor project={selected} />
-              : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
+              : editorEnabled(selected) && selected.id === "project-experience" && selected.site.id === "experience"
+                ? <ExperienceEditor project={selected} />
+                : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
           ? <>
               <ProjectDashboard

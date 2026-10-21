@@ -25,7 +25,7 @@ D1 が Project / Site / Member / Role / Invitation / Audit の正本です。NIH
 
 Alias は Worker と client router の固定対応表で内部の Project / Site ID へ解決します。別名 URL 自体をブラウザに保ち、alias から Dashboard と Editor の間を移動しても同じ表記を使います。API/BFF の path、membership 判定、Project / Site ID は変わりません。招待 URL と Experience STG 専用 URL は引き続き ID 付き route です。
 
-Experience と Kamakura の Editor UI / BFF は実装されています。Experience の本番編集は niho-app Backend Draft PR #19268 の本番反映と本番 bridge secret の設定まで有効化しません。STG検証画面は `/projects/project-experience/sites/experience/editor/staging` に限り、D1 の Experience owner のみ開けます。画面・APIの両方で owner を確認し、固定した `https://api-stg.niho.life` と別の `NIHO_STUDIO_BRIDGE_SECRET_STG` を使います。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
+Experience と Kamakura の Editor UI / BFF は実装されています。Experience の本番編集は niho-app Backend Draft PR #19268 が本番反映済みで、NIHO API と Studio Worker の `NIHO_STUDIO_BRIDGE_SECRET` が同じ値に設定されている場合に限り有効です。STG検証画面は `/projects/project-experience/sites/experience/editor/staging` に限り、D1 の Experience owner のみ開けます。画面・APIの両方で owner を確認し、固定した `https://api-stg.niho.life` と別の `NIHO_STUDIO_BRIDGE_SECRET_STG` を使います。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
 
 ## 認証・認可境界
 
@@ -177,7 +177,7 @@ wrangler dev --config studio/wrangler.toml
 
 ## 制約と follow-up
 
-- Experience editor は Backend Draft PR #19268 の merge・配備と、Studio Worker／NIHO API の両 secret 設定が揃うまで UI を「接続待ち」にします。直接 API は未設定時に 503 で停止します。揃う前に「本番で編集可能」と案内しません。
+- Experience editor の本番UIは Backend Draft PR #19268 の本番配備と、Studio Worker／NIHO API の本番 secret 設定が揃った場合だけ有効にします。secret が欠落・不正なら API 接続は 503 で fail-closed します。STG用 secret は本番で再利用しません。
 - Kamakura editor は新形式の共通ページだけを扱います。現時点の `src/site/niho-web` は0件で、旧形式一覧は読み取り専用です。作成、素材 upload、旧形式ページ編集、CMS 操作、全面移行はこの bridge の対象外です。
 - Experience editor は production API が提供するページ文書・下書き・公開・復元だけを扱います。自由追加できない NIHO 業務ブロックは `insertableBlocks=[]` とし、components / localization / assets は未実装です。
 - 招待メールの配信、再送、token の再表示はありません。URL の安全な共有は owner の運用責任です。
