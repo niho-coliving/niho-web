@@ -2,6 +2,12 @@
 
 `@niho/web/analytics` は認証済みホスト向けの React 画面、`SiteAnalyticsAdapter`、応答パーサーを提供します。データ取得・認証・認可・OAuth・永続化はホストが所有します。このパッケージは GA4 / Search Console へ通信しません。
 
+サーバーでの集計・キャッシュ検証には `@niho/web/analytics-data` を使います。型とパーサーは画面と共通で、Reactを読み込みません。対象の認可と公開ページだけに絞る処理は、引き続きホストが実施します。
+
+```ts
+import { parseSiteAnalyticsSnapshot, type SiteAnalyticsSnapshot } from "@niho/web/analytics-data";
+```
+
 ## スコープと読取
 
 ```ts
