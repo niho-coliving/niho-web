@@ -27,6 +27,8 @@ Alias は Worker と client router の固定対応表で内部の Project / Site
 
 Experience と Kamakura の Editor UI / BFF は実装されています。Experience の本番編集は niho-app Backend Draft PR #19268 が本番反映済みで、NIHO API と Studio Worker の `NIHO_STUDIO_BRIDGE_SECRET` が同じ値に設定されている場合に限り有効です。STG検証画面は `/projects/project-experience/sites/experience/editor/staging` に限り、D1 の Experience owner のみ開けます。画面・APIの両方で owner を確認し、固定した `https://api-stg.niho.life` と別の `NIHO_STUDIO_BRIDGE_SECRET_STG` を使います。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
 
+両Editorは `PageEditor` の共通workspaceを使います。左のツール列とパネル、中央キャンバス、右インスペクター上段の倍率と編集操作、下部の表示幅操作はサイト間で共通です。各hostはダッシュボードへ戻る入口だけを `toolbarStart` に渡し、サイト固有のレイアウト指定は行いません。左右パネルは開閉でき、狭い表示でもoverlayで編集を続けられます。
+
 ## 認証・認可境界
 
 Cloudflare Access 側で Studio hostname 全体を Access application として保護します。そのうえで Worker は静的 HTML/JS/CSS と API の全 request について `Cf-Access-Jwt-Assertion` を検証します。
@@ -166,6 +168,8 @@ Project 固有 API はすべて次の prefix 配下です。
 - Kamakura: `PUT editor/:pageId/draft`、`POST editor/:pageId/release-plan`、`POST editor/:pageId/release`
 
 unknown Project/Site と権限のない Project/Site は、外部から区別できる詳細を返しません。owner API が返す member 情報は、その owner が管理する同一 Project に限定します。
+
+編集対象の追加手順、trusted registry、client component map、worker adapter mapの境界は [ビルダー接続ガイド](../docs/builder-integration-guide.md) を正とします。登録されていないProject/Site/environmentはHTMLとAPIの両方で閉じます。
 
 ## local 確認と配置
 

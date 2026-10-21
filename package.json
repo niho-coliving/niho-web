@@ -19,6 +19,10 @@
       "types": "./dist/core.d.ts",
       "import": "./dist/core.js"
     },
+    "./builder": {
+      "types": "./dist/builder.d.ts",
+      "import": "./dist/builder.js"
+    },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
@@ -106,6 +110,7 @@
     "studio:deploy": "npm run studio:build && wrangler deploy --config studio/wrangler.toml",
     "test": "npm run build && node --test test/*.test.mjs",
     "demo": "node examples/editor-demo.mjs",
+    "demo:builder": "npm run build && node examples/builder-demo.mjs",
     "demo:projects": "node examples/projects-demo.mjs",
     "demo:analytics": "node examples/analytics-demo.mjs",
     "demo:localization": "node examples/localization-demo.mjs",

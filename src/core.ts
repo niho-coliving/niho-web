@@ -6,5 +6,10 @@ export {
   rewriteComponentLinks, rewriteInstanceLinks, type ResolvedOrigin
 } from "./components.js";
 export { DocumentValidationError, isSafeHttpsOrigin, isSafePublicLink, isSafePublicUrl } from "./validation-utils.js";
+export {
+  MOTION_BASE_PROPERTIES, assertMotionStylePatch, createInsertionNode, defineBuilder, layoutInsertionPresets, matchesMotionPreset, motionStylePatch, resolveBuilderDefinition, sameMotionValue, standardBuilderDefinition,
+  type BuilderDefinition, type BuilderIdFactory, type InsertionBuildOptions, type InsertionContext, type InsertionPreset, type MotionBaseProperty,
+  type MotionPreset, type MotionStylePatch, type MotionTargetPath
+} from "./builder.js";
 
 export { detachRemovedSiteStyles, mergeSiteStyles, parseSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";

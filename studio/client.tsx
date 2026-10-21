@@ -4,15 +4,15 @@ import { ProjectDashboard } from "../src/project-dashboard.js";
 import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
+import { resolveClientIntegration, TrustedIntegrationEditor } from "./integration-entry.js";
+import { resolveTrustedEditorPage, resolveTrustedIntegration, trustedEditorPath, type ResolvedTrustedIntegration } from "./integration-registry.mjs";
 import { parseProjectAliasPath, projectRoutePath } from "./project-routes.mjs";
-import { ExperienceEditor } from "./experience-editor.js";
-import { KamakuraEditor } from "./kamakura-editor.js";
 
 type Role = "owner" | "editor";
 type Screen =
   | { readonly kind: "directory" }
   | { readonly kind: "dashboard"; readonly projectId: string; readonly siteId: string }
-  | { readonly kind: "editor"; readonly projectId: string; readonly siteId: string; readonly staging: boolean }
+  | { readonly kind: "editor"; readonly projectId: string; readonly siteId: string; readonly environment: string }
   | { readonly kind: "invite"; readonly projectId: string; readonly siteId: string; readonly token: string };
 type SessionState =
   | { readonly status: "loading" }
@@ -68,7 +68,7 @@ function screenFromLocation(): Screen {
   const projectAlias = parseProjectAliasPath(window.location.pathname);
   if (projectAlias) {
     return projectAlias.page === "editor"
-      ? { kind: "editor", projectId: projectAlias.projectId, siteId: projectAlias.siteId, staging: false }
+      ? { kind: "editor", projectId: projectAlias.projectId, siteId: projectAlias.siteId, environment: "production" }
       : { kind: "dashboard", projectId: projectAlias.projectId, siteId: projectAlias.siteId };
   }
   const invite = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/invite\/?$/u.exec(window.location.pathname);
@@ -76,11 +76,8 @@ function screenFromLocation(): Screen {
     const token = new URLSearchParams(window.location.search).get("token") ?? new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
     return { kind: "invite", projectId: invite[1]!, siteId: invite[2]!, token };
   }
-  if (/^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(window.location.pathname)) {
-    return { kind: "editor", projectId: "project-experience", siteId: "experience", staging: true };
-  }
-  const editor = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/editor\/?$/u.exec(window.location.pathname);
-  if (editor) return { kind: "editor", projectId: editor[1]!, siteId: editor[2]!, staging: false };
+  const editor = resolveTrustedEditorPage(window.location.pathname);
+  if (editor) return { kind: "editor", projectId: editor.registration.projectId, siteId: editor.registration.siteId, environment: editor.environment };
   const dashboard = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/?$/u.exec(window.location.pathname);
   return dashboard ? { kind: "dashboard", projectId: dashboard[1]!, siteId: dashboard[2]! } : { kind: "directory" };
 }
@@ -175,8 +172,7 @@ function dateLabel(value: string): string {
 function roleLabel(value: Role): string { return value === "owner" ? "オーナー" : "編集者"; }
 
 function editorEnabled(project: Project): boolean {
-  return (project.id === "project-kamakura" && project.site.id === "kamakura")
-    || (project.id === "project-experience" && project.site.id === "experience");
+  return resolveTrustedIntegration(project.id, project.site.id) !== null;
 }
 
 function Notice({ title, children, retry }: { readonly title: string; readonly children: string; readonly retry?: () => void }) {
@@ -345,9 +341,9 @@ function App() {
   const navigate = useCallback((next: Exclude<Screen, { kind: "invite" }>) => {
     const path = next.kind === "directory"
       ? "/"
-      : next.kind === "editor" && next.staging
-        ? "/projects/project-experience/sites/experience/editor/staging"
-        : projectRoutePath(window.location.pathname, next.projectId, next.siteId, next.kind === "editor" ? "editor" : "dashboard");
+      : next.kind === "editor"
+        ? trustedEditorPath(next.projectId, next.siteId, next.environment) ?? "/"
+        : projectRoutePath(window.location.pathname, next.projectId, next.siteId, "dashboard");
     window.history.pushState(null, "", path);
     setPendingProject(null);
     setScreen(next);
@@ -375,8 +371,9 @@ function App() {
   }), [expire]);
 
   const openEditor = useCallback((project: Project) => {
-    if (editorEnabled(project)) {
-      window.location.assign(projectRoutePath(window.location.pathname, project.id, project.site.id, "editor"));
+    const path = trustedEditorPath(project.id, project.site.id);
+    if (path) {
+      window.location.assign(projectRoutePath(window.location.pathname, project.id, project.site.id, "editor") || path);
       return;
     }
     setPendingProject(project);
@@ -395,23 +392,20 @@ function App() {
   const selected = screen.kind === "dashboard" || screen.kind === "editor"
     ? session.directory.entries.find(({ project }) => project.id === screen.projectId && project.site.id === screen.siteId)?.project
     : undefined;
-  const kamakuraEditor = screen.kind === "editor" && !screen.staging && selected?.id === "project-kamakura" && selected.site.id === "kamakura";
+  const resolvedEditor: ResolvedTrustedIntegration | null = screen.kind === "editor" && selected
+    ? resolveTrustedIntegration(selected.id, selected.site.id, screen.environment)
+    : null;
+  const clientIntegration = resolveClientIntegration(resolvedEditor);
 
-  return <div className={`studio-app${kamakuraEditor ? " studio-kamakura-shell" : ""}`}>
+  return <div className={`studio-app${clientIntegration?.shellClass ? ` ${clientIntegration.shellClass}` : ""}`}>
     <header className="studio-shell-header"><a href="/" onClick={screen.kind === "editor" ? undefined : (event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
-    <div className={`studio-content${screen.kind === "editor" ? " studio-content-editor" : ""}${kamakuraEditor ? " studio-kamakura-content" : ""}`}>
+    <div className={`studio-content${screen.kind === "editor" ? " studio-content-editor" : ""}${clientIntegration?.contentClass ? ` ${clientIntegration.contentClass}` : ""}`}>
       {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
         : selected && screen.kind === "editor"
-          ? screen.staging
-            ? selected.id === "project-experience" && selected.site.id === "experience"
-              ? <ExperienceEditor project={selected} environment="staging" />
-              : <Notice title="エディターを表示できません">STGエディターは NIHO Experience でのみ利用できます。</Notice>
-            : editorEnabled(selected) && selected.id === "project-kamakura" && selected.site.id === "kamakura"
-              ? <KamakuraEditor project={selected} />
-              : editorEnabled(selected) && selected.id === "project-experience" && selected.site.id === "experience"
-                ? <ExperienceEditor project={selected} />
-                : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
+          ? resolvedEditor && clientIntegration
+            ? <TrustedIntegrationEditor resolved={resolvedEditor} project={selected} />
+            : <Notice title="エディターを表示できません">このサイトまたは環境のエディターは接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
           ? <>
               <ProjectDashboard

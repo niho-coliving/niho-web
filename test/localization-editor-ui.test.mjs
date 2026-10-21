@@ -13,7 +13,7 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { PageEditor } = await import("@niho/web/editor");
 const flush = async (turns = 3) => { for (let index = 0; index < turns; index++) await act(async () => new Promise((resolve) => setTimeout(resolve, 0))); };
-const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
+const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? document.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
 async function showInspector(value) {
   const target = document.querySelector('select[aria-label="編集する対象"]'); assert.ok(target, "inspector selector");
@@ -528,7 +528,7 @@ test("localization config and target context fail closed while loading, on error
   try {
     assert.match(document.body.textContent, /言語設定と翻訳状態を読み込み中/);
     assert.equal(input("ページタイトル").disabled, true);
-    assert.equal(button("公開前の確認").disabled, true);
+    assert.equal(button("公開").disabled, true);
     app.resolveDelayedSite(); await flush(6);
     assert.equal(input("ページタイトル").disabled, false);
   } finally { await app.cleanup(); }
@@ -554,7 +554,7 @@ test("localization config and target context fail closed while loading, on error
   try {
     assert.match(document.body.textContent, /言語設定または翻訳状態を確認できません/);
     assert.equal(input("ページタイトル").disabled, true);
-    assert.equal(button("公開前の確認").disabled, true);
+    assert.equal(button("公開").disabled, true);
   } finally { await app.cleanup(); }
 });
 
@@ -566,7 +566,7 @@ test("a target save stays fail closed while site and page localization state rel
     assert.match(document.body.textContent, /言語設定と翻訳状態を読み込み中/);
     assert.equal(input("テキスト").disabled, true);
     assert.equal(button("下書き保存").disabled, true);
-    assert.equal(button("公開前の確認").disabled, true);
+    assert.equal(button("公開").disabled, true);
     app.resolveDelayedSite(); await flush(8);
     assert.equal(input("テキスト").disabled, false);
     assert.equal(app.calls.saves.at(-1).localization.expectedOverlayVersion > 0, true);
@@ -624,9 +624,9 @@ test("locale release conflicts and unknown outcomes keep drafts, close stale pla
 test("old localization hosts keep target publication disabled and source publication page-scoped", async () => {
   const app = await setup();
   try {
-    assert.equal(button("公開前の確認").disabled, false, "source legacy publish remains available");
+    assert.equal(button("公開").disabled, false, "source legacy publish remains available");
     await click("English（訳文）"); await flush(5);
-    assert.equal(button("公開前の確認").disabled, true); assert.match(document.body.textContent, /このサイトでは訳文の公開を利用できません/);
+    assert.equal(button("公開").disabled, true); assert.match(document.body.textContent, /このサイトでは訳文の公開を利用できません/);
     assert.equal(button("言語全体の公開確認"), undefined);
   } finally { await app.cleanup(); }
 });

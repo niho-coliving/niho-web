@@ -6,6 +6,7 @@ import { findPathConflict, validatePagePath } from "./pages.js";
 import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
 import type { Appear, AssetReference, ComponentLibrary, ComponentNode, DesignToken, ElementNode, HiddenRange, InstanceNode, NodeStyle, PageDocument, PageMeta, PageNode, PublicPropValue, StateName, StateProperty, StyleDeclarations, StyleProperty, StyleValue, TextStyle } from "./types.js";
 import { stateNames, textStyleProperties } from "./style-values.js";
+import { assertMotionStylePatch, sameMotionValue, type MotionStylePatch } from "./builder.js";
 import { isSafeHttpsOrigin, isSafePublicUrl, keys, line, record } from "./validation-utils.js";
 
 export { nodeAt, walkNodes, type NodePath };
@@ -29,6 +30,8 @@ export type EditorOperation =
   | { type: "state"; path: NodePath; state: StateName; values: Partial<Record<StateProperty, StyleValue | undefined>>; also?: readonly StateName[] }
   /** 登場の演出。undefined で解除。 */
   | { type: "appear"; path: NodePath; value: Appear | undefined }
+  /** 動きに関係する宣言pathだけを1回の履歴で適用する。responsive・hidden・文字スタイルは保持する。 */
+  | { type: "motionPreset"; path: NodePath; style: MotionStylePatch | undefined; /** 切替・解除するactive preset。宣言pathだけを外す。 */ previous?: MotionStylePatch }
   /** 幅別の非表示。undefined・空配列で解除。 */
   | { type: "hidden"; path: NodePath; ranges: readonly HiddenRange[] | undefined }
   | { type: "title"; value: string }
@@ -325,6 +328,41 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       const next = { ...(Object.keys(base).length ? { base } : {}), ...(responsive.length ? { responsive } : {}) };
       if (Object.keys(next).length) slots[operation.slot] = next; else delete slots[operation.slot];
       if (Object.keys(slots).length) node.slots = slots; else delete node.slots;
+    } else if (operation.type === "motionPreset") {
+      if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
+      if (operation.style) assertMotionStylePatch(operation.style);
+      if (operation.previous) assertMotionStylePatch(operation.previous);
+      const before = node.style, patch = operation.style, previous = operation.previous;
+      const changedBase = new Set<string>([...Object.keys(previous?.base ?? {}), ...Object.keys(patch?.base ?? {})]);
+      assertStyleProperties(node, [
+        ...changedBase,
+        ...(previous?.states || patch?.states ? ["states"] : []),
+        ...(previous?.appear || patch?.appear ? ["appear"] : [])
+      ], blocks);
+      const base = { ...before?.base };
+      for (const [property, value] of Object.entries(previous?.base ?? {})) if (sameMotionValue(base[property as StyleProperty], value)) delete base[property as StyleProperty];
+      Object.assign(base, structuredClone(patch?.base ?? {}));
+      const states = structuredClone(before?.states ?? {});
+      for (const [state, declarations] of Object.entries(previous?.states ?? {})) {
+        const current = { ...states[state as StateName] };
+        for (const [property, value] of Object.entries(declarations ?? {})) if (sameMotionValue(current[property as StateProperty], value)) delete current[property as StateProperty];
+        if (Object.keys(current).length) states[state as StateName] = current; else delete states[state as StateName];
+      }
+      for (const [state, declarations] of Object.entries(patch?.states ?? {})) states[state as StateName] = { ...states[state as StateName], ...structuredClone(declarations) };
+      let appear = structuredClone(before?.appear);
+      if (previous?.appear && sameMotionValue(appear, previous.appear)) appear = undefined;
+      if (patch?.appear) appear = structuredClone(patch.appear);
+      const style: NodeStyle = {
+        ...(before?.textStyle ? { textStyle: before.textStyle } : {}),
+        ...(Object.keys(base).length ? { base } : {}),
+        ...(before?.responsive?.length ? { responsive: structuredClone(before.responsive) } : {}),
+        ...(Object.keys(states).length ? { states } : {}),
+        ...(appear ? { appear } : {}),
+        ...(before?.hidden?.length ? { hidden: structuredClone(before.hidden) } : {})
+      };
+      if (Object.keys(style).length) node.style = style; else delete node.style;
+      // trusted host の定義でも値はその場で検証し、関数末尾の所有権復元後にも同じ validator を通す。
+      parsePageDocument(draft, blocks, { ...(components ? { components } : {}), ...(siteStyles ? { siteStyles } : {}) });
     } else if (operation.type === "state") {
       if (node.type === "text") throw new Error("親要素の見た目を編集してください。");
       assertStyleProperties(node, ["states"], blocks);

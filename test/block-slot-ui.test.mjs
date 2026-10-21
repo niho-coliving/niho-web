@@ -46,7 +46,8 @@ const library = () => ({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const left = () => document.querySelector('[aria-label="サイト・ページ・レイヤー"]');
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
-const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text);
+const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text)
+  ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? root.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
 const captions = () => [...right().querySelectorAll(".e-field")].map((node) => node.querySelector("span")?.textContent);
@@ -104,7 +105,7 @@ test("clicking a region on the canvas selects the block and that region, shows o
     assert.ok(right().textContent.includes("この領域で変更できる見た目だけを表示しています。"));
     assert.deepEqual(captions(), ["文字色", "文字サイズ", "文字の太さ"]);
     // 繰り返すカードの同じ領域をすべて破線で囲む。
-    assert.ok(editorCss().includes('[data-nw-node="cards"] [data-nw-slot="title"]{outline:2px dashed #198558!important;outline-offset:2px;}'));
+    assert.ok(editorCss().includes('[data-nw-node="cards"] [data-nw-slot="title"]{outline:2px dashed #2878ff!important;outline-offset:2px;}'));
     await change(input("文字色", right()), "#ff0000");
     assert.ok(canvasCss().includes('[data-nw-node="cards"] [data-nw-slot="title"]{color:#ff0000;}'));
     assert.ok(field("文字色", right()).querySelector(".e-dot"), "the changed region field is marked as unsaved");
@@ -132,7 +133,7 @@ test("data regions name their source and reason, and regions without appearance 
     assert.ok(!right().querySelector(".e-inspector"));
     assert.equal(right().querySelectorAll(".e-inspector-content input, .e-inspector-content select, .e-inspector-content textarea").length, 0);
     await click(button("ブロック全体に戻る", right()));
-    assert.equal(heading(), "体験カード一覧 · cards");
+    assert.equal(heading(), "体験カード一覧");
     assert.deepEqual([...right().querySelectorAll("button.e-slot .e-slot-name")].map((node) => node.textContent), ["カードの並び", "カード画像", "カードの見出し", "料金表示", "予約ボタン", "決済"]);
     const described = (row) => row.getAttribute("aria-describedby").split(" ").map((id) => document.getElementById(id).textContent);
     assert.equal(document.getElementById(slotRow("決済").getAttribute("aria-labelledby")).textContent, "決済");
@@ -194,19 +195,19 @@ test("the region resets when another node or the block body is selected, and the
   const app = await setup();
   try {
     await canvasClick('[data-nw-node="cards"] [data-nw-slot="title"]'); assert.equal(heading(), "体験カード一覧 · カードの見出し");
-    await click(button("h1 · heading", left())); assert.equal(heading(), "h1 · heading");
+    await click(button("海のそばで過ごす · heading", left())); assert.equal(heading(), "海のそばで過ごす");
     await click(button("体験カード一覧 · cards", left()));
-    assert.equal(heading(), "体験カード一覧 · cards", "reselecting the block does not restore the region");
+    assert.equal(heading(), "体験カード一覧", "reselecting the block does not restore the region");
     assert.ok(slotRow("カードの見出し")); assert.equal(editorCss().includes('[data-nw-slot="title"]{outline'), false);
     // 領域ではない部分（ブロックの見出し）を押すとブロックだけを選ぶ。
     await canvasClick('[data-nw-node="cards"] [data-nw-slot="cta"]'); assert.equal(heading(), "体験カード一覧 · 予約ボタン");
-    await canvasClick('[data-nw-node="cards"] h2'); assert.equal(heading(), "体験カード一覧 · cards");
+    await canvasClick('[data-nw-node="cards"] h2'); assert.equal(heading(), "体験カード一覧");
     await click(slotRow("カード画像"));
     assert.equal(heading(), "体験カード一覧 · カード画像"); assert.equal(document.activeElement.tagName, "H2");
     assert.deepEqual(captions(), ["高さ", "角丸", "画像の収まり"]);
     await click(button("ブロック全体に戻る", right())); assert.ok(document.activeElement === slotRow("カード画像"), "focus returns to the row of the region");
     await click(slotRow("カード画像")); await click(button("ページ全体", left()));
-    await click(button("体験カード一覧 · cards", left())); assert.equal(heading(), "体験カード一覧 · cards");
+    await click(button("体験カード一覧 · cards", left())); assert.equal(heading(), "体験カード一覧");
   } finally { await app.cleanup(); }
 });
 
@@ -282,7 +283,7 @@ test("registries without regions keep today's block inspector and canvas selecti
   const app = await setup({ document: page({ type: "component", id: "notice", block: "PlainNotice", props: { heading: "お知らせです" } }), blocks: { PlainNotice: blocks.PlainNotice } });
   try {
     await canvasClick('[data-nw-node="notice"] aside');
-    assert.equal(heading(), "お知らせ · notice");
+    assert.equal(heading(), "お知らせ");
     assert.equal(right().textContent.includes("表示領域"), false); assert.ok(!right().querySelector(".e-slot-list"));
     assert.ok(input("heading", right())); await selectTab("テキスト"); assert.ok(input("文字色", right()));
   } finally { await app.cleanup(); }

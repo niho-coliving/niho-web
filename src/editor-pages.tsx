@@ -232,7 +232,7 @@ export function PageChangeDialog({ start, site, pages, locale, prepare, apply, a
             <input id={`${id}-path`} value={path} disabled={!!busy} spellCheck={false} autoCapitalize="off" aria-invalid={!!pathProblem} aria-describedby={`${id}-path-help`}
               onChange={(event) => setPath(event.target.value)} onBlur={() => touch("path")} /></span>
           {pathProblem && <small className="e-help e-problem" role="alert">{pathProblem}</small>}
-          <small id={`${id}-path-help`} className="e-help">半角英小文字・数字と - _ を / で区切ります。例: /circles/kamakura-go</small>
+          <small id={`${id}-path-help`} className="e-help">半角英小文字・数字と - _ を / で区切ります。例: /about/team</small>
         </label>
       </>}
       {changeProblem && <p className="e-help">{changeProblem}</p>}

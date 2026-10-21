@@ -1,4 +1,5 @@
 import { parseProjectAliasPath } from "./project-routes.mjs";
+import { integrationIdentity, isTrustedEditorAction, resolveTrustedEditorApi, resolveTrustedEditorPage, type ResolvedTrustedIntegration } from "./integration-registry.mjs";
 import { KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, KamakuraCatalogContractError, KAMAKURA_COMMON_PAGE_ID, KAMAKURA_EDITOR_SITE_ID, parseKamakuraCatalog } from "./kamakura-catalog.js";
 
 type D1Meta = { readonly changes?: number };
@@ -1019,32 +1020,60 @@ async function signedKamakuraAssetPreview(request: Request, env: Env, identity: 
   } finally { if (!streaming) cleanup(); }
 }
 
+type WorkerEditorAdapter = {
+  readonly route: (action: string, method: string, environment: string) => EditorRoute | "method_not_allowed" | null;
+  readonly authorize: (env: Env, identity: AccessIdentity, resolved: ResolvedTrustedIntegration) => Promise<boolean>;
+  readonly dispatch: (request: Request, env: Env, identity: AccessIdentity, route: EditorRoute, resolved: ResolvedTrustedIntegration) => Promise<Response>;
+  readonly assetPreview?: (action: string) => string | null;
+  readonly dispatchAssetPreview?: (request: Request, env: Env, identity: AccessIdentity, assetId: string) => Promise<Response>;
+  readonly connectOrigins?: readonly string[];
+};
+
+const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map([
+  [integrationIdentity(EDITOR_PROJECT_ID, EDITOR_SITE_ID), {
+    route: (action, method, environment) => experienceEditorRoute(action, method, environment === "staging"),
+    authorize: (env, identity, resolved) => resolved.environment === "staging"
+      ? experienceEditorOwner(env, identity)
+      : editorMember(env, identity, resolved.registration.projectId, resolved.registration.siteId),
+    dispatch: (request, env, identity, route, resolved) => resolved.environment === "staging"
+      ? signedEditorRequest(request, identity, route, { origin: EDITOR_STAGING_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET_STG })
+      : signedEditorRequest(request, identity, route, { origin: EDITOR_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET })
+  }],
+  [integrationIdentity(KAMAKURA_EDITOR_PROJECT_ID, KAMAKURA_EDITOR_SITE_ID), {
+    route: (action, method) => kamakuraEditorRoute(action, method),
+    authorize: (env, identity, resolved) => editorMember(env, identity, resolved.registration.projectId, resolved.registration.siteId),
+    dispatch: (request, env, identity, route) => signedKamakuraEditorRequest(request, env, identity, route),
+    assetPreview: (action) => /^\/editor\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/preview$/iu.exec(action)?.[1] ?? null,
+    dispatchAssetPreview: signedKamakuraAssetPreview,
+    connectOrigins: [KAMAKURA_EDITOR_UPSTREAM_ORIGIN]
+  }]
+]);
+
+function workerEditorAdapter(resolved: ResolvedTrustedIntegration): WorkerEditorAdapter | null {
+  return WORKER_EDITOR_ADAPTERS.get(integrationIdentity(resolved.registration.projectId, resolved.registration.siteId)) ?? null;
+}
+
 async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
   if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
-  const experience = projectId === EDITOR_PROJECT_ID && siteId === EDITOR_SITE_ID;
-  const staging = experience && (action === "/editor-staging" || action.startsWith("/editor-staging/"));
-  const kamakura = projectId === KAMAKURA_EDITOR_PROJECT_ID && siteId === KAMAKURA_EDITOR_SITE_ID;
-  if (!experience && !kamakura) return json({ error: "not_found" }, 404);
-  if (experience && !staging && action !== "/editor" && !action.startsWith("/editor/")) return json({ error: "not_found" }, 404);
-  const assetPreview = kamakura ? /^\/editor\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/preview$/iu.exec(action) : null;
-  if (assetPreview) {
+  const resolved = resolveTrustedEditorApi(projectId, siteId, action);
+  const adapter = resolved ? workerEditorAdapter(resolved) : null;
+  if (!resolved || !adapter) return json({ error: "not_found" }, 404);
+  const assetId = adapter.assetPreview?.(action) ?? null;
+  if (assetId && adapter.dispatchAssetPreview) {
     if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-    if (!await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
-    try { return await signedKamakuraAssetPreview(request, env, identity, assetPreview[1]!); }
+    if (!await adapter.authorize(env, identity, resolved)) return json({ error: "forbidden" }, 403);
+    try { return await adapter.dispatchAssetPreview(request, env, identity, assetId); }
     catch (error) {
       if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
       throw error;
     }
   }
-  const route = experience ? experienceEditorRoute(action, request.method, staging) : kamakuraEditorRoute(action, request.method);
+  const route = adapter.route(action, request.method, resolved.environment);
   if (route === null) return json({ error: "not_found" }, 404);
   if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
-  if (staging ? !await experienceEditorOwner(env, identity) : !await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
+  if (!await adapter.authorize(env, identity, resolved)) return json({ error: "forbidden" }, 403);
   try {
-    if (!experience) return await signedKamakuraEditorRequest(request, env, identity, route);
-    return staging
-      ? await signedEditorRequest(request, identity, route, { origin: EDITOR_STAGING_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET_STG })
-      : await signedEditorRequest(request, identity, route, { origin: EDITOR_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET });
+    return await adapter.dispatch(request, env, identity, route, resolved);
   }
   catch (error) {
     if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
@@ -1052,10 +1081,10 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   }
 }
 
-function withStaticSecurity(response: Response, editor = false, allowKamakuraUpload = false): Response {
+function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = []): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
-  const connectSrc = "connect-src 'self'" + (allowKamakuraUpload ? " " + KAMAKURA_EDITOR_UPSTREAM_ORIGIN : "") + ";";
+  const connectSrc = `connect-src 'self'${connectOrigins.map((origin) => ` ${origin}`).join("")};`;
   headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + " font-src 'self';" + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
@@ -1072,7 +1101,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
-  if (action === "/editor" || action.startsWith("/editor/") || action === "/editor-staging" || action.startsWith("/editor-staging/")) return editorApi(request, env, identity, url, projectId, siteId, action);
+  if (isTrustedEditorAction(action)) return editorApi(request, env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
@@ -1116,13 +1145,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
   const projectAlias = parseProjectAliasPath(url.pathname);
-  const isStagingExperienceEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(url.pathname);
-  const isKamakuraEditor = /^\/projects\/project-kamakura\/sites\/kamakura\/editor\/?$/u.test(url.pathname) || (projectAlias?.projectId === "project-kamakura" && projectAlias.page === "editor");
-  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname) || isKamakuraEditor || isStagingExperienceEditor || projectAlias?.page === "editor";
+  const editorPage = resolveTrustedEditorPage(url.pathname);
+  const pageAdapter = editorPage ? workerEditorAdapter(editorPage) : null;
+  const isEditor = editorPage !== null && pageAdapter !== null;
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor || projectAlias !== null) {
-    if (isStagingExperienceEditor && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
+    if (editorPage?.environment === "staging" && pageAdapter && !await pageAdapter.authorize(env, identity, editorPage)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, isKamakuraEditor);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? []);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }

@@ -38,7 +38,7 @@ const defaultUsage = () => [
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const wait = (ms) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text);
+const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? scope.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 const layerButton = (label, scope = document) => [...scope.querySelectorAll("button.e-layer")].find((node) => node.querySelector(".e-layer-label")?.textContent === label);
 const input = (text, scope = document) => [...scope.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
 async function openLayers() {
@@ -86,7 +86,7 @@ async function openPage(title) { await click(document.querySelector('nav[aria-la
 const text = () => document.body.textContent;
 const status = () => document.querySelector(".e-status").textContent;
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
-const stateButton = (name) => [...right().querySelectorAll('[role="group"][aria-label="編集する状態"] button')].find((node) => node.textContent === name);
+const stateSelect = () => right().querySelector('select[aria-label="条件スタイル"]');
 const canvasExtra = () => [...canvas().contentDocument.querySelectorAll("style")].at(-1).textContent;
 
 async function setup(options = {}) {
@@ -158,8 +158,8 @@ test("hosts without a component adapter keep today's panels, inspector and reque
     assert.ok(panel.textContent.includes("このサイトの部品はまだ登録されていません。"));
     await click("section · hero");
     assert.equal(button("部品にする"), undefined); assert.ok(!text().includes("共通部品"));
-    assert.equal(document.querySelector(".e-hold"), null); assert.equal(button("公開前の確認").getAttribute("title"), null);
-    await click("公開前の確認"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
+    assert.equal(document.querySelector(".e-hold"), null); assert.equal(button("公開").getAttribute("title"), "公開前に対象と差分を確認");
+    await click("公開"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
   } finally { await app.cleanup(); }
 });
 
@@ -224,7 +224,7 @@ test("部品にする registers the selection and saves the library before the p
     assert.equal(dialog(), null);
     assert.ok(layerButton("紹介セクション")); assert.ok(text().includes("この部品にはページごとに変えられる値がありません。「部品を編集」で設定できます。"));
     assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
-    assert.equal(button("公開前の確認").disabled, true);
+    assert.equal(button("公開").disabled, true);
     await click("下書き保存");
     assert.deepEqual(app.calls.order.filter((call) => call.startsWith("save")), ["saveLibrary", "saveDraft"]);
     assert.equal(app.calls.librarySaves[0].expectedVersion, "lib-1"); assert.equal(app.calls.librarySaves[0].siteId, "demo");
@@ -232,7 +232,7 @@ test("部品にする registers the selection and saves the library before the p
     assert.deepEqual([created.kind, created.version, created.root.id, created.root.tag], ["section", 1, "n1", "section"]);
     const draft = parsePageDocument(app.calls.saves[0].document, {}, { components: sent });
     assert.deepEqual(draft.body[1], { type: "instance", id: "hero", component: created.id });
-    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, false);
+    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開").disabled, false);
     // 部品とページの履歴は別。ページが使う部品を消す取り消しは止め、ページ側を戻した後なら部品も戻せる。
     await openPanel(); await click(button("編集", card("紹介セクション"))); await loadCanvas();
     await click("元に戻す"); assert.ok(text().includes("共通部品とページの内容が合わなくなるため、この操作はできません。")); assert.ok(card("紹介セクション"));
@@ -248,7 +248,7 @@ test("master edits reach the page instance, history and banner, and bump the sav
   try {
     await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
     assert.equal(document.querySelector(".e-part-banner [role=status]").textContent, "◇ 共通部品「サイトヘッダー」を編集中 · 保存すると使用中の3文書に反映されます");
-    assert.ok(card("サイトヘッダー").textContent.includes("編集中")); assert.equal(button("公開前の確認").disabled, true);
+    assert.ok(card("サイトヘッダー").textContent.includes("編集中")); assert.equal(button("公開").disabled, true);
     assert.ok(text().includes("部品の設定")); assert.ok(text().includes("サイトの共通枠共通枠")); assert.ok(text().includes("別ページテンプレート")); assert.ok(text().includes("ホームページ（編集中・未保存を含む）"));
     await click("a · n2"); await change(input("テキスト"), "トップ");
     assert.equal(rendered("n2").textContent, "トップ"); assert.equal(document.querySelector(".e-status").textContent, "未保存の変更あり");
@@ -257,13 +257,13 @@ test("master edits reach the page instance, history and banner, and bump the sav
     await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
     assert.equal(document.querySelector(".e-part-banner"), null);
     assert.equal(rendered("top_nav--n2").textContent, "トップ");
-    assert.equal(button("公開前の確認").disabled, true); assert.equal(document.querySelector(".e-hold").textContent, "部品の変更を保存してから公開を確認してください。");
+    assert.equal(button("公開").disabled, true); assert.equal(document.querySelector(".e-hold").textContent, "部品の変更を保存してから公開を確認してください。");
     await click("下書き保存");
     assert.equal(app.calls.saves.length, 0, "an unchanged page is not saved");
     const sent = app.calls.librarySaves[0].library;
     assert.deepEqual(sent.components.map(({ id, version }) => [id, version]), [["spare", 1], ["section_heading", 1], ["site_header", 2]]);
     assert.equal(sent.components.at(-1).root.children[0].children[0].text, "トップ");
-    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, false); assert.deepEqual(app.calls.usage, ["demo", "demo"]);
+    assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開").disabled, false); assert.deepEqual(app.calls.usage, ["demo", "demo"]);
     // ダブルクリックで、インスタンス内の対応するノードを選んだ状態で部品の編集を開く。
     await canvasEvent("top_nav--n3", "click"); await editorTab("設定"); assert.equal(input("2つ目のリンク")?.value, "紹介");
     await canvasEvent("top_nav--n3", "dblclick"); await loadCanvas();
@@ -381,15 +381,15 @@ test("library save conflicts and failures keep both edits and skip the page save
 test("release requests bind componentsVersion and publishing waits for saved components", async () => {
   const app = await setup();
   try {
-    await click("公開前の確認"); assert.equal(app.calls.prepares[0].componentsVersion, "lib-1");
+    await click("公開"); assert.equal(app.calls.prepares[0].componentsVersion, "lib-1");
     const affected = dialog().querySelector(".e-affected");
     assert.ok(affected.textContent.includes("影響する共通部品・ページ・サイト設定")); assert.ok(affected.textContent.includes("共通部品サイトヘッダーこのページで1か所に配置"));
     await click("編集に戻る");
     await openPanel(); await click(button("複製", card("予備の帯"))); assert.ok(card("予備の帯 のコピー"));
-    assert.equal(button("公開前の確認").disabled, true); assert.equal(button("戻す内容を確認").disabled, true);
+    assert.equal(button("公開").disabled, true); assert.equal(button("戻す内容を確認").disabled, true);
     assert.equal(document.querySelector(".e-hold").textContent, "部品の変更を保存してから公開を確認してください。");
-    await click("下書き保存"); assert.equal(button("公開前の確認").disabled, false);
-    await click("公開前の確認"); assert.equal(app.calls.prepares[1].componentsVersion, "lib-2");
+    await click("下書き保存"); assert.equal(button("公開").disabled, false);
+    await click("公開"); assert.equal(app.calls.prepares[1].componentsVersion, "lib-2");
     await act(async () => dialog().querySelector('input[type="checkbox"]').click()); await click("この内容を公開");
     assert.equal(app.calls.releases[0].componentsVersion, "lib-2");
     await click(button("複製", card("予備の帯")));
@@ -441,7 +441,7 @@ test("a failed library read shows a notice and still loads pages without compone
     assert.deepEqual(app.calls.order, ["readLibrary", "listPages", "readDocument"]); assert.deepEqual(app.calls.usage, []);
     assert.equal(input("ページタイトル").value, fixture.title);
     await click("section · hero"); assert.equal(button("部品にする"), undefined);
-    await click("公開前の確認"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
+    await click("公開"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
   } finally { await app.cleanup(); }
 });
 
@@ -509,13 +509,13 @@ test("version history and the 409 comparison read page documents with instances 
 test("hover styles edit an instance's outer box on the page and nodes inside a component master", async () => {
   const app = await setup();
   try {
-    await click("◇ サイトヘッダー"); await editorTab("変形"); await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");
+    await click("◇ サイトヘッダー"); await editorTab("変形"); await change(stateSelect(), "hover"); await change(input("背景色", right()), "#eef3ef");
     assert.ok(canvasExtra().includes('[data-nw-node="top_nav"]') && canvasExtra().includes("background-color:#eef3ef"), "the hover look is forced on the instance root");
-    await click(stateButton("通常"));
+    await change(stateSelect(), "normal");
     await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
-    await click("a · n2"); await editorTab("変形"); await click(stateButton("ホバー")); await change(input("文字色", right()), "#ff0000");
+    await click("a · n2"); await editorTab("変形"); await change(stateSelect(), "hover"); await change(input("文字色", right()), "#ff0000");
     assert.ok(canvasExtra().includes('[data-nw-node="n2"]') && canvasExtra().includes("color:#ff0000"));
-    await click(stateButton("通常")); await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
+    await change(stateSelect(), "normal"); await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
     await click("下書き保存");
     assert.deepEqual(app.calls.saves[0].document.body[0].style.states.hover, { backgroundColor: "#eef3ef" });
     assert.deepEqual(app.calls.librarySaves[0].library.components.find((component) => component.id === "site_header").root.children[0].style.states.hover, { color: "#ff0000" });

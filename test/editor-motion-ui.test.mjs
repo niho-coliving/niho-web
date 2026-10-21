@@ -14,7 +14,7 @@ const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
 const group = (name, root = right()) => root.querySelector(`[role="group"][aria-label="${name}"]`);
-const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text);
+const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? root.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
 const check = (text, root = right()) => [...root.querySelectorAll("label.e-check")].find((node) => node.textContent === text)?.querySelector("input");
@@ -49,20 +49,22 @@ async function setup(options = {}) {
   await act(async () => frame().dispatchEvent(new dom.window.Event("load")));
   return { calls, stored: () => stored, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
-const stateButton = (name) => right().querySelector(`[role="group"][aria-label="編集する状態"] button[title="${name}"]`);
+const stateSelect = () => right().querySelector('select[aria-label="条件スタイル"]');
 
 test("a link's hover and focus look is created with the keyboard, forced on the canvas, saved and reproduced in published CSS", async () => {
-  const app = await setup();
+  const app = await setup({ props: { builder: { motions: [{ id: "quiet-pulse", label: "静かな強調", description: "説明的プリセット", style: { states: { focus: { scale: 1.04 } } } }] } } });
   try {
     await click(button("a · link")); await editorTab("変形");
     const transformText = right().textContent;
+    assert.equal(input("動きのプリセット", right()), undefined);
+    assert.ok(!transformText.includes("説明的プリセット"));
     assert.ok(transformText.indexOf("イージング") < transformText.indexOf("時間") && transformText.indexOf("時間") < transformText.indexOf("遅延"));
     assert.ok(group("移動") && group("拡大・縮小") && group("傾き"));
-    const hover = stateButton("ホバー");
-    assert.equal(hover.tagName, "BUTTON"); assert.equal(hover.type, "button"); assert.equal(hover.getAttribute("aria-pressed"), "false"); assert.ok(hover.tabIndex >= 0);
-    hover.focus(); assert.equal(document.activeElement, hover);
-    await click(hover);
-    assert.ok(right().textContent.includes("ホバー中に変える見た目だけを表示しています。"));
+    const condition = stateSelect();
+    assert.deepEqual([...condition.options].map((option) => option.textContent), ["通常", "ホバー", "フォーカス", "押下中"]);
+    assert.equal(right().querySelector('[role="group"][aria-label="編集する状態"]'), null);
+    await change(condition, "hover"); assert.equal(condition.value, "hover"); assert.equal(condition.title, "ホバー中の見た目を編集");
+    assert.equal(right().querySelector(".e-state-note"), null);
     assert.equal(field("幅", right()), undefined); assert.equal(right().querySelector('[aria-label="編集する幅"]'), null);
     assert.equal(check("キーボードのフォーカス時も同じ見た目にする").checked, true);
     input("文字色", right()).focus();
@@ -70,7 +72,7 @@ test("a link's hover and focus look is created with the keyboard, forced on the 
     await change(input("Y", group("移動")), "-2");
     assert.ok(canvasExtra().includes('[data-nw-node="link"]{color:#c0392b;translate:0 -2px;}'), "the canvas shows the hover look without a pointer");
     assert.ok(canvasExtra().includes("*{animation:none!important;transition:none!important}"));
-    await click(stateButton("通常"));
+    await change(stateSelect(), "normal");
     await editorTab("ボックス"); assert.ok(input("幅", right()));
     await editorTab("変形");
     await change(input("時間", right()), "0.2");
@@ -108,7 +110,7 @@ test("a section hidden only on tablets is marked in layers, cannot hide everywhe
     await click(button("section · hero")); await editorTab("設定");
     await toggle(check("タブレット 768px〜"));
     await change(document.querySelector('[aria-label="表示幅"]'), "768");
-    const layer = [...document.querySelectorAll(".e-layer")].find((node) => node.textContent.startsWith("section · hero"));
+    const layer = document.querySelector('[data-node-id="hero"]');
     assert.ok(layer.classList.contains("is-hidden-here")); assert.ok(layer.textContent.includes("この幅で非表示"));
     await toggle(check("基本")); await toggle(check("PC 1280px〜"));
     assert.ok(document.body.textContent.includes("どこかの幅では表示してください。"));
@@ -149,7 +151,7 @@ test("motion is stopped while editing, replays on demand and in preview, where s
     assert.ok(!canvasExtra().includes("animation:none"));
     assert.notEqual(frame().contentDocument.querySelector("[data-nw-scope]"), before, "the page is drawn again so the appear effect plays");
     await click(button("アニメーションを再生"));
-    await click(button("a · link")); await editorTab("変形"); await click(stateButton("ホバー"));
+    await click(button("a · link")); await editorTab("変形"); await change(stateSelect(), "hover");
     assert.ok(canvasExtra().includes('[data-nw-node="link"]{color:#c0392b;}'));
     await click(button("プレビュー"));
     assert.equal(button("アニメーションを再生").getAttribute("aria-pressed"), "true"); assert.equal(button("アニメーションを再生").disabled, true);
@@ -177,15 +179,33 @@ test("toggle and carousel presets are inserted from the palette and the canvas n
   } finally { await app.cleanup(); }
 });
 
+test("a host insertion catalog reaches the real palette and uses unique IDs for the whole subtree", async () => {
+  const builder = { insertions: [{ id: "feature-card", label: "特徴カード", group: "カスタム", glyph: "◇", create: ({ id }) => ({
+    type: "element", id: id(), tag: "article", children: [
+      { type: "element", id: id(), tag: "h2", children: [{ type: "text", text: "特徴" }] },
+      { type: "element", id: id(), tag: "p", children: [{ type: "text", text: "説明" }] }
+    ]
+  }) }] };
+  const app = await setup({ props: { builder } });
+  try {
+    const labels = [...document.querySelectorAll('[aria-label="要素を追加"] button')].map((node) => node.textContent);
+    assert.ok(!labels.some((label) => /横並び|グリッド|リスト/.test(label)), "追加構造はhostが明示した場合だけ表示する");
+    const preset = [...document.querySelectorAll('[aria-label="要素を追加"] button')].find((node) => node.textContent.endsWith("特徴カード"));
+    await click(preset); await click(button("下書き保存"));
+    const card = app.calls.saves[0].document.body.at(-1), ids = [card.id, ...card.children.map((child) => child.id)];
+    assert.equal(card.tag, "article"); assert.equal(new Set(ids).size, ids.length); assert.ok(ids.every((id) => /^node_\d+$/.test(id)));
+  } finally { await app.cleanup(); }
+});
+
 test("business blocks show motion controls only for permitted keys", async () => {
   const doc = structuredClone(fixture); doc.body.push({ type: "component", id: "notice", block: "Notice", props: {} });
   const blocks = { Notice: { label: "お知らせ", props: {}, styleProperties: ["backgroundColor", "states"], component: () => createElement("p", null, "お知らせ") } };
   const app = await setup({ document: doc, props: { blocks } });
   try {
     await click(button("お知らせ · notice")); await editorTab("変形");
-    assert.ok(stateButton("ホバー"));
+    assert.ok(stateSelect());
     assert.equal(input("登場の効果", right()), undefined); assert.equal(check("基本"), undefined); assert.equal(input("回転", right()), undefined);
-    await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");
+    await change(stateSelect(), "hover"); await change(input("背景色", right()), "#eef3ef");
     await click(button("下書き保存"));
     assert.deepEqual(app.calls.saves[0].document.body.at(-1).style, { states: { hover: { backgroundColor: "#eef3ef" }, focus: { backgroundColor: "#eef3ef" } } });
   } finally { await app.cleanup(); }
