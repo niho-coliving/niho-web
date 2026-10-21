@@ -5,6 +5,7 @@ import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
 import { ExperienceEditor } from "./experience-editor.js";
+import { KamakuraEditor } from "./kamakura-editor.js";
 
 type Role = "owner" | "editor";
 type Screen =
@@ -162,6 +163,10 @@ function dateLabel(value: string): string {
 }
 
 function roleLabel(value: Role): string { return value === "owner" ? "オーナー" : "編集者"; }
+
+function editorEnabled(project: Project): boolean {
+  return project.id === "project-experience" && project.site.id === "experience" || project.id === "project-kamakura" && project.site.id === "kamakura";
+}
 
 function Notice({ title, children, retry }: { readonly title: string; readonly children: string; readonly retry?: () => void }) {
   return <main className="studio-state"><p className="studio-kicker">NIHO WEB</p><h1>{title}</h1><p>{children}</p>{retry && <button type="button" onClick={retry}>再試行</button>}</main>;
@@ -355,7 +360,7 @@ function App() {
   }), [expire]);
 
   const openEditor = useCallback((project: Project) => {
-    if (project.id === "project-experience" && project.site.id === "experience") {
+    if (editorEnabled(project)) {
       window.location.assign(`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}/editor`);
       return;
     }
@@ -384,7 +389,9 @@ function App() {
         : selected && screen.kind === "editor"
           ? selected.id === "project-experience" && selected.site.id === "experience"
             ? <ExperienceEditor project={selected} />
-            : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
+            : selected.id === "project-kamakura" && selected.site.id === "kamakura"
+              ? <KamakuraEditor project={selected} />
+              : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
           ? <>
               <ProjectDashboard
@@ -393,7 +400,7 @@ function App() {
                 onBackToProjects={() => navigate({ kind: "directory" })}
                 onOpenEditor={openEditor}
                 onOpenSettings={() => undefined}
-                editorAction={selected.id === "project-experience" && selected.site.id === "experience" ? "enabled" : "pending"}
+                editorAction={editorEnabled(selected) ? "enabled" : "pending"}
                 settingsAction="disabled"
               />
               <MemberAdministration key={`${selected.id}:${selected.site.id}`} project={selected} expire={expire} />
@@ -404,14 +411,14 @@ function App() {
               onOpenDashboard={(project) => navigate({ kind: "dashboard", projectId: project.id, siteId: project.site.id })}
               onOpenEditor={openEditor}
               createAction="disabled"
-              editorAction={(project) => project.id === "project-experience" && project.site.id === "experience" ? "enabled" : "pending"}
+              editorAction={(project) => editorEnabled(project) ? "enabled" : "pending"}
               memberDetails="hidden"
             />}
     </div>
     {pendingProject && <div className="studio-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingProject(null); }}>
       <section className="studio-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-pending-title">
         <p className="studio-kicker">{pendingProject.site.name}</p><h2 id="editor-pending-title">エディター接続待ち</h2>
-        <p>鎌倉サイトの編集 API はまだ Studio に接続されていません。現在、このサイトでは編集・保存・公開を利用できません。</p>
+        <p>このサイトの編集 API はまだ Studio に接続されていません。現在、このサイトでは編集・保存・公開を利用できません。</p>
         <button type="button" autoFocus onClick={() => setPendingProject(null)}>閉じる</button>
       </section>
     </div>}
