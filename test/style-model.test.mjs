@@ -68,6 +68,9 @@ test("site style impact compares pages with their component instances expanded",
   // 部品の中だけで使う値も、入れ子の部品の中の値も、置いたページの見た目を変える。
   assert.equal(affectedBySiteStyles(placing("badge"), site, changed, library), true);
   assert.equal(affectedBySiteStyles(placing("card"), site, changed, library), true);
+  // 表示用ラベルだけ変えても、部品が描く CSS は変わらない。
+  assert.equal(affectedBySiteStyles(placing("badge"), { tokens: {} }, { tokens: { brand: { ...color("#336655"), label: "ブランド色" } } }, library), false);
+  assert.equal(affectedBySiteStyles(placing("badge"), { tokens: { brand: { ...color("#336655"), label: "旧名称" } } }, { tokens: { brand: { ...color("#336655"), label: "新名称" } } }, library), false);
   // ページの同名の定義が優先されるページと、部品を置かないページは変わらない。
   assert.equal(affectedBySiteStyles(placing("badge", { tokens: { brand: color("#336655") } }), site, changed, library), false);
   assert.equal(affectedBySiteStyles(parsePageDocument(fixture, {}, { components: library }), site, changed, library), false);

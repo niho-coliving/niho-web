@@ -110,7 +110,8 @@ export function affectedBySiteStyles(document: PageDocument, before: SiteStyles,
   const resolve = (page: PageDocument, styles: SiteStyles) => { const resolved = resolvePageStyles(page, styles); return library ? expandDocument(resolved, library).document : resolved; };
   const previous = resolve(document, before), next = resolve(detached, after);
   for (const name of new Set([...Object.keys(previous.tokens), ...Object.keys(next.tokens)])) {
-    if (same(previous.tokens[name], next.tokens[name])) continue;
+    const previousToken = previous.tokens[name], nextToken = next.tokens[name];
+    if (previousToken?.type === nextToken?.type && previousToken?.value === nextToken?.value) continue;
     const usage = tokenUsage(previous, name);
     if (usage.nodes.length || usage.textStyles.some((entry) => textStyleUsage(previous, entry.name).length)) return true;
   }
