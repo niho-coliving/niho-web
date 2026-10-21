@@ -115,6 +115,9 @@ test("dashboard shows only selected Site facts, zero versus unknown, analytic da
   const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(async (target) => { requests.push(target); return dashboard(); }) });
   try {
     assert.deepEqual(requests, [{ projectId: selected.id, siteId: selected.site.id }]);
+    assert.equal(document.querySelector(".pv-project-identity h1")?.textContent, selected.name);
+    assert.equal(document.querySelector(".pv-page-title")?.tagName, "H2");
+    assert.equal(document.querySelector(".pv-panel h3")?.textContent, "公開情報");
     assert.ok(document.body.textContent.includes("公開中")); assert.ok(document.body.textContent.includes("合成ページを更新"));
     assert.equal(document.querySelector(".pv-stats dd").textContent, "7"); assert.equal(document.querySelectorAll(".pv-stats dd")[1].textContent, "未取得");
     const summary = document.querySelector(".pv-analytics-summary");
@@ -175,12 +178,13 @@ test("dashboard back navigation stays available while its read is pending", asyn
   let resolve; const selected = project();
   const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(() => new Promise((done) => { resolve = done; })) });
   try {
-    assert.equal(document.querySelector(".nw-project-dashboard h1")?.textContent, "プロジェクトダッシュボード");
+    assert.equal(document.querySelector(".pv-project-identity h1")?.textContent, "プロジェクトダッシュボード");
     assert.ok(button("プロジェクト一覧へ戻る"));
     await click("プロジェクト一覧へ戻る"); assert.equal(app.calls.backs, 1);
     await act(async () => resolve({ status: "forbidden", projectId: selected.id, siteId: selected.site.id })); await flush();
-    assert.equal(document.querySelector(".nw-project-dashboard h1")?.textContent, "プロジェクトダッシュボード");
+    assert.equal(document.querySelector(".pv-project-identity h1")?.textContent, "プロジェクトダッシュボード");
     assert.ok(button("プロジェクト一覧へ戻る")); assert.ok(document.body.textContent.includes("権限がありません"));
+    assert.equal(document.querySelector(".pv-project-identity h1")?.textContent, "プロジェクトダッシュボード");
   } finally { await app.cleanup(); }
 });
 
@@ -195,7 +199,7 @@ test("dashboard mismatch, failure and permission loss clear all sensitive facts 
     }
     result = dashboard(); await click("再試行"); assert.ok(button("デザインエディタ"));
     result = { status: "forbidden", projectId: "project_one", siteId: "site_one" }; await click("再読込");
-    assert.ok(document.body.textContent.includes("権限がありません")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(button("設定"), undefined);
+    assert.ok(document.body.textContent.includes("権限がありません")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(document.querySelector(".pv-project-identity h1")?.textContent, "プロジェクトダッシュボード"); assert.equal(button("設定"), undefined);
     fail = true; await click("再試行"); assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(document.body.textContent.includes("secret"), false);
   } finally { await app.cleanup(); }
 });

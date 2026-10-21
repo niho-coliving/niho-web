@@ -10,7 +10,7 @@ export const projectViewCss = `
 .nw-project-dashboard .pv-project-bar{position:relative;z-index:2;display:flex;align-items:center;gap:18px;min-height:64px;padding:0 22px;background:var(--pv-surface);border-bottom:1px solid var(--pv-border)}
 .nw-project-dashboard .pv-project-back{width:38px;height:38px;flex:none;border:0;background:transparent;border-radius:50%;font-size:24px;padding:0}
 .nw-project-dashboard .pv-project-identity{display:flex;flex:0 1 270px;min-width:110px;flex-direction:column;line-height:1.3;overflow:hidden}
-.nw-project-dashboard .pv-project-identity strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:650}
+.nw-project-dashboard .pv-project-identity h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;font-size:13px;line-height:1.3;font-weight:650}
 .nw-project-dashboard .pv-project-identity span{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--pv-muted);font-size:11px}
 .nw-project-dashboard .pv-project-identity i{width:7px;height:7px;flex:none;border-radius:50%;background:var(--pv-border)}
 .nw-project-dashboard .pv-project-identity[data-publication=published] i{background:#5dd54a}
@@ -26,9 +26,8 @@ export const projectViewCss = `
 .nw-project-dashboard .pv-dashboard-content{width:min(100%,992px);margin:0 auto;padding:24px 36px 36px}
 .nw-project-dashboard .pv-page-title{margin:0 0 24px;padding:0 0 18px;border-bottom:1px solid var(--pv-border);font-size:25px;font-weight:700}
 .nw-project-dashboard .pv-panel{border-color:var(--pv-border);border-radius:8px;box-shadow:0 1px 3px #00000008;padding:20px}
-.nw-project-dashboard .pv-panel h2{font-size:16px}
+.nw-project-dashboard .pv-panel h3{margin:0 0 12px;font-size:16px}
 .nw-project-dashboard .pv-home-nav button:focus-visible,.nw-project-dashboard .pv-global-nav button:focus-visible{outline-offset:-3px}
 @media(max-width:900px){.nw-project-dashboard .pv-project-bar{gap:10px;padding:0 14px}.nw-project-dashboard .pv-project-identity{flex:0 1 190px}.nw-project-dashboard .pv-global-nav button{padding:0 10px}.nw-project-dashboard .pv-dashboard-layout{grid-template-columns:1fr;min-height:0}.nw-project-dashboard .pv-home-nav{flex-direction:row;overflow-x:auto;padding:10px 14px;border-right:0;border-bottom:1px solid var(--pv-border)}.nw-project-dashboard .pv-home-nav button{flex:0 0 auto;min-width:max-content}.nw-project-dashboard .pv-dashboard-content{width:100%;padding:22px 18px 30px}}
 @media(max-width:600px){.nw-project-dashboard .pv-project-bar{min-height:104px;display:grid;grid-template-columns:32px minmax(0,1fr) auto;grid-template-rows:46px 42px;gap:0 8px;padding:4px 10px}.nw-project-dashboard .pv-project-back{grid-column:1;grid-row:1;width:30px;height:30px}.nw-project-dashboard .pv-project-identity{grid-column:2;grid-row:1;min-width:0}.nw-project-dashboard .pv-editor-link{grid-column:3;grid-row:1;font-size:11px;padding:6px 8px}.nw-project-dashboard .pv-global-nav{grid-column:1/-1;grid-row:2;justify-content:flex-start;margin:0 -4px}.nw-project-dashboard .pv-global-nav button{padding:0 11px;font-size:12px}.nw-project-dashboard .pv-dashboard-content{padding:18px 12px 24px}.nw-project-dashboard .pv-page-title{font-size:21px;margin-bottom:18px}.nw-project-dashboard .pv-panel{padding:14px}.nw-project-dashboard .pv-home-nav{padding:8px 10px}.nw-project-dashboard .pv-home-nav button{padding:7px 10px}}
-.nw-project-dashboard .pv-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 `;
