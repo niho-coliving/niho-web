@@ -8,6 +8,12 @@ const length = (v: string) => {
   const match = /^(?:0|-?(\d+(?:\.\d+)?|\.\d+)(px|rem|em|%|vh|vw|vmin|vmax|ch))$/.exec(v);
   return !!match && (v === "0" || Number(match[1]) <= lengthLimits[match[2]!]!);
 };
+// 固定値の percent - px だけを dimension の calc として許可する。任意の CSS
+// 関数や変数は通さず、STUDIO の安全な幅変換で必要な式だけを保持する。
+const calculatedDimension = (v: string) => {
+  const match = /^calc\(\s*(\d+(?:\.\d+)?|\.\d+)%\s*([+-])\s*(\d+(?:\.\d+)?|\.\d+)px\s*\)$/.exec(v);
+  return !!match && Number(match[1]) <= 1000 && Number(match[3]) <= lengthLimits.px!;
+};
 const positiveLength = (v: string) => length(v) && !v.startsWith("-");
 const color = (v: string) => /^(?:#[\da-f]{3}|#[\da-f]{4}|#[\da-f]{6}|#[\da-f]{8}|transparent|currentColor|black|white|red|green|blue|gray|grey|navy|teal|orange|purple|yellow|rebeccapurple)$/i.test(v);
 const fontFamily = (v: string) => /^[A-Za-z][A-Za-z0-9 -]*(?:,\s*[A-Za-z][A-Za-z0-9 -]*)*$/.test(v);
@@ -69,7 +75,7 @@ export const origins = ["left top", "center top", "right top", "left center", "c
 
 /** unit: 数値だけの指定に付ける単位（px は px フラグ）。 */
 type PropertySpec = { kind?: TokenKind; px?: boolean; unit?: "deg" | "ms"; valid: (value: string) => boolean };
-const dimension: PropertySpec = { kind: "length", px: true, valid: (v) => positiveLength(v) || ["auto", "min-content", "max-content", "fit-content", "none"].includes(v) };
+const dimension: PropertySpec = { kind: "length", px: true, valid: (v) => positiveLength(v) || calculatedDimension(v) || ["auto", "min-content", "max-content", "fit-content", "none"].includes(v) };
 const offset: PropertySpec = { kind: "length", px: true, valid: (v) => length(v) || v === "auto" };
 const nonnegative: PropertySpec = { kind: "length", px: true, valid: positiveLength };
 const margin: PropertySpec = { kind: "length", px: true, valid: (v) => shorthand(v, true, true) };
