@@ -28,6 +28,7 @@ import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
 import { bumpChangedComponentVersions, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
 import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
+import { BlockSlotInspector, BlockSlotList, applyToSlot, declaredSlot, previewRegistry, slotFromTarget } from "./block-slot-panel.js";
 import {
   acceptSavedLibrary, commitLibrary, componentProblem, exposeComponentProp, fitsLibrary, libraryFingerprint, librarySessionFrom, parseUsage, placementProblem,
   relabelComponentProp, releaseAffected, resolveCanvas, summarizeUsage, textStylePaths, travelLibrary, usageText, type LibrarySession
@@ -65,9 +66,11 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, assets, motionCss, replay, rendered, origins, openInstance }: {
-  document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; selectedNodeId?: string; select: (path: NodePath | null, nodeId?: string) => void;
+function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, assets, motionCss, replay, rendered, origins, openInstance }: {
+  document: PageDocument; blocks: EditorBlockRegistry; width: number; selection: NodePath | null; selectedNodeId?: string; select: (path: NodePath | null, nodeId?: string, slot?: string | null) => void;
   canEditNode?: (nodeId: string) => boolean;
+  slot: string | null;
+
   breakpoint: number | "base";
   dragItem: { current: DragItem | null }; drop: (item: DragItem, place: DropPlace) => void;
   pending: (key: string, value: boolean) => void;
@@ -88,9 +91,14 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
   const selected = selectedNodeId ? renderedEntries.find(({ node }) => node.type !== "text" && node.id === selectedNodeId)?.node : selection ? nodeAt(document, selection) : undefined;
   const selectedId = selected?.type === "text" && selection && selection.length > 1 ? nodeAt(document, selection.slice(0, -1)) : selected;
   const resizePath = selected?.type === "text" ? selection?.slice(0, -1) : selection;
-  const canResize = structureEditable && !preview && !editingId && selectedId && selectedId.type !== "text" && !!resizePath?.length &&
-    !lockReason(document, resizePath, breakpoint === "base" ? "style.base.width" : "style.responsive", locks) &&
-    !lockReason(document, resizePath, breakpoint === "base" ? "style.base.height" : "style.responsive", locks);
+  // 表示領域を選んでいる間は、幅と高さを変えられる領域だけ、その最初の要素にサイズ変更の枠を出す。
+  const slotSize = slot && selectedId?.type === "component" ? declaredSlot(blocks[selectedId.block], slot)?.style ?? [] : undefined;
+  const sizeField = (property: "width" | "height") => `${slot ? `slots.${slot}` : "style"}.${breakpoint === "base" ? `base.${property}` : "responsive"}`;
+  const canResize = structureEditable && !preview && !editingId && selectedId && selectedId.type !== "text" && !!resizePath?.length && (!slotSize || slotSize.includes("width") && slotSize.includes("height")) &&
+    !lockReason(document, resizePath, sizeField("width"), locks) &&
+    !lockReason(document, resizePath, sizeField("height"), locks);
+  const sizeTarget = (id: string) => { const element = body && Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === id); return slot ? element?.querySelector<HTMLElement>(`[data-nw-slot="${slot}"]`) ?? undefined : element ?? undefined; };
+
   const editing = editingId ? entries.find(({ node }) => node.type !== "text" && node.id === editingId) : undefined;
   // 部品の内側に描いたノードは、文書に置いたインスタンス（ID を引き継いだ外枠）として扱う。
   const ownerElement = (element: HTMLElement | null): HTMLElement | null => {
@@ -99,14 +107,14 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
   };
   useEffect(() => {
     if (!body || !canResize || !selectedId) { setHandleRect(null); return; }
-    const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === selectedId.id);
+    const element = sizeTarget(selectedId.id);
     if (!element) { setHandleRect(null); return; }
     const update = () => { const rect = element.getBoundingClientRect(); setHandleRect({ left: rect.left + (body.ownerDocument.defaultView?.scrollX ?? 0), top: rect.top + (body.ownerDocument.defaultView?.scrollY ?? 0), width: rect.width, height: rect.height }); };
     update();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update); observer?.observe(element);
     body.ownerDocument.defaultView?.addEventListener("scroll", update);
     return () => { observer?.disconnect(); body.ownerDocument.defaultView?.removeEventListener("scroll", update); };
-  }, [body, canResize, selectedId && "id" in selectedId ? selectedId.id : undefined, width, document]);
+  }, [body, canResize, selectedId && "id" in selectedId ? selectedId.id : undefined, width, document, slot]);
   function endResize(commit: boolean) {
     const current = resizing.current; if (!current) return;
     const width = Number.parseFloat(current.element.style.width) || current.width, height = Number.parseFloat(current.element.style.height) || current.height;
@@ -208,7 +216,8 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
       const target = event.target as HTMLElement;
       const element = typeof target.closest === "function" ? target.closest<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node]`) : null;
       const id = element?.dataset.nwNode, entry = entries.find(({ node }) => node.type !== "text" && node.id === id);
-      select(entry?.path ?? null, id);
+      select(entry?.path ?? null, id, structureEditable && element && entry?.node.type === "component" ? slotFromTarget(target, element, blocks[entry.node.block]?.slots) : null);
+
     }} onDoubleClickCapture={(event) => {
       if (!editable || preview || editingId) return;
       // インスタンスの中は部品の編集を開き、最上位の部品の中で対応するノード（入れ子の部品ならそのインスタンス）を選ぶ。
@@ -228,7 +237,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
       onDragLeaveCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropPlace(null); }}
       onDropCapture={(event) => { event.preventDefault(); event.stopPropagation(); if (!editable || preview || !dragItem.current) return; const place = placeAt(event); drop(dragItem.current, place); dragItem.current = null; setDropPlace(null); }}
       onSubmitCapture={(event) => { event.preventDefault(); event.stopPropagation(); }}>
-      <style>{`body{font-family:sans-serif;position:relative;}[data-nw-node]{cursor:pointer;}[data-nw-owner][data-nw-node]:is(section,div):empty{min-height:48px;outline:1px dashed #a4b9aa;}[contenteditable=true]{cursor:text!important;outline:2px solid #2d7356!important;outline-offset:3px;} ${selectedId && selectedId.type !== "text" ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"]{outline:2px ${selectedId.type === "instance" ? "dashed #5b46a8" : "solid #198558"}!important;outline-offset:2px;}` : ""}
+      <style>{`body{font-family:sans-serif;position:relative;}[data-nw-node]{cursor:pointer;}[data-nw-owner][data-nw-node]:is(section,div):empty{min-height:48px;outline:1px dashed #a4b9aa;}[contenteditable=true]{cursor:text!important;outline:2px solid #2d7356!important;outline-offset:3px;} ${selectedId && selectedId.type !== "text" ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"]{outline:2px ${selectedId.type === "instance" ? "dashed #5b46a8" : "solid #198558"}!important;outline-offset:2px;}` : ""}${selectedId?.type === "component" && slot ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"] [data-nw-slot="${slot}"]{outline:2px dashed #198558!important;outline-offset:2px;}` : ""}
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#34a66d;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#34a66d22;outline:2px dashed #198558;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#258858;box-shadow:0 0 0 1px #245b3f;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
       <style>{canvasAssetCss}</style>
@@ -236,7 +245,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
       <style>{motionCss}</style>
       {dropPlace && <div aria-hidden className={`nw-drop-marker${dropPlace.marker.inside ? " inside" : ""}`} style={{ left: dropPlace.marker.left, top: dropPlace.marker.top, width: dropPlace.marker.width, height: dropPlace.marker.height }} />}
       {canResize && handleRect && resizePath && <button type="button" className="nw-resize-handle" aria-label="ドラッグして要素のサイズを変更" title={`${Math.round(handleRect.width)} × ${Math.round(handleRect.height)} px`} style={{ left: handleRect.left + handleRect.width - 7, top: handleRect.top + handleRect.height - 7 }}
-        onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); const element = body.querySelector<HTMLElement>(`[data-nw-node="${selectedId.id}"]`); if (!element) return; const bounds = element.getBoundingClientRect(), computed = body.ownerDocument.defaultView?.getComputedStyle(element); resizing.current = { element, path: resizePath, x: event.clientX, y: event.clientY, width: Number.parseFloat(computed?.width ?? "") || bounds.width, height: Number.parseFloat(computed?.height ?? "") || bounds.height, inlineWidth: element.style.width, inlineHeight: element.style.height }; event.currentTarget.setPointerCapture(event.pointerId); }}
+        onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); const element = sizeTarget(selectedId.id); if (!element) return; const bounds = element.getBoundingClientRect(), computed = body.ownerDocument.defaultView?.getComputedStyle(element); resizing.current = { element, path: resizePath, x: event.clientX, y: event.clientY, width: Number.parseFloat(computed?.width ?? "") || bounds.width, height: Number.parseFloat(computed?.height ?? "") || bounds.height, inlineWidth: element.style.width, inlineHeight: element.style.height }; event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={(event) => { const current = resizing.current; if (!current) return; event.preventDefault(); current.element.style.width = `${Math.min(10000, Math.max(1, Math.round(current.width + event.clientX - current.x)))}px`; current.element.style.height = `${Math.min(10000, Math.max(1, Math.round(current.height + event.clientY - current.y)))}px`; }}
         onPointerUp={(event) => { event.preventDefault(); event.stopPropagation(); endResize(true); }} onPointerCancel={() => endResize(false)} />}
       {editingId && <div className="nw-text-toolbar" role="toolbar" aria-label="文字の装飾" contentEditable={false}>
@@ -257,6 +266,9 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
   const [selection, setSelection] = useState<NodePath | null>(null), [selectedLocalizationUnit, setSelectedLocalizationUnit] = useState<string | null>(null), [selectedCanvasNode, setSelectedCanvasNode] = useState<string | null>(null), [width, setWidth] = useState(1280);
+  // 選んだ業務ブロックの表示領域。of は選んだときの selection で、選択・部品の編集・ページ・サイトが変わると（同じノードを選び直しても）外れる。back は「ブロック全体に戻る」で戻った領域。
+  const [slotChoice, setSlotChoice] = useState<{ of: NodePath; name: string | null; back?: string } | null>(null);
+
   const [fieldEpoch, setFieldEpoch] = useState(0);
   const [breakpoint, setBreakpoint] = useState<number | "base">("base"), [notice, setNotice] = useState("");
   // 入力中のライブプレビュー。基準の文書が変わった（確定・undo/redo・保存・移動）時点で無効になる。
@@ -409,7 +421,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   // ページの移動では部品の変更を保持するため、部品の未保存はサイトの移動だけで確認する。
   function requestNavigation(next: Navigation) { if (blocked || next.type === "site" && siteSettings.busy) return; if (dirty || hasInput || next.type === "site" && (siteSettings.dirty || libraryDirty)) setNavigation(next); else navigate(next); }
   function requestInspector(next: Inspector) { if (next === inspector) return; if (manualInputPending) { setNavigation({ type: "inspector", inspector: next }); return; } setInspector(next); }
-  function select(path: NodePath | null) { if (manualInputPending && path) { setNavigation({ type: "node", path }); return; } if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setSelectedLocalizationUnit(null); setSelectedCanvasNode(null); setInspector(path ? "element" : "page"); setDraft(null); setStyleState("normal"); } }
+  function select(path: NodePath | null, slot: string | null = null) { if (manualInputPending && path) { setNavigation({ type: "node", path }); return; } if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!editBlocked) { setSelection(path); setSlotChoice(path && slot && !targetMode ? { of: path, name: slot } : null); setSelectedLocalizationUnit(null); setSelectedCanvasNode(null); setInspector(path ? "element" : "page"); setDraft(null); setStyleState("normal"); } }
+  /** 選択中の業務ブロックの表示領域を選ぶ。null は「ブロック全体に戻る」。 */
+  function chooseSlot(name: string | null) { if (hasInput) { setNotice("入力を適用するか取り消してから選択を変えてください。"); return; } if (!targetMode && !editBlocked && selection) { setSlotChoice({ of: selection, name, ...(!name && slotName ? { back: slotName } : {}) }); setDraft(null); setStyleState("normal"); } }
+
   /** 複数の操作は1回の履歴にまとめる。部品の編集中は部品の root を1つだけ持つ文書を編集し、ライブラリへ書き戻す。 */
   function apply(operation: EditorOperation | readonly EditorOperation[]): string | undefined {
     const operations: readonly EditorOperation[] = "type" in operation ? [operation] : operation;
@@ -431,12 +446,14 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       replace({ ...current, history: commitHistory(current.history, document) }); setDraft(null); setNotice(""); return undefined;
     } catch (error) { setDraft(null); return message(error); }
   }
-  function previewOperation(operation: EditorOperation | null) {
+  function previewOperation(operation: EditorOperation | readonly EditorOperation[] | null) {
     // 部品の編集中は部品の文書で、ページはインスタンスを検証できるようライブラリを渡して試す。
     const current = sessionRef.current, base = master ?? current?.history.present;
     if (!operation || !base || editBlocked) { setDraft(null); return; }
-    if (!master && targetMode && (!localization.context || localizedOperationProblem(current!.history.present, operation, localization.context.collection))) { setDraft(null); return; }
-    try { setDraft({ base, document: editDocument(base, operation, blocks, master ? [] : current?.locks ?? [], libraryRef.current?.history.present) }); } catch { /* 成功した入力だけを表示する */ }
+    const operations: readonly EditorOperation[] = "type" in operation ? [operation] : operation;
+    if (!master && targetMode && (!localization.context || operations.some((next) => localizedOperationProblem(current!.history.present, next, localization.context!.collection)))) { setDraft(null); return; }
+    try { setDraft({ base, document: operations.reduce((document, next) => editDocument(document, next, blocks, master ? [] : current?.locks ?? [], libraryRef.current?.history.present), base) }); } catch { /* 成功した入力だけを表示する */ }
+
   }
   /** ライブラリを変更する。編集中のページを展開できなくなる変更は受け付けない。 */
   function updateLibrary(change: (library: ComponentLibrary) => ComponentLibrary): string | undefined {
@@ -528,12 +545,18 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         replace({ ...latest, ...acknowledged, version: result.version });
       }
       if (sameSession()) { setProblem(null); setSavedAt(new Date()); setConflictView(0); }
-      if (localized) { localization.reloadPage(); localization.reloadSite(); }
+      if (localized) localization.reloadPage();
       if (!auto) setNotice(librarySaved ? "共通部品と下書きを保存しました。" : "下書きを保存しました。"); else if (hadProblem) setNotice("");
       pageSaved = true; return true;
     } catch (error) { if (!controller.signal.aborted) failed(classifySaveError(error), true); return false; }
     finally {
-      if (!controller.signal.aborted) { setBusy(""); if ((librarySaved || pageSaved) && libraryRef.current) refreshUsage(libraryRef.current.siteId); }
+      if (!controller.signal.aborted) {
+        setBusy("");
+        if (librarySaved || pageSaved) {
+          if (libraryRef.current) refreshUsage(libraryRef.current.siteId);
+          if (adapter.localization) localization.reloadSite();
+        }
+      }
       action.current = null;
     }
   }
@@ -636,6 +659,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const locks = document ? effectiveLocks(document, masterId ? [] : session?.locks ?? [], blocks) : [];
   const reason = (field: string) => document && selection ? lockReason(document, selection, field, locks) : undefined;
   const pathKey = `${fieldEpoch}-${selection?.join(".") ?? "page"}`;
+  const slotName = !targetMode && slotChoice?.name && slotChoice.of === selection && node?.type === "component" && declaredSlot(blocks[node.block], slotChoice.name) ? slotChoice.name : null;
+  const slotBack = slotChoice && slotChoice.of === selection && !slotChoice.name ? slotChoice.back : undefined, canvasBlocks = previewRegistry(blocks);
+  // 表示領域を選んでいる間は、選択中のブロックへの見た目の操作（キャンバスのサイズ変更・スタイルパネルの適用）をその領域へ写す。
+  const applyStyle = (operation: EditorOperation) => slotName && document && selection && "path" in operation && operation.path.join(".") === selection.join(".") ? applyToSlot(document, selection, slotName, blocks, operation, apply) : apply(operation);
   const tiers = document ? editorTiers(document, breakpoints) : [], tier = tiers.some((entry) => entry.key === breakpoint) ? breakpoint : "base";
   const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft?.base === document ? draft.document : document;
   const nextTier = tiers[tiers.findIndex((entry) => entry.key === tier) + 1], until = range === "only" ? nextTier?.start : undefined;
@@ -706,7 +733,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     if (!origin || !context) return undefined;
     return context.collection.units.find((unit) => unit.scope === "shared-component" && unit.ownerId === origin.component && unit.field.startsWith(`node.${origin.node}.`));
   }
-  function selectCanvas(_path: NodePath | null, id?: string) {
+  function selectCanvas(_path: NodePath | null, id?: string, slot: string | null = null) {
     if (!id) { select(null); return; }
     const unit = sharedUnitForCanvasNode(id);
     if (unit) {
@@ -715,7 +742,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       setSelection(null); setSelectedCanvasNode(id); setSelectedLocalizationUnit(unit.unitId); setInspector("localization"); setDraft(null); return;
     }
     const raw = document && walkNodes(document).find(({ node }) => node.type !== "text" && node.id === id)?.path;
-    if (raw) { if (manualInputPending) setNavigation({ type: "node", path: raw, canvasId: id }); else { select(raw); setSelectedCanvasNode(id); } return; }
+    if (raw) { if (manualInputPending) setNavigation({ type: "node", path: raw, canvasId: id }); else { select(raw, slot); setSelectedCanvasNode(id); } return; }
     const origin = canvasOrigins.get(id), instance = origin && document && walkNodes(document).find(({ node }) => node.type === "instance" && node.id === origin.instance)?.path;
     if (instance) { select(instance); if (targetMode) setSelectedCanvasNode(id); }
   }
@@ -946,13 +973,14 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
             <button disabled={targetMode || !selection || editBlocked || hasInput} onClick={moveToEnd}>指定先の末尾へ</button>
           </div>
         </section>
-        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <StyleLibrary document={document} selection={selection} apply={apply} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
+        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <StyleLibrary document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
         <section hidden={visiblePanel !== "assets"} aria-label="素材">{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} pickTitle={localizationAssetUnit ? "共通部品・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : "画像を選ぶ"} localUsage={localUsage}
-          actions={{ replace: !localizationAssetUnit && node?.type === "element" && node.tag === "img", background: !localizationAssetUnit && !targetMode && (node?.type === "component" || node?.type === "instance" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)), insert: !localizationAssetUnit && !targetMode && !!document }}
+          actions={{ replace: !localizationAssetUnit && node?.type === "element" && node.tag === "img", background: !slotName && !localizationAssetUnit && !targetMode && (node?.type === "component" || node?.type === "instance" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)), insert: !localizationAssetUnit && !targetMode && !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={(asset, action) => localizationAssetUnit ? applyLocalizationAsset(asset) : applyAsset(asset, action)} onClose={() => { setPicker(null); setLocalizationAssetUnit(null); }} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
           : <><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>
         <section hidden={visiblePanel !== "components"} aria-label="部品"><div className="e-panel-head"><h2>部品</h2><p>サイトで利用できる部品</p></div>
-          {targetMode ? <p className="e-help">共通部品の構造は原文側で編集してください。訳文は右側の「翻訳」で編集できます。</p> : components && <><ComponentPanel library={libraryPresent} failed={libraryFailed} visible={visiblePanel === "components" && !preview} blocks={blocks} editing={masterId} usage={usageSummary} usageLoading={usage === undefined}
+          {targetMode ? <p className="e-help">共通部品の構造は原文側で編集してください。訳文は右側の「翻訳」で編集できます。</p> : components && <><ComponentPanel library={libraryPresent} failed={libraryFailed} visible={visiblePanel === "components" && !preview} blocks={canvasBlocks} editing={masterId} usage={usageSummary} usageLoading={usage === undefined}
+
             insertableBlocks={insertableBlocks} canPlace={!!document && !editBlocked && !hasInput} disabled={libraryBlocked || hasInput} place={(id) => add(`instance:${id}`)}
             drag={(event, id) => startDrag(event, { kind: "palette", type: `instance:${id}` })} dragEnd={() => { dragItem.current = null; }} edit={(id) => openComponent(id)}
             rename={(id) => setComponentDialog({ type: "rename", componentId: id })} duplicate={(id) => reportProblem(updateLibrary((library) => duplicateComponent(library, id, blocks).library))}
@@ -967,17 +995,20 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage"><HistoryBar history={versions} restore={restoreRevision} rollbackHint={dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
         rollback={viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={blocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => apply({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+{document && shown && renderedCanvas && localizationReady ? <Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
         motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>
     <aside className="e-rail e-right" aria-label="インスペクタ">{versions.open ? <VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /> : <><div className="e-inspector-tabs" role="tablist" aria-label="設定の種類"><button type="button" role="tab" aria-selected={inspector === "element"} disabled={!node} onClick={() => requestInspector("element")}>要素</button><button type="button" role="tab" aria-selected={inspector === "page"} onClick={() => requestInspector("page")}>{masterId ? "部品" : "ページ"}</button><button type="button" role="tab" aria-selected={inspector === "site"} onClick={() => requestInspector("site")}>サイト</button>{targetMode && <button type="button" role="tab" aria-selected={inspector === "localization"} onClick={() => requestInspector("localization")}>翻訳</button>}</div>
       {inspector === "site" && <section className="e-inspector-content">{targetMode ? <p className="e-help">サイト共通設定とデザインは原文側で編集してください。</p> : <SiteSettingsPanel site={site} state={siteSettings} />}</section>}
       {inspector === "localization" && localization.context && document && <section className="e-inspector-content"><LocalizationPanel context={localization.context} document={document} disabled={blocked || dirty || libraryDirty || pageInputPending || !localizationReady} selectedUnit={selectedLocalizationUnit} run={runLocalizationCommand} refresh={localization.reloadAll} manualBuffer={localizationManual} setManualBuffer={setLocalizationManual} pickAsset={(unit) => { setPicker(null); setLocalizationAssetUnit(unit.unitId); }} /></section>}
       {inspector === "page" && !masterComponent && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked} targetMode={targetMode}
+
         operations={pageOperations} operationsDisabled={pageOperationsDisabled} unsaved={unsaved} start={startPageChange} />}</section>}
       {inspector === "page" && masterComponent && <ComponentSettings component={masterComponent} usage={usageSummary?.get(masterComponent.id)} usageLoading={usage === undefined} field={input} disabled={libraryBlocked || hasInput}
         rename={(name) => updateLibrary((library) => renameComponent(library, masterComponent.id, name, blocks))} setKind={(kind) => reportProblem(updateLibrary((library) => setComponentKind(library, masterComponent.id, kind, blocks)))}
         unpublish={(name) => reportProblem(updateLibrary((library) => setComponentProp(library, masterComponent.id, name, undefined, blocks)))} back={leaveComponent} />}
-      {inspector === "element" && <section className="e-inspector-content"><h2>{partGlyph(node)}{node ? label(node, blocks, names) : "要素を選択してください"}</h2>
+      {inspector === "element" && <section className="e-inspector-content">{slotName && node?.type === "component" && selection && document ? <BlockSlotInspector key={`${pathKey}-slot-${slotName}`} document={document} node={node} path={selection} slot={slotName} blocks={blocks}
+        saved={masterId ? savedMaster : session?.saved} back={() => chooseSlot(null)} apply={apply} preview={previewOperation} reason={reason} notify={setNotice} input={input}
+        style={{ tiers, tier, setTier: setBreakpoint, range, setRange, width, setWidth, pending, fieldKey: `${pathKey}-slot-${slotName}`, disabled: editBlocked, tierLocked: hasInput }} /> : <><h2>{partGlyph(node)}{node ? label(node, blocks, names) : "要素を選択してください"}</h2>
       {node?.type === "text" && selection && field("テキスト", node.text, (value) => ({ type: "text", path: selection, value }), "text", { multiline: true, reason: document ? lockReason(document, selection, "text", locks) : undefined })}
       {node?.type === "element" && selection && <>{["p", "h1", "h2", "h3", "h4", "h5", "h6"].includes(node.tag) && <label className="e-field"><span>文字の種類</span><select aria-label="文字の種類" value={node.tag} disabled={targetMode || editBlocked || !!reason("tag")} onChange={(event) => { const problem = apply({ type: "tag", path: selection, value: event.target.value as "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" }); if (problem) setNotice(problem); }}><option value="p">段落</option><option value="h1">見出し 1</option><option value="h2">見出し 2</option><option value="h3">見出し 3</option><option value="h4">見出し 4</option><option value="h5">見出し 5</option><option value="h6">見出し 6</option></select>{targetMode && <small className="e-help">共通デザインは原文側で編集してください。</small>}</label>}{node.children.length === 1 && node.children[0]?.type === "text" && field("テキスト", node.children[0].text, (value) => ({ type: "text", path: [...selection, 0], value }), "child-text", { multiline: true, reason: document ? lockReason(document, [...selection, 0], "text", locks) : undefined })}
         {assets && node.tag === "img" && <ImageSourceField node={node} assets={resolvedAssets.map} failed={resolvedAssets.failed} lock={reason("attrs.src") ?? reason("asset")} disabled={editBlocked} onPick={() => setPicker({ purpose: "image", path: selection })}>
@@ -989,7 +1020,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         if (rule.type === "boolean") return <label className="e-check" key={`${pathKey}-prop-${name}`}><input type="checkbox" checked={value === true} disabled={editBlocked || !!locked || !!localizedLock} onChange={(event) => { const error = apply({ type: "prop", path: selection, name, value: event.target.checked }); if (error) setNotice(error); }} />{name}{(locked || localizedLock) && <small className="e-help">{locked ? `ロック: ${locked}` : localizedLock}</small>}</label>;
         if (rule.type === "enum") return <label className="e-field" key={`${pathKey}-prop-${name}`}><span>{name}</span><select aria-label={name} value={String(value ?? "")} disabled={editBlocked || !!locked || !!localizedLock} onChange={(event) => { const error = apply({ type: "prop", path: selection, name, value: event.target.value || undefined }); if (error) setNotice(error); }}><option value="">{rule.required ? "選択してください" : "未指定"}</option>{rule.values.map((option) => <option key={option}>{option}</option>)}</select>{(locked || localizedLock) && <small className="e-help">{locked ? `ロック: ${locked}` : localizedLock}</small>}</label>;
         return field(name, String(value ?? ""), (input) => ({ type: "prop", path: selection, name, value: input === "" && !rule.required ? undefined : rule.type === "number" ? Number(input) : input }), `prop.${name}`, { reason: locked });
-      })}</>}
+      })}<BlockSlotList slots={blocks[node.block]!.slots} choose={chooseSlot} disabled={editBlocked} focus={slotBack} /></>}
       {node?.type === "instance" && selection && libraryPresent && <InstanceInspector instance={node} definition={libraryPresent.components.find((component) => component.id === node.component)} usage={usageText(usageSummary?.get(node.component), usage === undefined)}
         staleProps={staleProps} field={input} disabled={editBlocked || hasInput || targetMode}
         edit={() => openComponent(node.component)} detach={() => setComponentDialog({ type: "detach", path: selection })} setValue={(name, value) => apply({ type: "instanceProp", path: selection, name, value })}
@@ -1002,7 +1033,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
         appearanceExtra={assets && (node.type !== "element" || !["img", "source", "br", "hr"].includes(node.tag)) && <BackgroundImageField key={`${pathKey}-${tier}-background`} declarations={tier === "base" ? node.style?.base : node.style?.responsive?.find((entry) => entry.minWidth === tier)?.declarations} assets={resolvedAssets.map}
           lock={(property) => reason(tier === "base" ? `style.base.${property}` : "style.responsive")} disabled={editBlocked} onPick={() => setPicker({ purpose: "background", path: selection, breakpoint: tier })}
           onClear={() => { const error = apply({ type: "background", path: selection, breakpoint: tier, asset: undefined }); if (error) setNotice(error); }} onStyle={(property, value) => { const error = apply({ type: "style", path: selection, breakpoint: tier, property, value }); if (error) setNotice(error); }} />} />}
-      </section>}
+      </>}</section>}
     </>}</aside></div>
     {navigation && <Dialog name="未保存の変更" dismiss={() => setNavigation(null)}><h2>未保存の変更があります</h2><p>移動・再読込すると、保存前の変更と入力途中の値を破棄します。</p><div className="e-actions"><button autoFocus onClick={() => setNavigation(null)}>編集を続ける</button><button className="e-danger" onClick={() => { if (session && ["site", "page", "reload"].includes(navigation.type)) recoveryState.drop(session.target); navigate(navigation); }}>変更を破棄して移動</button>
       {(dirty || navigation.type === "site" && libraryDirty) && !hasInput && !historyMode && (navigation.type === "site" || navigation.type === "page" || navigation.type === "reload") && !(navigation.type === "site" && siteSettings.dirty) && <button className="e-primary" onClick={() => void saveAndNavigate(navigation)}>保存して移動</button>}</div></Dialog>}

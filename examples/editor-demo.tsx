@@ -1,9 +1,10 @@
+import { createContext, useContext } from "react";
 import { createRoot } from "react-dom/client";
 import { PageEditor, type EditorAdapter, type EditorBlockRegistry, type EditorComponentAdapter, type EditorPage, type EditorPageChange, type EditorPageImpact, type EditorRevisionEntry } from "@niho/web/editor";
 import { createBrowserRecoveryStore, diffDocuments } from "@niho/web/history";
 import { findInternalLinks, findPathConflict, pageUrl, parseSiteSettings, rewriteInternalLinks, validatePagePath, type SiteSettings } from "@niho/web/pages";
 import fixture from "./page.json";
-import { componentUsage, parseComponentLibrary, parsePageDocument, resolvePageDocument, type ComponentLibrary, type ElementNode, type PageDocument, type PageNode } from "@niho/web/core";
+import { componentUsage, parseComponentLibrary, parsePageDocument, resolvePageDocument, type ComponentLibrary, type ElementNode, type PageDocument, type PageNode, type PublicPropValue } from "@niho/web/core";
 import { createMemoryAssetLibrary } from "./memory-asset-library.mjs";
 
 /** editor-demo.mjs がサーバーで生成した、出所ごとの素材のメタデータ。 */
@@ -49,6 +50,9 @@ cta.style = { base: { display: "inline-block", padding: "10px 18px", borderRadiu
 // 共通部品。サイトヘッダーは2つ目のリンクの文字、セクション見出しは文字をページごとに変えられる。
 const header: PageNode = { type: "instance", id: "site_header", component: "site_header" };
 home.body.unshift(structuredClone(header)); home.body.splice(home.body.length - 1, 0, { type: "instance", id: "news_heading", component: "section_heading" });
+// 業務ブロックの表示領域の例: タブレット以上でカードを 3 列にし、カードの見出しと予約ボタンをメインの色にする。
+home.body.push({ type: "component", id: "experiences", block: "ExperienceCards", props: { heading: "鎌倉で人気の体験", ctaLabel: "予約する" }, style: { base: { marginTop: 32 } },
+  slots: { list: { responsive: [{ minWidth: 768, declarations: { gridTemplateColumns: "repeat(3, minmax(0, 1fr))" } }] }, title: { base: { color: { token: "brand" } } }, cta: { base: { backgroundColor: { token: "brand" } } } } });
 const seeds: [EditorPage, PageDocument][] = [
   [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム", path: "/" }, home],
   [{ siteId: "demo", pageId: "about", locale: "ja-JP", title: "私たちについて", path: "/about" }, pageDocument("about", "私たちについて", [
@@ -115,6 +119,37 @@ function checkChange(change: EditorPageChange): void {
     findPathConflict(pages, { siteId: "demo", locale: "ja-JP", path: change.path, ...(change.action === "update" ? { exceptPageId: change.target.pageId } : {}) })) throw new Error("invalid path");
 }
 
+// 体験カード一覧。料金・予約先・決済はホストのデータが正本で、props は見出しと予約ボタンの文字だけを持つ。
+type Experience = { slug: string; title: string; price: number; image: string; alt: string };
+// 既定の見た目は class で付ける（表示領域の指定で上書きできる。style 属性の値は上書きできない）。
+const experienceCss = ".demo-cards{margin:0}.demo-cards ul{list-style:none;margin:0;padding:0;display:grid;gap:16px}.demo-cards li{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid #d7e2d9;border-radius:12px;background:#fff}"
+  + ".demo-cards img{display:block;width:100%;height:160px;object-fit:cover;border-radius:8px}.demo-cards h3{margin:4px 0 0;font-size:17px}.demo-cards .price{font-weight:700}"
+  + ".demo-cards .cta{align-self:flex-start;padding:6px 14px;border-radius:999px;background:#195640;color:#fff;text-decoration:none}.demo-cards small{color:#5b6b61;font-size:12px}";
+function ExperienceCardList({ heading, ctaLabel, experiences }: { heading: string; ctaLabel: string; experiences: readonly Experience[] }) {
+  return <section className="demo-cards"><style>{experienceCss}</style><h2>{heading}</h2>
+    {experiences.length ? <ul data-nw-slot="list">{experiences.map((experience) => <li key={experience.slug}>
+      <img data-nw-slot="image" src={experience.image} alt={experience.alt} />
+      <h3 data-nw-slot="title">{experience.title}</h3>
+      <span data-nw-slot="price" className="price">¥{experience.price.toLocaleString("ja-JP")}</span>
+      <a data-nw-slot="cta" className="cta" href={`/experiences/${experience.slug}/book`}>{ctaLabel}</a>
+      <small data-nw-slot="checkout">お支払いは予約画面で行います</small>
+    </li>)}</ul> : <p>公開中の体験はありません。</p>}</section>;
+}
+// 公開ページでは、ホストがページの読込時に取得した体験を Context で渡す（この動作例は公開ページを描かないため空のまま）。
+const PublishedExperiences = createContext<readonly Experience[]>([]);
+function PublishedExperienceCards({ heading, ctaLabel }: Record<string, PublicPropValue>) {
+  return <ExperienceCardList heading={String(heading ?? "人気の体験")} ctaLabel={String(ctaLabel ?? "予約する")} experiences={useContext(PublishedExperiences)} />;
+}
+// キャンバスと部品の縮小表示だけで使う見本。架空の 3 件で、画像はデモサーバーの見本素材。取得・予約などの副作用を起こさない。
+const sampleExperiences: readonly Experience[] = [
+  { slug: "morning-yoga", title: "鎌倉の朝ヨガ", price: 3500, image: "/demo-assets/exp-yoga", alt: "朝日の前でヨガをする砂浜" },
+  { slug: "pottery", title: "はじめての器づくり", price: 4800, image: "/demo-assets/exp-pottery", alt: "作業台に並んだ手づくりの器" },
+  { slug: "beach-walk", title: "海辺の朝さんぽと朝ごはん", price: 2200, image: "/demo-assets/seed-sea", alt: "朝の海辺の景色" }
+];
+function ExperienceCardsPreview({ heading, ctaLabel }: Record<string, PublicPropValue>) {
+  return <ExperienceCardList heading={String(heading ?? "人気の体験")} ctaLabel={String(ctaLabel ?? "予約する")} experiences={sampleExperiences} />;
+}
+
 const blocks: EditorBlockRegistry = {
   PublicNotice: {
     label: "お知らせ",
@@ -123,6 +158,24 @@ const blocks: EditorBlockRegistry = {
     // このブロックで変えられる見た目（余白・背景色・テキストスタイル）だけをインスペクタに出す。
     styleProperties: ["marginTop", "marginBottom", "backgroundColor", "textStyle"],
     component: ({ heading, count }) => <aside style={{ margin: 24, padding: 20, border: "1px solid #b8c9bd", borderRadius: 12 }}><strong>{heading}</strong><p>公開データ: {count} 件</p></aside>
+  },
+  ExperienceCards: {
+    label: "体験カード一覧",
+    props: { heading: { type: "string", maxLength: 120 }, ctaLabel: { type: "string", maxLength: 40 } },
+    defaultProps: { heading: "人気の体験", ctaLabel: "予約する" },
+    // スタッフが見た目を整えられる表示領域。料金と決済は値を変えられないことを、理由と正本つきで示す。
+    slots: {
+      list: { label: "カードの並び", style: ["display", "gridTemplateColumns", "gap"] },
+      image: { label: "カード画像", style: ["objectFit", "borderRadius", "height"] },
+      title: { label: "カードの見出し", style: ["color", "fontSize", "fontWeight"] },
+      price: { label: "料金表示", style: ["color", "fontSize"], data: { reason: "体験ごとの料金を表示します。", source: "NIHO の体験データ" } },
+      cta: { label: "予約ボタン", style: ["color", "backgroundColor", "borderRadius", "padding"], text: "ctaLabel" },
+      checkout: { label: "決済", data: { reason: "決済はホストの予約画面で処理します。", source: "NIHO の予約・決済" } }
+    },
+    // 外枠は余白と背景色だけを変えられる。
+    styleProperties: ["marginTop", "marginBottom", "padding", "backgroundColor"],
+    component: PublishedExperienceCards,
+    preview: ExperienceCardsPreview
   }
 };
 library = parseComponentLibrary({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [

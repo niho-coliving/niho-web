@@ -76,7 +76,7 @@ async function generate(page: PageState, site: SiteState, signal: AbortSignal) {
     targetLocale: page.collection.targetLocale, baseVersion: page.overlay.version, values });
   page.localizationVersion++; page.job = { state: "idle" };
 }
-const adapter: EditorAdapter = {
+export const localizationDemoAdapter: EditorAdapter = {
   listSites: async () => [...sites.entries()].map(([id, site]) => ({ id, name: site.name, domains: [`https://${id}.demo.invalid`] })),
   listPages: async (siteId) => { const site = siteFor(siteId); return [...site.pages.values()].map((page) => ({ ...page.page, locale: site.config.documentLocales[site.config.sourceLocale] })); },
   readDocument: async (target) => { const site = siteFor(target.siteId), page = pageFor(target); return { document: structuredClone(isSource(site, target) ? page.source : page.target), version: `doc-${page.documentVersion}` }; },
@@ -133,10 +133,13 @@ const adapter: EditorAdapter = {
           page.overlay = editLocalizedValue(page.overlay, page.collection, { unitId: unit.unitId, value: request.value, expectedVersion: page.overlay.version });
         } else if (request.action === "adopt-candidate") page.overlay = adoptTranslationCandidate(page.overlay, page.collection, { unitId: request.unitId, expectedVersion: page.overlay.version, candidateVersion: request.candidateVersion });
         else page.overlay = reviewLocalizedValue(page.overlay, page.collection, { unitId: request.unitId, expectedVersion: page.overlay.version });
-        if (unit.scope === "shared-component" && request.action !== "review-current") {
+        if (unit.scope === "shared-component") {
           const value = page.overlay.entries.find((item) => item.unitId === unit.unitId)?.draftValue;
-          if (value !== undefined) for (const other of site.pages.values()) if (other !== page && other.collection.units.some((item) => item.unitId === unit.unitId)) {
-            other.overlay = editLocalizedValue(other.overlay, other.collection, { unitId: unit.unitId, value, expectedVersion: other.overlay.version }); other.localizationVersion++;
+          if (value !== undefined) for (const other of site.pages.values()) if (other !== page && other.collection.units.some((item) => item.unitId === unit.unitId && item.sourceFingerprint === unit.sourceFingerprint)) {
+            other.overlay = editLocalizedValue(other.overlay, other.collection, { unitId: unit.unitId, value, expectedVersion: other.overlay.version });
+            if (request.action === "review-current") other.overlay = reviewLocalizedValue(other.overlay, other.collection, { unitId: unit.unitId, expectedVersion: other.overlay.version });
+            other.target = (await materializeLocalizedPage(site.config, other.source, other.collection, other.overlay, { components: site.components })).document;
+            other.localizationVersion++;
           }
         }
         page.target = (await materializeLocalizedPage(site.config, page.source, page.collection, page.overlay, { components: site.components })).document; page.localizationVersion++;
@@ -161,6 +164,6 @@ function Demo() {
     <label style={{ marginLeft: 16 }}>翻訳遅延 <select value={controls.delayMs} onChange={(event) => { controls.delayMs = Number(event.target.value); refresh(); }}><option value={200}>0.2秒</option><option value={700}>0.7秒</option><option value={2000}>2秒</option></select></label>
     <button style={{ marginLeft: 8 }} onClick={() => { controls.failNext = true; refresh(); }}>次の翻訳を失敗させる{controls.failNext ? " ✓" : ""}</button>
     <button style={{ marginLeft: 8 }} onClick={() => { controls.conflictNext = true; refresh(); }}>次の翻訳操作を409にする{controls.conflictNext ? " ✓" : ""}</button>
-  </div><PageEditor adapter={adapter} assets={assets} /></>;
+  </div><PageEditor adapter={localizationDemoAdapter} assets={assets} /></>;
 }
 createRoot(document.getElementById("root")!).render(<Demo />);

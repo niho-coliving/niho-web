@@ -154,7 +154,7 @@ async function setupSharedComponents() {
       values: [{ unitId: unit.unitId, sourceFingerprint: unit.sourceFingerprint, value: "Shared candidate" }] });
     pages.set(pageId, { source: sourceDocument, collection, overlay, target: (await materializeLocalizedPage(cfg, sourceDocument, collection, overlay, { components })).document, documentVersion: 1, localizationVersion: 1 });
   }
-  const pageFor = (target) => pages.get(target.pageId), calls = [], librarySaves = []; let libraryVersion = 1;
+  const pageFor = (target) => pages.get(target.pageId), calls = [], librarySaves = []; let siteReads = 0; let libraryVersion = 1;
   const pickedAsset = { provider: "uploads", id: "shared-target", siteId: "shared", kind: "image", status: "ready", name: "言語別の共有画像", mimeType: "image/png", bytes: 100, width: 100, height: 50, alt: "", version: "1", updatedAt: "2026-10-21T00:00:00.000Z" };
   const assets = {
     listAssets: async () => ({ assets: [pickedAsset], folders: [] }), uploadAsset: async () => ({ status: "rejected", reason: "permission" }), updateAsset: async () => ({ status: "rejected", reason: "permission" }),
@@ -177,7 +177,7 @@ async function setupSharedComponents() {
       listUsage: async () => []
     },
     localization: {
-      readSite: async () => ({ config: structuredClone(cfg), version: "site-1", pages: [...pages.entries()].map(([pageId, page]) => ({ siteId: "shared", pageId, title: page.source.title, locales: { ja: { state: "source" }, en: { state: "review-needed" } } })) }),
+      readSite: async () => (siteReads++, { config: structuredClone(cfg), version: "site-1", pages: [...pages.entries()].map(([pageId, page]) => ({ siteId: "shared", pageId, title: page.source.title, locales: { ja: { state: "source" }, en: { state: "review-needed" } } })) }),
       readPage: async (target) => { const page = pageFor(target); return { sourceDocument: structuredClone(page.source), sourceVersion: `source-1-lib-${libraryVersion}`, overlay: structuredClone(page.overlay), version: `loc-${page.localizationVersion}` }; },
       command: async (request) => {
         calls.push(structuredClone(request)); const page = pageFor(request.target), unit = page.collection.units.find((item) => item.unitId === request.unitId);
@@ -203,7 +203,7 @@ async function setupSharedComponents() {
   };
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   await act(async () => root.render(createElement(PageEditor, { adapter, assets }))); await flush(6);
-  return { pages, components, calls, librarySaves, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  return { pages, components, calls, librarySaves, siteReads: () => siteReads, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
 
 test("same logical page switches locale through the dirty guard, saves real target content and keeps source unchanged", async () => {
@@ -230,6 +230,17 @@ test("same logical page switches locale through the dirty guard, saves real targ
   } finally { await app.cleanup(); }
 });
 
+test("source draft saves refresh site localization without leaving the page", async () => {
+  const app = await setup();
+  try {
+    const reads = app.calls.siteReads;
+    await click("ページ"); await change(input("ページタイトル"), "新しい原文"); await click("下書き保存");
+    assert.equal(app.calls.saves.length, 1);
+    assert.equal(app.calls.siteReads, reads + 1);
+    assert.equal(input("ページタイトル").value, "新しい原文");
+  } finally { await app.cleanup(); }
+});
+
 test("candidate stays separate until adoption, command conflicts retry, failures are visible, and late target reads are ignored", async () => {
   const app = await setup({ conflictOnce: true });
   try {
@@ -253,9 +264,11 @@ test("candidate stays separate until adoption, command conflicts retry, failures
 test("source component editing saves through the canonical library session and target rendering uses its localized view", async () => {
   const app = await setupSharedComponents();
   try {
+    const siteReadsBefore = app.siteReads();
     await clickTool("部品"); await click("編集"); await click("p · sharedText");
     await change(input("テキスト"), "共有原文を更新"); await click("下書き保存");
     assert.equal(app.librarySaves.length, 1);
+    assert.equal(app.siteReads(), siteReadsBefore + 1, "shared source saves refresh site localization once");
     assert.equal(app.components.components[0].root.children[0].children[0].text, "共有原文を更新");
 
     await click("ページに戻る"); await click("English（訳文）"); await flush(7);
