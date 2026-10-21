@@ -33,6 +33,13 @@ function nextComponentId(library: ComponentLibrary): string {
   return `component_${index}`;
 }
 
+/** ページのノードIDに結び付くロックは、部品へ移せない。 */
+export function componentCreationLock(document: PageDocument, path: NodePath, locks: readonly EditorLock[]): EditorLock | undefined {
+  if (!locks.length) return undefined;
+  const ids = new Set(walkNodes({ ...document, body: [nodeAt(document, path)] }).flatMap(({ node }) => node.type === "text" ? [] : [node.id]));
+  return locks.find((lock) => ids.has(lock.nodeId));
+}
+
 /** 選択した element を部品にしてインスタンスへ置き換える。ノード ID は前順に n1, n2… と振り直し、HTML ID は保つ。 */
 export function createComponentFromNode(document: PageDocument, path: NodePath, library: ComponentLibrary, input: { name: string; kind: ComponentKind },
   blocks: BlockContracts = {}, locks: readonly EditorLock[] = []): { document: PageDocument; library: ComponentLibrary; componentId: string } {
@@ -40,7 +47,7 @@ export function createComponentFromNode(document: PageDocument, path: NodePath, 
   if (node.type !== "element") throw new Error("要素を選択してください。");
   const subtree = walkNodes({ ...draft, body: [node] });
   // ページ固有のロックはページのノード ID に結び付くため、部品の中へ持ち込まない。
-  if (subtree.some(({ node }) => node.type !== "text" && locks.some((lock) => lock.nodeId === node.id))) throw new Error("データ連動値を含む要素は部品にできません。");
+  if (componentCreationLock(draft, path, locks)) throw new Error("データ連動値を含む要素は部品にできません。");
   const name = checkedName(library, input.name), componentId = nextComponentId(library), tokens = structuredClone(library.tokens);
   for (const { node: current } of subtree) {
     if (current.type === "text") continue;
