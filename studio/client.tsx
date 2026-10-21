@@ -395,10 +395,11 @@ function App() {
   const selected = screen.kind === "dashboard" || screen.kind === "editor"
     ? session.directory.entries.find(({ project }) => project.id === screen.projectId && project.site.id === screen.siteId)?.project
     : undefined;
+  const kamakuraEditor = screen.kind === "editor" && !screen.staging && selected?.id === "project-kamakura" && selected.site.id === "kamakura";
 
-  return <div className="studio-app">
+  return <div className={`studio-app${kamakuraEditor ? " studio-kamakura-shell" : ""}`}>
     <header className="studio-shell-header"><a href="/" onClick={screen.kind === "editor" ? undefined : (event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
-    <div className={screen.kind === "editor" ? "studio-content studio-content-editor" : "studio-content"}>
+    <div className={`studio-content${screen.kind === "editor" ? " studio-content-editor" : ""}${kamakuraEditor ? " studio-kamakura-content" : ""}`}>
       {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
         : selected && screen.kind === "editor"
