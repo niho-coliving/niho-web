@@ -1,4 +1,4 @@
-import type { SiteStyles } from "./site-styles.js";
+import { resolveComponentStyles, type SiteStyles } from "./site-styles.js";
 import { expandDocument, instancesOf, ownElements, type ResolvedOrigin } from "./component-expand.js";
 import { componentDocument, setComponentProp } from "./component-model.js";
 import { componentUsage, parseComponentLibrary, resolvePageDocument } from "./components.js";
@@ -199,9 +199,12 @@ export function resolveCanvas(document: PageDocument, library: ComponentLibrary 
 export function textStylePaths(document: PageDocument, path: NodePath): NodePath[] {
   return walkNodes({ ...document, body: [nodeAt(document, path)] }).flatMap(({ node, path: inner }) => node.type !== "text" && node.style?.textStyle ? [[...path, ...inner.slice(1)]] : []);
 }
-/** 一覧の縮小表示に描く、展開済みの部品。ライブラリは検証済みのため、部品の数だけ再検証しない。 */
-export function componentPreview(library: ComponentLibrary, componentId: string, blocks: EditorBlockRegistry): PageDocument {
-  return parsePageDocument(expandDocument(componentDocument(library, componentId, "ja"), library).document, blocks);
+/**
+ * 一覧の縮小表示に描く、展開済みの部品。部品の編集画面と同じく、同名のサイト共通の定義をライブラリの写しより優先する（ページに置いたときと同じ見た目）。
+ * ライブラリは検証済みのため、部品の数だけ再検証しない。
+ */
+export function componentPreview(library: ComponentLibrary, componentId: string, blocks: EditorBlockRegistry, siteStyles: SiteStyles): PageDocument {
+  return parsePageDocument(expandDocument(resolveComponentStyles(componentDocument(library, componentId, "ja"), siteStyles), library).document, blocks);
 }
 
 export const componentKinds: readonly (readonly [ComponentKind, string])[] = [["header", "ヘッダー"], ["navigation", "ナビゲーション"], ["section", "セクション"], ["part", "パーツ"], ["footer", "フッター"]];

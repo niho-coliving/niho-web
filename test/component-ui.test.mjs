@@ -977,3 +977,39 @@ test("component undo cannot change a library token after the site takes ownershi
     assert.equal(app.calls.librarySaves.length, 1, "blocked undo cannot save an older shared-token value");
   } finally { await app.cleanup(); }
 });
+
+test("the component panel draws thumbnails with the same-named site-wide definitions like the page", async () => {
+  // brand は部品にした時点の写しで、その後サイト共通の値が変わった。accent はライブラリにだけ、paper はサイト共通にだけある。
+  const siteStyles = { tokens: { brand: { type: "color", value: "#336655", label: "ブランド" }, paper: { type: "color", value: "#f7f4ec" } } };
+  const tokens = { brand: { type: "color", value: "#aa0000", label: "ブランド" }, accent: { type: "color", value: "#0055aa", label: "アクセント" } };
+  const styled = withComponent("site_header", (component) => ({ ...component, root: { ...component.root, style: { base: { color: { token: "brand" }, backgroundColor: { token: "accent" } } } } }));
+  const app = await setup({ library: { ...styled(library()), tokens }, adapter: { readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", ...siteStyles }, version: "s1" }) } });
+  try {
+    assert.ok(canvas().contentDocument.querySelector("style[data-nw-style]").textContent.includes("--nw-brand:#336655;"), "the page draws the instance with the site-wide brand");
+    await openPanel();
+    const thumbnail = card("サイトヘッダー").querySelector("iframe");
+    await act(async () => thumbnail.dispatchEvent(new dom.window.Event("load"))); await flush();
+    const css = thumbnail.contentDocument.querySelector("style[data-nw-style]").textContent;
+    assert.ok(css.includes("--nw-brand:#336655;") && css.includes("--nw-accent:#0055aa;"), "the thumbnail draws the same colors as the page");
+    assert.ok(css.includes('[data-nw-node="n1"]{background-color:var(--nw-accent);color:var(--nw-brand);}'));
+    assert.ok(!css.includes("--nw-paper"), "site-wide definitions the library does not have are not added to the thumbnail");
+  } finally { await app.cleanup(); }
+});
+
+test("component thumbnails wait for the site settings instead of drawing the library copy first", async () => {
+  let settle;
+  const settings = new Promise((resolve) => { settle = resolve; });
+  const tokens = { brand: { type: "color", value: "#aa0000", label: "ブランド" } };
+  const styled = withComponent("site_header", (component) => ({ ...component, root: { ...component.root, style: { base: { color: { token: "brand" } } } } }));
+  const app = await setup({ library: { ...styled(library()), tokens }, adapter: { readSiteSettings: () => settings } });
+  try {
+    await openPanel();
+    assert.ok(card("サイトヘッダー"), "the cards are listed while the site settings load");
+    assert.deepEqual([!!card("サイトヘッダー").querySelector(".e-part-thumb"), !!card("サイトヘッダー").querySelector("iframe")], [true, false], "only the frame is shown before the site-wide values are known");
+    await act(async () => settle({ settings: { title: "デモ", locale: "ja", tokens: { brand: { type: "color", value: "#336655" } } }, version: "s1" })); await flush();
+    const thumbnail = card("サイトヘッダー").querySelector("iframe");
+    assert.ok(thumbnail, "the thumbnail is drawn once the site settings are read");
+    await act(async () => thumbnail.dispatchEvent(new dom.window.Event("load"))); await flush();
+    assert.ok(thumbnail.contentDocument.querySelector("style[data-nw-style]").textContent.includes("--nw-brand:#336655;"));
+  } finally { await app.cleanup(); }
+});
