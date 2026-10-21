@@ -140,17 +140,16 @@ export const kamakuraAssetLibrary: AssetLibraryAdapter = {
   async resolveAssets(request, signal) {
     assertSite(request.siteId);
     if (request.references.some((reference) => !provider(reference))) throw new Error("素材の出所が一致しません。");
-    const publishedReferences = request.references.filter((reference) => reference.provider !== UPLOAD_PROVIDER);
-    const resolved = publishedReferences.length
-      ? parseResolvedAssets(await post("resolve", { siteId: SITE_ID, references: publishedReferences }, signal))
+    const resolved = request.references.length
+      ? parseResolvedAssets(await post("resolve", { siteId: SITE_ID, references: request.references }, signal))
       : {};
-    const requested = new Set(publishedReferences.map(assetKey));
+    const requested = new Set(request.references.map(assetKey));
     if (Object.keys(resolved).some((key) => !requested.has(key) || !PROVIDER_IDS.has(key.slice(0, key.indexOf(":"))))) throw new Error("素材解決結果に対象外の参照が含まれています。");
-    const result: Record<string, { src: string; width?: number; height?: number }> = { ...resolved };
+    const result: Record<string, { src: string; width?: number; height?: number }> = {};
     for (const reference of request.references) {
-      if (reference.provider !== UPLOAD_PROVIDER) continue;
       const key = assetKey(reference);
-      result[key] = { src: previewUrl(reference.id) };
+      if (!Object.hasOwn(resolved, key)) continue;
+      result[key] = reference.provider === UPLOAD_PROVIDER ? { src: previewUrl(reference.id) } : resolved[key]!;
     }
     return result;
   },

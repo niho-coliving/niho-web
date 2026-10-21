@@ -700,7 +700,7 @@ function exactAssetKeys(value: Record<string, unknown>, expected: readonly strin
 function kamakuraAssetReference(value: unknown, uploadOnly = false): Record<string, string> {
   if (!isRecord(value)) throw new AuthenticationError("invalid asset reference");
   exactAssetKeys(value, ["provider", "id"]);
-  if (typeof value.provider !== "string" || !KAMAKURA_ASSET_PROVIDERS.has(value.provider) || (uploadOnly && value.provider !== "kamakura-upload") || typeof value.id !== "string" || !KAMAKURA_ASSET_ID.test(value.id)) throw new AuthenticationError("invalid asset reference");
+  if (typeof value.provider !== "string" || !KAMAKURA_ASSET_PROVIDERS.has(value.provider) || (uploadOnly && value.provider !== "kamakura-upload") || typeof value.id !== "string" || !(value.provider === "kamakura-upload" ? KAMAKURA_UPLOAD_ID.test(value.id) : KAMAKURA_ASSET_ID.test(value.id))) throw new AuthenticationError("invalid asset reference");
   return { provider: value.provider, id: value.id };
 }
 
@@ -1069,10 +1069,11 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   }
 }
 
-function withStaticSecurity(response: Response, editor = false): Response {
+function withStaticSecurity(response: Response, editor = false, allowKamakuraUpload = false): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
-  headers.set("Content-Security-Policy", `default-src 'none'; script-src 'self'; style-src 'self'${editor ? " 'unsafe-inline'" : ""}; img-src 'self' https:; connect-src 'self'; font-src 'self';${editor ? " frame-src 'self';" : ""} frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
+  const connectSrc = "connect-src 'self'" + (allowKamakuraUpload ? " " + KAMAKURA_EDITOR_UPSTREAM_ORIGIN : "") + ";";
+  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + " font-src 'self';" + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -1132,11 +1133,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
   const isStagingExperienceEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(url.pathname);
-  const isEditor = /^\/projects\/(?:project-experience\/sites\/experience|project-kamakura\/sites\/kamakura)\/editor\/?$/u.test(url.pathname) || isStagingExperienceEditor;
+  const isKamakuraEditor = /^\/projects\/project-kamakura\/sites\/kamakura\/editor\/?$/u.test(url.pathname);
+  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname) || isKamakuraEditor || isStagingExperienceEditor;
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
     if (isStagingExperienceEditor && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, isKamakuraEditor);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }
