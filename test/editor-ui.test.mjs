@@ -854,6 +854,33 @@ test("upload, stock and connect tools scope their libraries while the image pick
   } finally { await app.cleanup(); }
 });
 
+test("provider scopes clear hidden folder filters and wait for the matching source", async () => {
+  const { calls, adapter } = spy(sourceLibrary({ stock: true }));
+  const app = await setup({ document: withImage(), assets: adapter });
+  try {
+    await tool("アップロード"); await settle();
+    await change(assetPanel().querySelector('select[aria-label="フォルダ"]'), "photos");
+    assert.equal(calls.lists.at(-1).folderId, "photos");
+
+    let before = calls.lists.length;
+    await tool("ストック"); await settle();
+    assert.equal(calls.lists.slice(before).some((query) => query.provider === "uploads"), false);
+    assert.equal(calls.lists.at(-1).provider, "stock"); assert.equal(calls.lists.at(-1).folderId, null);
+    assert.equal(assetPanel().querySelector('select[aria-label="フォルダ"]'), null); assert.deepEqual(cardNames(), ["波.png"]);
+
+    before = calls.lists.length;
+    await tool("接続"); await settle();
+    assert.equal(calls.lists.slice(before).some((query) => query.provider === "stock"), false);
+    assert.equal(calls.lists.at(-1).provider, "experience"); assert.equal(calls.lists.at(-1).folderId, null);
+    assert.equal(assetPanel().querySelector('select[aria-label="フォルダ"]'), null); assert.deepEqual(cardNames(), ["朝ヨガ.png"]);
+
+    await tool("レイヤー"); await clickCanvas("photo"); await editorTab("設定"); await click("画像を置き換え"); await settle();
+    assert.equal(Object.hasOwn(calls.lists.at(-1), "provider"), false); assert.equal(calls.lists.at(-1).folderId, null);
+    assert.deepEqual(sourceTabs().map((node) => node.getAttribute("aria-label") ?? node.textContent), ["すべて", "サイト", "体験写真", "ストック"]);
+    assert.deepEqual(cardNames(), ["庭の緑.png", "朝ヨガ.png", "波.png"]);
+  } finally { await app.cleanup(); }
+});
+
 test("CMS photos show their origin and terms read-only, without save, upload, folders or delete", async () => {
   const { calls, adapter } = spy(sourceLibrary());
   const app = await setup({ assets: adapter });

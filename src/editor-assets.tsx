@@ -149,7 +149,7 @@ export function useResolvedAssets(adapter: AssetLibraryAdapter | undefined, site
 
 type ListState = {
   status: "loading" | "ready" | "error"; assets: readonly LibraryAsset[]; folders: readonly AssetFolder[];
-  quota?: AssetQuota | undefined; upload?: AssetUploadPolicy | undefined; nextCursor?: string | undefined; more: "idle" | "loading" | "error"; problem?: string | undefined;
+  quota?: AssetQuota | undefined; upload?: AssetUploadPolicy | undefined; nextCursor?: string | undefined; more: "idle" | "loading" | "error"; problem?: string | undefined; scopeKey?: string | undefined;
 };
 type UploadRow = { id: number; name: string; state: "sending" | "done" | "failed"; message: string };
 type Message = { text: string; error: boolean };
@@ -164,6 +164,7 @@ class SourceMismatch extends Error {}
 /** サイト別の素材ライブラリ。library は管理と配置、pick は画像の選択だけを行う。listProviders があれば出所ごとに分ける。 */
 export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   const { adapter, siteId, mode, pickTitle, providerKind, panelLabel = "素材", localUsage, actions, disabledReason, onClose, onReplaceUsages, epoch = 0 } = props;
+  const sourceScopeKey = `${mode}:${providerKind ?? "all"}`;
   const [folderId, setFolderId] = useState<string | null>(null), [kind, setKind] = useState<AssetKind | "all">("all");
   const [searchInput, setSearchInput] = useState(""), [search, setSearch] = useState(""), [reload, setReload] = useState(0);
   const [list, setList] = useState<ListState>({ status: "loading", assets: [], folders: [], more: "idle" });
@@ -172,7 +173,13 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   const [folderDraft, setFolderDraft] = useState<string | null>(null), [folderError, setFolderError] = useState("");
   const [sources, setSources] = useState<{ status: "loading" | "ready" | "error"; items: readonly AssetProvider[] }>({ status: "loading", items: [] }), [sourceReload, setSourceReload] = useState(0);
   /** null = すべての出所。 */
-  const [source, setSource] = useState<string | null>(null), [recent, setRecent] = useState(false), [acquiring, setAcquiring] = useState(false);
+  const [sourceSelection, setSourceSelection] = useState<{ scope: string; value: string | null }>({ scope: sourceScopeKey, value: null });
+  const source = sourceSelection.scope === sourceScopeKey ? sourceSelection.value : null;
+  const setSource = (next: string | null | ((previous: string | null) => string | null)) => setSourceSelection((current) => {
+    const previous = current.scope === sourceScopeKey ? current.value : null;
+    return { scope: sourceScopeKey, value: typeof next === "function" ? next(previous) : next };
+  });
+  const [recent, setRecent] = useState(false), [acquiring, setAcquiring] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null), heading = useRef<HTMLHeadingElement>(null), cards = useRef(new Map<string, HTMLButtonElement>());
   const more = useRef<AbortController | null>(null), uploadId = useRef(0), latest = useRef(props), busy = useRef(false), work = useControllers();
   latest.current = props;
@@ -181,10 +188,12 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   const scopedProviders = useMemo(() => providers?.filter((item) => !providerKind || item.kind === providerKind), [providers, providerKind]);
   const providerOf = (asset: LibraryAsset) => providers?.find((item) => item.id === asset.provider);
   const current = scopedProviders && source !== null ? scopedProviders.find((item) => item.id === source) : undefined, offline = current?.status === "unavailable";
+  const listScopeKey = `${mode}:${providerKind ?? "all"}:${source ?? "all"}`;
+  const visibleList: ListState = list.scopeKey === listScopeKey ? list : { status: "loading", assets: [], folders: [], more: "idle" };
   const uploadTarget = !providers ? undefined : current ? (current.status === "available" && current.capabilities.upload ? current : undefined)
     : scopedProviders?.find((item) => item.status === "available" && item.capabilities.upload);
-  const showFolders = legacy || (current?.status === "available" && current.capabilities.folders);
-  const query = (cursor?: string): AssetListQuery => ({ siteId, search, kind: listKind, folderId, ...(cursor === undefined ? {} : { cursor }), limit: ASSET_LIMITS.pageSize, ...(source === null ? {} : { provider: source }), ...(recent ? { recent: true } : {}) });
+  const showFolders = mode !== "pick" && (legacy || (current?.status === "available" && current.capabilities.folders));
+  const query = (cursor?: string): AssetListQuery => ({ siteId, search, kind: listKind, folderId: showFolders ? folderId : null, ...(cursor === undefined ? {} : { cursor }), limit: ASSET_LIMITS.pageSize, ...(source === null ? {} : { provider: source }), ...(recent ? { recent: true } : {}) });
   /** 宣言されていない出所や、選択中の出所と異なる素材を含む応答は採用しない。 */
   const verify = (assets: readonly LibraryAsset[]) => { if (providers && assets.some((asset) => !providerOf(asset) || (source !== null && asset.provider !== source))) throw new SourceMismatch(); };
   useEffect(() => { const timer = setTimeout(() => setSearch(searchInput.trim()), 250); return () => clearTimeout(timer); }, [searchInput]);
@@ -206,6 +215,9 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
     return () => controller.abort();
   }, [adapter, siteId, sourceReload, epoch]);
   useEffect(() => {
+    setFolderId(null); setFolderDraft(null); setFolderError("");
+  }, [mode, providerKind]);
+  useEffect(() => {
     if (mode === "pick") { setSource(null); return; }
     if (!providerKind) { setSource(null); return; }
     if (!providers) return;
@@ -216,21 +228,21 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   useEffect(() => {
     if (!legacy && !providers) return;
     more.current?.abort(); more.current = null;
-    if (providerKind && providers && scopedProviders?.length === 0) { setList({ status: "ready", assets: [], folders: [], more: "idle" }); return; }
-    if (providerKind && providers && source === null) return;
+    if (providerKind && providers && scopedProviders?.length === 0) { setList({ status: "ready", assets: [], folders: [], more: "idle", scopeKey: listScopeKey }); return; }
+    if (providerKind && providers && (source === null || !scopedProviders?.some((item) => item.id === source))) { setList({ status: "loading", assets: [], folders: [], more: "idle", scopeKey: listScopeKey }); return; }
     // 未接続の出所には一覧を要求しない。
-    if (offline) { setList((previous) => ({ status: "ready", assets: [], folders: [], quota: previous.quota, more: "idle" })); return; }
+    if (offline) { setList({ status: "ready", assets: [], folders: [], more: "idle", scopeKey: listScopeKey }); return; }
     const controller = new AbortController();
-    setList((previous) => ({ ...previous, status: "loading", more: "idle" }));
+    setList((previous) => ({ ...previous, status: "loading", assets: previous.scopeKey === listScopeKey ? previous.assets : [], folders: previous.scopeKey === listScopeKey ? previous.folders : [], quota: previous.scopeKey === listScopeKey ? previous.quota : undefined, upload: previous.scopeKey === listScopeKey ? previous.upload : undefined, nextCursor: undefined, problem: undefined, more: "idle", scopeKey: listScopeKey }));
     void (async () => {
       try {
         const result = parseAssetListResult(await adapter.listAssets(query(), controller.signal), siteId);
         verify(result.assets);
-        if (!controller.signal.aborted) setList({ status: "ready", assets: result.assets, folders: result.folders, quota: result.quota, upload: result.upload, nextCursor: result.nextCursor, more: "idle" });
-      } catch (error) { if (!controller.signal.aborted) setList((previous) => ({ ...previous, status: "error", assets: [], nextCursor: undefined, problem: error instanceof SourceMismatch ? unknownSource : undefined })); }
+        if (!controller.signal.aborted) setList({ status: "ready", assets: result.assets, folders: result.folders, quota: result.quota, upload: result.upload, nextCursor: result.nextCursor, more: "idle", scopeKey: listScopeKey });
+      } catch (error) { if (!controller.signal.aborted) setList((previous) => ({ ...previous, status: "error", assets: [], nextCursor: undefined, problem: error instanceof SourceMismatch ? unknownSource : undefined, scopeKey: listScopeKey })); }
     })();
     return () => controller.abort();
-  }, [adapter, siteId, search, listKind, folderId, reload, legacy, sources, source, offline, recent, providerKind, legacy ? epoch : 0]);
+  }, [adapter, siteId, search, listKind, folderId, reload, legacy, sources, source, offline, recent, providerKind, mode, scopedProviders, listScopeKey, legacy ? epoch : 0]);
   useEffect(() => () => more.current?.abort(), []);
   useEffect(() => {
     if (mode !== "pick") return;
@@ -240,7 +252,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   useEffect(() => { if (!detail && lastKey) cards.current.get(lastKey)?.focus(); }, [detail]);
 
   async function loadMore() {
-    const cursor = list.nextCursor;
+    const cursor = visibleList.nextCursor;
     if (!cursor || more.current) return;
     const controller = new AbortController(); more.current = controller;
     setList((previous) => ({ ...previous, more: "loading" }));
@@ -337,7 +349,8 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   function selectSource(id: string | null) { setSource(id); setFolderId(null); setFolderDraft(null); setFolderError(""); }
 
   const filtered = !!search || folderId !== null || recent || (mode === "library" && kind !== "all");
-  const quota = list.quota, showDetail = mode === "library" && detail, all = !!providers && source === null;
+  const activeDetail = mode === "library" && list.scopeKey === listScopeKey ? detail : null;
+  const quota = visibleList.quota, showDetail = !!activeDetail, all = !!providers && source === null;
   const chips = mode === "library" ? <div className="e-asset-chips" role="group" aria-label="種類">{(["all", "image", "video", "pdf"] as const).map((value) => <button key={value} type="button" aria-pressed={kind === value} onClick={() => setKind(value)}>{value === "all" ? "全種類" : kindLabels[value]}</button>)}</div> : null;
   const description = providerKind === "stock" ? "利用条件を確認してからページに配置"
     : providerKind === "cms" ? "接続済みCMSの素材を参照・配置"
@@ -354,11 +367,11 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
     {providerKind && providers && scopedProviders?.length === 0 && <p className="e-help" role="status">{providerKind === "stock" ? "ストック素材はまだ接続されていません。" : providerKind === "cms" ? "接続済みのCMS素材はありません。" : "アップロード先が利用できません。"}</p>}
     {current && !offline && <small className="e-help e-asset-origin">{current.origin}</small>}
     {(showFolders || !!uploadTarget) && <div className="e-asset-tools">
-      {showFolders && <select aria-label="フォルダ" value={folderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}><option value="">すべて</option>{list.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
-      {list.upload && (legacy || uploadTarget) && <><button type="button" className="e-primary" title={all && uploadTarget ? `${uploadTarget.label}へ追加` : undefined} onClick={() => fileInput.current?.click()}>アップロード</button>
-        <input ref={fileInput} className="e-asset-file" type="file" multiple hidden accept={list.upload.accept.join(",")} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void uploadFiles(files); }} /></>}
+      {showFolders && <select aria-label="フォルダ" value={folderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}><option value="">すべて</option>{visibleList.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
+      {visibleList.upload && (legacy || uploadTarget) && <><button type="button" className="e-primary" title={all && uploadTarget ? `${uploadTarget.label}へ追加` : undefined} onClick={() => fileInput.current?.click()}>アップロード</button>
+        <input ref={fileInput} className="e-asset-file" type="file" multiple hidden accept={visibleList.upload.accept.join(",")} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void uploadFiles(files); }} /></>}
     </div>}
-    {list.status === "ready" && !list.upload && (legacy || !!uploadTarget) && <small className="e-help">このサイトに素材を追加する権限がありません。</small>}
+    {visibleList.status === "ready" && !visibleList.upload && (legacy || !!uploadTarget) && <small className="e-help">このサイトに素材を追加する権限がありません。</small>}
     {adapter.createFolder && showFolders && (folderDraft === null ? <button type="button" className="e-small" onClick={() => setFolderDraft("")}>フォルダを追加</button>
       : <div className="e-asset-folder"><input aria-label="新しいフォルダの名前" maxLength={ASSET_LIMITS.folderNameLength} value={folderDraft} autoFocus onChange={(event) => { setFolderDraft(event.target.value); setFolderError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void createFolder(); } }} />
         <button type="button" className="e-small" onClick={() => void createFolder()}>作成</button><button type="button" className="e-small" onClick={() => { setFolderDraft(null); setFolderError(""); }}>キャンセル</button></div>)}
@@ -370,16 +383,16 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       {row.state !== "sending" && <button type="button" className="e-small" aria-label={`${row.name} の通知を閉じる`} onClick={() => setUploads((rows) => rows.filter((item) => item.id !== row.id))}>×</button>}</li>)}</ul>}
     {pickError && <p className="e-help e-problem" role="alert">{pickError}</p>}
     {acquiring && !showDetail && <p className="e-help" role="status">利用の準備中…</p>}
-    {showDetail ? <AssetDetail key={assetKey(detail.asset)} adapter={adapter} siteId={siteId} asset={detail.asset} provider={providerOf(detail.asset)} managed={!legacy} focus={detail.focus} notice={detail.notice} folders={list.folders}
-      localCount={localUsage.get(assetKey(detail.asset)) ?? 0} actions={actions} disabledReason={disabledReason} acquiring={acquiring} apply={apply} onBack={() => setDetail(null)} onReplaceUsages={onReplaceUsages}
+    {activeDetail ? <AssetDetail key={assetKey(activeDetail.asset)} adapter={adapter} siteId={siteId} asset={activeDetail.asset} provider={providerOf(activeDetail.asset)} managed={!legacy} focus={activeDetail.focus} notice={activeDetail.notice} folders={visibleList.folders}
+      localCount={localUsage.get(assetKey(activeDetail.asset)) ?? 0} actions={actions} disabledReason={disabledReason} acquiring={acquiring} apply={apply} onBack={() => setDetail(null)} onReplaceUsages={onReplaceUsages}
       onSaved={(asset) => { setDetail((previous) => previous && { ...previous, asset }); setList((previous) => ({ ...previous, assets: previous.assets.map((item) => assetKey(item) === assetKey(asset) ? asset : item) })); }}
       onDeleted={(asset) => { setDetail(null); setList((previous) => ({ ...previous, assets: previous.assets.filter((item) => assetKey(item) !== assetKey(asset)), quota: previous.quota && { ...previous.quota, usedBytes: Math.max(0, previous.quota.usedBytes - asset.bytes) } })); }} />
       : offline && current ? <div className="e-asset-empty"><p>{current.unavailableReason ?? unavailableText}</p><p>{current.origin}</p></div>
       : <>
-        {list.status === "loading" && <p className="e-help" role="status">読み込み中…</p>}
-        {list.status === "error" && <div role="alert"><p className="e-help e-problem">素材を読み込めませんでした。</p>{list.problem && <p className="e-help e-problem">{list.problem}</p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></div>}
-        {list.status === "ready" && !list.assets.length && <p className="e-asset-empty">{filtered ? "条件に合う素材はありません。" : "まだ素材がありません。画像をアップロードすると、ここからページに配置できます。"}</p>}
-        {list.assets.length > 0 && <ul className="e-asset-grid">{list.assets.map((asset) => {
+        {visibleList.status === "loading" && <p className="e-help" role="status">読み込み中…</p>}
+        {visibleList.status === "error" && <div role="alert"><p className="e-help e-problem">素材を読み込めませんでした。</p>{visibleList.problem && <p className="e-help e-problem">{visibleList.problem}</p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></div>}
+        {visibleList.status === "ready" && !visibleList.assets.length && <p className="e-asset-empty">{filtered ? "条件に合う素材はありません。" : "まだ素材がありません。画像をアップロードすると、ここからページに配置できます。"}</p>}
+        {visibleList.assets.length > 0 && <ul className="e-asset-grid">{visibleList.assets.map((asset) => {
           const key = assetKey(asset), inUse = (localUsage.get(key) ?? 0) > 0 || (asset.usageCount ?? 0) > 0, processing = asset.status === "processing", licensed = !!asset.license, origin = all ? providerOf(asset) : undefined;
           const label = `${asset.name}（${kindLabels[asset.kind]}${asset.width && asset.height ? `・${asset.width}×${asset.height}` : ""}・${formatBytes(asset.bytes)}${processing ? "・処理中" : ""}${inUse ? "・使用中" : ""}${licensed ? "・ライセンスあり" : ""}${origin ? `・出所: ${origin.label}` : ""}）`;
           return <li key={key}><button type="button" className="e-asset-card" aria-pressed={mode === "library" && lastKey === key} aria-label={label} disabled={acquiring} onClick={() => void choose(asset)}
@@ -387,8 +400,8 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
             <span className="e-asset-thumb"><Thumbnail asset={asset} />{(inUse || processing || licensed) && <span className="e-asset-badges">{inUse && <span className="e-asset-badge">使用中</span>}{processing && <span className="e-asset-badge e-asset-wait">処理中</span>}{licensed && <span className="e-asset-badge">ライセンス</span>}</span>}</span>
             <span className="e-asset-name">{asset.name}</span>{origin && <span className="e-asset-source">{origin.label}</span>}</button></li>;
         })}</ul>}
-        {list.nextCursor && list.status === "ready" && <button type="button" className="e-asset-more" disabled={list.more === "loading"} onClick={() => void loadMore()}>さらに読み込む</button>}
-        {list.more === "error" && <small className="e-help e-problem" role="alert">続きを読み込めませんでした。</small>}
+        {visibleList.nextCursor && visibleList.status === "ready" && <button type="button" className="e-asset-more" disabled={visibleList.more === "loading"} onClick={() => void loadMore()}>さらに読み込む</button>}
+        {visibleList.more === "error" && <small className="e-help e-problem" role="alert">続きを読み込めませんでした。</small>}
       </>}
     {quota && <div className={`e-asset-quota${quota.usedBytes > quota.limitBytes ? " e-asset-over" : ""}`}><span>ストレージ使用量 {formatBytes(quota.usedBytes)} / {formatBytes(quota.limitBytes)}</span>
       <span className="e-asset-meter" aria-hidden="true"><span style={{ width: `${quota.limitBytes ? Math.min(100, quota.usedBytes / quota.limitBytes * 100) : 100}%` }} /></span></div>}
