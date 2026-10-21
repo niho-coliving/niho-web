@@ -3,6 +3,7 @@ import { fitsPropField, parseComponentLibrary } from "./components.js";
 import { parsePageDocument } from "./document.js";
 import type { EditorLock } from "./editor-types.js";
 import { copyId, nodeAt, siblingsAt, walkNodes, type NodePath } from "./node-tree.js";
+import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type {
   BlockContracts, ComponentDefinition, ComponentKind, ComponentLibrary, ComponentNode, ComponentPropDefinition, ElementNode, NodeStyle, PageDocument, PageNode, StyleDeclarations, StyleProperty
 } from "./types.js";
@@ -40,19 +41,24 @@ export function componentCreationLock(document: PageDocument, path: NodePath, lo
   return locks.find((lock) => ids.has(lock.nodeId));
 }
 
-/** 選択した element を部品にしてインスタンスへ置き換える。ノード ID は前順に n1, n2… と振り直し、HTML ID は保つ。 */
+/**
+ * 選択した element を部品にしてインスタンスへ置き換える。ノード ID は前順に n1, n2… と振り直し、HTML ID は保つ。
+ * siteStyles は保存形式のページの検証と、選択範囲が参照するサイト共通 token の写しに使い、返す文書へは書き戻さない。
+ */
 export function createComponentFromNode(document: PageDocument, path: NodePath, library: ComponentLibrary, input: { name: string; kind: ComponentKind },
-  blocks: BlockContracts = {}, locks: readonly EditorLock[] = []): { document: PageDocument; library: ComponentLibrary; componentId: string } {
+  blocks: BlockContracts = {}, locks: readonly EditorLock[] = [], siteStyles?: SiteStyles): { document: PageDocument; library: ComponentLibrary; componentId: string } {
   const draft = structuredClone(document), node = nodeAt(draft, path);
   if (node.type !== "element") throw new Error("要素を選択してください。");
   const subtree = walkNodes({ ...draft, body: [node] });
   // ページ固有のロックはページのノード ID に結び付くため、部品の中へ持ち込まない。
   if (componentCreationLock(draft, path, locks)) throw new Error("データ連動値を含む要素は部品にできません。");
   const name = checkedName(library, input.name), componentId = nextComponentId(library), tokens = structuredClone(library.tokens);
+  // ライブラリはサイト共通スタイルを持たないため、サイトの定義も実効値（同名はページが優先）で写す。ページで描画するときはページ・サイトの定義が写しより優先される。
+  const available = resolvePageStyles(draft, siteStyles).tokens;
   for (const { node: current } of subtree) {
     if (current.type === "text") continue;
     for (const declarations of nodeDeclarations(current)) for (const value of Object.values(declarations)) {
-      if (typeof value === "object" && "token" in value && !Object.hasOwn(tokens, value.token) && Object.hasOwn(draft.tokens, value.token)) tokens[value.token] = structuredClone(draft.tokens[value.token]!);
+      if (typeof value === "object" && "token" in value && !Object.hasOwn(tokens, value.token) && Object.hasOwn(available, value.token)) tokens[value.token] = structuredClone(available[value.token]!);
     }
   }
   const root = structuredClone(node);
@@ -65,7 +71,7 @@ export function createComponentFromNode(document: PageDocument, path: NodePath, 
   renumber(root);
   siblingsAt(draft, path)[path.at(-1)!] = { type: "instance", id: node.id, component: componentId };
   const next = parseComponentLibrary({ ...library, tokens, components: [...library.components, { id: componentId, name, kind: input.kind, version: 1, root }] }, blocks);
-  return { document: parsePageDocument(draft, blocks, { components: next }), library: next, componentId };
+  return { document: parsePageDocument(draft, blocks, { components: next, ...(siteStyles ? { siteStyles } : {}) }), library: next, componentId };
 }
 export function renameComponent(library: ComponentLibrary, componentId: string, name: string, blocks: BlockContracts = {}): ComponentLibrary {
   const index = componentIndex(library, componentId);
