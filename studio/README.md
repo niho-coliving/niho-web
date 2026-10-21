@@ -20,8 +20,8 @@ D1 が Project / Site / Member / Role / Invitation / Audit の正本です。NIH
 
 | Project | Dashboard | Editor |
 | --- | --- | --- |
-| Kamakura (`project-kamakura` / `kamakura`) | `/projects/kamakura-site/admin` | `/projects/kamakura-site/admin/editor` |
-| NIHO Experience (`project-experience` / `experience`) | `/projects/niho-experience/admin` | `/projects/niho-experience/admin/editor` |
+| Kamakura (`project-kamakura` / `kamakura`) | `/kamakura-site/admin` | `/kamakura-site/admin/editor` |
+| NIHO Experience (`project-experience` / `experience`) | `/niho-experience/admin` | `/niho-experience/admin/editor` |
 
 Alias は Worker と client router の固定対応表で内部の Project / Site ID へ解決します。別名 URL 自体をブラウザに保ち、alias から Dashboard と Editor の間を移動しても同じ表記を使います。API/BFF の path、membership 判定、Project / Site ID は変わりません。招待 URL と Experience STG 専用 URL は引き続き ID 付き route です。
 

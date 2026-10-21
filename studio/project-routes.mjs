@@ -4,7 +4,7 @@ const PROJECT_ALIASES = Object.freeze([
 ]);
 
 export function parseProjectAliasPath(pathname) {
-  const match = /^\/projects\/([a-z][a-z0-9-]*)\/admin(?:\/(editor))?\/?$/u.exec(pathname);
+  const match = /^\/([a-z][a-z0-9-]*)\/admin(?:\/(editor))?\/?$/u.exec(pathname);
   if (!match) return null;
   const project = PROJECT_ALIASES.find(({ slug }) => slug === match[1]);
   if (!project) return null;
@@ -14,7 +14,7 @@ export function parseProjectAliasPath(pathname) {
 export function projectAliasPath(projectId, siteId, page) {
   const project = PROJECT_ALIASES.find((candidate) => candidate.projectId === projectId && candidate.siteId === siteId);
   if (!project) return null;
-  return `/projects/${project.slug}/admin${page === "editor" ? "/editor" : ""}`;
+  return `/${project.slug}/admin${page === "editor" ? "/editor" : ""}`;
 }
 
 export function projectRoutePath(currentPathname, projectId, siteId, page) {
