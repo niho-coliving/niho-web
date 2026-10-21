@@ -82,7 +82,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
           <td data-label="公開状態・ドメイン"><PublicationBadge status={summary.publicationStatus} /><span className="pv-list-domains">{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</span></td>
           <td data-label="メンバー">{memberDetails === "visible" ? <><span>{project.members.length}名</span>{project.members.length > 0 && <span className="pv-muted pv-list-members">{project.members.map((member) => member.displayName).join("、")}</span>}</> : <span className="pv-muted">未取得</span>}</td>
           <td data-label="日時"><span>最終更新 <Timestamp value={summary.updatedAt} /></span><span>最終アクセス <Timestamp value={summary.lastAccessedAt} /></span></td>
-          <td data-label="開く"><div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>エディター</button></div></td>
+          <td data-label="開く"><div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button></div></td>
         </tr>)}</tbody></table></div></>}
       </>}
   </section>;

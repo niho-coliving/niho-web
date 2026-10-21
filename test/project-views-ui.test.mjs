@@ -45,6 +45,10 @@ test("directory is independent from management and supports two Projects, search
     await click(`${project("two").name}（${project("two").site.name}）のダッシュボード`); assert.deepEqual(app.calls.dashboards[0], project("two"));
     await act(async () => cards()[0].querySelectorAll(".pv-actions button")[1].click()); assert.equal(app.calls.editors[0].site.id, "site_two");
     await act(async () => rows()[0].querySelectorAll(".pv-actions button")[1].click()); assert.equal(app.calls.editors[1].site.id, "site_two");
+    await app.rerender({ editorAction: "pending" });
+    assert.equal(cards()[0].querySelectorAll(".pv-actions button")[1].textContent, "エディター接続待ち");
+    assert.equal(rows()[0].querySelectorAll(".pv-actions button")[1].textContent, "エディター接続待ち");
+    await app.rerender({ editorAction: "enabled" });
     await search("one.example.test"); assert.equal(cards().length, 1); assert.equal(rows().length, 1); assert.ok(cards()[0].textContent.includes("oneの"));
     await search("存在しない名前"); assert.ok(document.body.textContent.includes("条件に一致する"));
     await click("検索解除"); assert.equal(cards().length, 2); assert.equal(rows().length, 2);
@@ -156,6 +160,7 @@ test("dashboard members are read-only with empty, multiple and long-name states"
   const selected = project(); selected.members = [];
   const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(async () => dashboard(selected)) });
   try {
+    assert.ok(button("プロジェクト一覧へ戻る")); await click("プロジェクト一覧へ戻る"); assert.equal(app.calls.backs, 1);
     await click("メンバー"); assert.ok(document.body.textContent.includes("メンバー（0名）")); assert.ok(document.body.textContent.includes("メンバーはいません"));
     assert.equal(document.querySelector(".pv-member-list"), null);
     const next = project(); next.members = [{ userId: "first", displayName: "長い参加者名".repeat(18) }, { userId: "second", displayName: "二人目" }];
@@ -166,18 +171,45 @@ test("dashboard members are read-only with empty, multiple and long-name states"
   } finally { await app.cleanup(); }
 });
 
+test("dashboard back navigation stays available while its read is pending", async () => {
+  let resolve; const selected = project();
+  const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(() => new Promise((done) => { resolve = done; })) });
+  try {
+    assert.ok(button("プロジェクト一覧へ戻る"));
+    await click("プロジェクト一覧へ戻る"); assert.equal(app.calls.backs, 1);
+    await act(async () => resolve({ status: "forbidden", projectId: selected.id, siteId: selected.site.id })); await flush();
+    assert.ok(button("プロジェクト一覧へ戻る")); assert.ok(document.body.textContent.includes("権限がありません"));
+  } finally { await app.cleanup(); }
+});
+
 test("dashboard mismatch, failure and permission loss clear all sensitive facts and actions", async () => {
   let result = dashboard(), fail = false;
   const app = await setup(ProjectDashboard, { project: project(), adapter: dashboardAdapter(async () => { if (fail) throw new Error("secret"); return result; }) });
   try {
+    assert.ok(button("プロジェクト一覧へ戻る"));
     for (const field of ["projectId", "siteId"]) {
       result = dashboard(); result[field] = "mismatch"; await click(button("再読込") ? "再読込" : "再試行");
-      assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.equal(button("デザインエディタ"), undefined); assert.equal(document.querySelector("a"), null);
+      assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(button("デザインエディタ"), undefined); assert.equal(document.querySelector("a"), null);
     }
     result = dashboard(); await click("再試行"); assert.ok(button("デザインエディタ"));
     result = { status: "forbidden", projectId: "project_one", siteId: "site_one" }; await click("再読込");
-    assert.ok(document.body.textContent.includes("権限がありません")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(button("設定"), undefined);
-    fail = true; await click("再試行"); assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.equal(document.body.textContent.includes("secret"), false);
+    assert.ok(document.body.textContent.includes("権限がありません")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(document.body.textContent.includes(project().name), false); assert.equal(button("設定"), undefined);
+    fail = true; await click("再試行"); assert.ok(document.body.textContent.includes("読み込めませんでした")); assert.ok(button("プロジェクト一覧へ戻る")); assert.equal(document.body.textContent.includes("secret"), false);
+  } finally { await app.cleanup(); }
+});
+
+test("dashboard uses the host theme variables with Studio-style color fallbacks", async () => {
+  const selected = project();
+  const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(async () => dashboard(selected)) });
+  try {
+    const css = [...document.querySelectorAll("style")].map((style) => style.textContent ?? "").join("\n");
+    assert.ok(css.includes("background:var(--niho-surface,#fff)"));
+    assert.ok(css.includes("--pv-ink:var(--niho-text,#191919)"));
+    assert.ok(css.includes("--pv-muted:var(--niho-text-sub,#777)"));
+    assert.ok(css.includes("--pv-border:var(--niho-border,#e6e6e6)"));
+    assert.ok(css.includes("--pv-primary-bg:var(--niho-primary-bg,#1d1d1d)"));
+    assert.ok(css.includes(".pv-project-bar{position:relative;z-index:2;display:flex;align-items:center;gap:18px;min-height:64px;padding:0 22px;background:var(--pv-surface);border-bottom:1px solid var(--pv-border)"));
+    assert.ok(css.includes(".pv-home-nav{display:flex;flex-direction:column;gap:3px;align-items:stretch;margin:0;padding:22px 18px;border-right:1px solid var(--pv-border);background:var(--pv-surface)"));
   } finally { await app.cleanup(); }
 });
 

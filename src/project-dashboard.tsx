@@ -68,19 +68,21 @@ function DashboardSession({ project: inputProject, adapter, onBackToProjects, on
   const [view, setView] = useState<"overview" | "analytics" | "members">("overview");
   const result = state.status === "complete" && state.value.status === "ready" ? state.value : null;
   return <section className="nw-project-view nw-project-dashboard" aria-label="プロジェクトダッシュボード"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
+    <header className="pv-project-bar">
+      <button type="button" className="pv-project-back" onClick={onBackToProjects} aria-label="プロジェクト一覧へ戻る">‹</button>
+      {result && project && <>
+        <div className="pv-project-identity" data-publication={result.overview.status === "ready" ? result.overview.data.publicationStatus : "unknown"}><strong>{project.name}</strong><span><i aria-hidden="true" />{project.site.domains[0] ?? project.site.name}</span></div>
+        <nav className="pv-global-nav" aria-label="サイト機能">
+          <button type="button" aria-current={view !== "analytics" ? "page" : undefined} onClick={() => setView("overview")}>ホーム</button>
+          <button type="button" aria-current={view === "analytics" ? "page" : undefined} onClick={() => setView("analytics")}>アナリティクス</button>
+          <button type="button" onClick={() => onOpenSettings(project, "site")} disabled={settingsAction === "disabled"}>{settingsAction === "disabled" ? "設定（準備中）" : "設定"}</button>
+        </nav>
+        <button type="button" className="pv-editor-link" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "デザインエディタ"}</button>
+      </>}
+    </header>
     {state.status !== "complete" ? <ReadNotice status={state.status} noun="ダッシュボード" retry={reload} />
       : state.value.status === "forbidden" ? <ReadNotice status="forbidden" noun="ダッシュボード" retry={reload} />
       : result && project && <>
-        <header className="pv-project-bar">
-          <button type="button" className="pv-project-back" onClick={onBackToProjects} aria-label="プロジェクト一覧へ戻る">‹</button>
-          <div className="pv-project-identity" data-publication={result.overview.status === "ready" ? result.overview.data.publicationStatus : "unknown"}><strong>{project.name}</strong><span><i aria-hidden="true" />{project.site.domains[0] ?? project.site.name}</span></div>
-          <nav className="pv-global-nav" aria-label="サイト機能">
-            <button type="button" aria-current={view !== "analytics" ? "page" : undefined} onClick={() => setView("overview")}>ホーム</button>
-            <button type="button" aria-current={view === "analytics" ? "page" : undefined} onClick={() => setView("analytics")}>アナリティクス</button>
-            <button type="button" onClick={() => onOpenSettings(project, "site")} disabled={settingsAction === "disabled"}>{settingsAction === "disabled" ? "設定（準備中）" : "設定"}</button>
-          </nav>
-          <button type="button" className="pv-editor-link" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "デザインエディタ"}</button>
-        </header>
         <div className="pv-dashboard-layout">
           <nav className="pv-home-nav" aria-label="ホームメニュー">
             <button type="button" aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}>ダッシュボード</button>
