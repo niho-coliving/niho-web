@@ -4,11 +4,13 @@ import { ProjectDashboard } from "../src/project-dashboard.js";
 import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
+import { ExperienceEditor } from "./experience-editor.js";
 
 type Role = "owner" | "editor";
 type Screen =
   | { readonly kind: "directory" }
   | { readonly kind: "dashboard"; readonly projectId: string; readonly siteId: string }
+  | { readonly kind: "editor"; readonly projectId: string; readonly siteId: string }
   | { readonly kind: "invite"; readonly projectId: string; readonly siteId: string; readonly token: string };
 type SessionState =
   | { readonly status: "loading" }
@@ -66,6 +68,8 @@ function screenFromLocation(): Screen {
     const token = new URLSearchParams(window.location.search).get("token") ?? new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
     return { kind: "invite", projectId: invite[1]!, siteId: invite[2]!, token };
   }
+  const editor = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/editor\/?$/u.exec(window.location.pathname);
+  if (editor) return { kind: "editor", projectId: editor[1]!, siteId: editor[2]! };
   const dashboard = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/?$/u.exec(window.location.pathname);
   return dashboard ? { kind: "dashboard", projectId: dashboard[1]!, siteId: dashboard[2]! } : { kind: "directory" };
 }
@@ -323,7 +327,7 @@ function App() {
   }, []);
 
   const navigate = useCallback((next: Exclude<Screen, { kind: "invite" }>) => {
-    const path = next.kind === "directory" ? "/" : `/projects/${encodeURIComponent(next.projectId)}/sites/${encodeURIComponent(next.siteId)}`;
+    const path = next.kind === "directory" ? "/" : `/projects/${encodeURIComponent(next.projectId)}/sites/${encodeURIComponent(next.siteId)}${next.kind === "editor" ? "/editor" : ""}`;
     window.history.pushState(null, "", path);
     setPendingProject(null);
     setScreen(next);
@@ -350,6 +354,14 @@ function App() {
     }
   }), [expire]);
 
+  const openEditor = useCallback((project: Project) => {
+    if (project.id === "project-experience" && project.site.id === "experience") {
+      window.location.assign(`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}/editor`);
+      return;
+    }
+    setPendingProject(project);
+  }, []);
+
   if (session.status === "loading") return <Notice title="Studio を準備しています">認証と参加プロジェクトを確認しています。</Notice>;
   if (session.status === "expired") return <Notice title="セッションの確認が必要です" retry={() => window.location.reload()}>Cloudflare Access から再度ログインしてください。</Notice>;
   if (session.status === "error") return <Notice title="Studio を読み込めませんでした" retry={loadSession}>時間をおいて再度お試しください。</Notice>;
@@ -360,24 +372,28 @@ function App() {
   }} />;
   if (session.directory.status === "forbidden") return <Notice title="アクセス権がありません" retry={loadSession}>Studio 管理者にプロジェクト参加資格を確認してください。</Notice>;
 
-  const selected = screen.kind === "dashboard"
+  const selected = screen.kind === "dashboard" || screen.kind === "editor"
     ? session.directory.entries.find(({ project }) => project.id === screen.projectId && project.site.id === screen.siteId)?.project
     : undefined;
 
   return <div className="studio-app">
-    <header className="studio-shell-header"><a href="/" onClick={(event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
-    <main className="studio-content">
-      {screen.kind === "dashboard" && !selected
+    <header className="studio-shell-header"><a href="/" onClick={screen.kind === "editor" ? undefined : (event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
+    <div className={screen.kind === "editor" ? "studio-content studio-content-editor" : "studio-content"}>
+      {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
-        : selected
+        : selected && screen.kind === "editor"
+          ? selected.id === "project-experience" && selected.site.id === "experience"
+            ? <ExperienceEditor project={selected} />
+            : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
+        : selected && screen.kind === "dashboard"
           ? <>
               <ProjectDashboard
                 project={selected}
                 adapter={dashboardAdapter}
                 onBackToProjects={() => navigate({ kind: "directory" })}
-                onOpenEditor={setPendingProject}
+                onOpenEditor={openEditor}
                 onOpenSettings={() => undefined}
-                editorAction="pending"
+                editorAction={selected.id === "project-experience" && selected.site.id === "experience" ? "enabled" : "pending"}
                 settingsAction="disabled"
               />
               <MemberAdministration key={`${selected.id}:${selected.site.id}`} project={selected} expire={expire} />
@@ -386,16 +402,16 @@ function App() {
               adapter={directoryAdapter}
               onCreateProject={() => undefined}
               onOpenDashboard={(project) => navigate({ kind: "dashboard", projectId: project.id, siteId: project.site.id })}
-              onOpenEditor={setPendingProject}
+              onOpenEditor={openEditor}
               createAction="disabled"
-              editorAction="pending"
+              editorAction={(project) => project.id === "project-experience" && project.site.id === "experience" ? "enabled" : "pending"}
               memberDetails="hidden"
             />}
-    </main>
+    </div>
     {pendingProject && <div className="studio-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingProject(null); }}>
       <section className="studio-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-pending-title">
         <p className="studio-kicker">{pendingProject.site.name}</p><h2 id="editor-pending-title">エディター接続待ち</h2>
-        <p>この Studio はプロジェクト移動と権限境界のみを提供します。サイト編集 API は Issue #69 / #70 で接続予定です。現在、編集・保存・公開はできません。</p>
+        <p>鎌倉サイトの編集 API はまだ Studio に接続されていません。現在、このサイトでは編集・保存・公開を利用できません。</p>
         <button type="button" autoFocus onClick={() => setPendingProject(null)}>閉じる</button>
       </section>
     </div>}

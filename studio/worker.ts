@@ -18,6 +18,8 @@ export interface Env {
   readonly ACCESS_ISSUER: string;
   /** Cloudflare Access applicationのAUD tag。 */
   readonly ACCESS_AUDIENCE: string;
+  /** NIHO internal Studio bridgeと共有するbase64url HMAC key。 */
+  readonly NIHO_STUDIO_BRIDGE_SECRET?: string;
 }
 
 type Role = "owner" | "editor";
@@ -67,6 +69,13 @@ type InvitationPreviewRow = {
 };
 
 const MAX_MUTATION_BODY_BYTES = 16 * 1024;
+const MAX_EDITOR_SAVE_BODY_BYTES = 600 * 1024;
+const MAX_EDITOR_RESPONSE_BYTES = 2 * 1024 * 1024;
+const EDITOR_UPSTREAM_ORIGIN = "https://api.niho.life";
+const EDITOR_UPSTREAM_PREFIX = "/api/internal/studio/experience";
+const EDITOR_PROJECT_ID = "project-experience";
+const EDITOR_SITE_ID = "experience";
+const EDITOR_TIMEOUT_MILLISECONDS = 12_000;
 const MAX_PENDING_INVITATIONS = 100;
 const MAX_PROJECT_MEMBERS = 500;
 const JWKS_CACHE_MILLISECONDS = 5 * 60 * 1000;
@@ -77,6 +86,7 @@ class AuthenticationError extends Error {}
 class ConfigurationError extends Error {}
 class SigningKeysUnavailableError extends Error {}
 class InvalidInputError extends Error {}
+class BridgeUnavailableError extends Error {}
 
 function securityHeaders(contentType: string): Headers {
   return new Headers({
@@ -119,6 +129,25 @@ function decodeBase64Url(value: string, maximumLength: number): Uint8Array {
   try { decoded = atob(value.replace(/-/gu, "+").replace(/_/gu, "/") + "=".repeat(padding)); }
   catch { throw new AuthenticationError("invalid token encoding"); }
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+function encodeBase64Url(value: Uint8Array): string {
+  return btoa(String.fromCharCode(...value)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+}
+
+function bridgeSecret(env: Env): Uint8Array {
+  const encoded = env.NIHO_STUDIO_BRIDGE_SECRET;
+  if (typeof encoded !== "string" || !encoded || encoded.length > 1024 || !/^[A-Za-z0-9_-]+$/u.test(encoded)) throw new ConfigurationError("invalid Studio bridge secret");
+  let decoded: Uint8Array;
+  try { decoded = decodeBase64Url(encoded, 1024); }
+  catch { throw new ConfigurationError("invalid Studio bridge secret"); }
+  if (decoded.byteLength < 32 || encodeBase64Url(decoded) !== encoded) throw new ConfigurationError("invalid Studio bridge secret");
+  return decoded;
+}
+
+function hexadecimal(value: ArrayBuffer | Uint8Array): string {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function decodeJwtObject<T>(segment: string, maximumLength: number): T {
@@ -632,10 +661,151 @@ async function enforceMutationBoundary(request: Request): Promise<Record<string,
   return parsed;
 }
 
-function withStaticSecurity(response: Response): Response {
+type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number };
+
+function editorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
+  const fixed = new Map<string, "GET">([
+    ["/editor/sites", "GET"],
+    ["/editor/sites/experience/pages", "GET"]
+  ]);
+  const page = /^\/editor\/sites\/experience\/pages\/(home|experiences|experience-detail|booking|host|chrome)\/en(\/draft|\/release-plan|\/release)?$/u.exec(action);
+  if (page) {
+    const suffix = page[2] ?? "";
+    const expected = suffix === "/draft" ? "PUT" : suffix === "/release-plan" || suffix === "/release" ? "POST" : "GET";
+    if (method !== expected) return "method_not_allowed";
+    return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: suffix === "/draft" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES };
+  }
+  const expected = fixed.get(action);
+  if (!expected) return null;
+  if (method !== expected) return "method_not_allowed";
+  return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: MAX_MUTATION_BODY_BYTES };
+}
+
+async function editorMember(env: Env, identity: AccessIdentity, projectId: string, siteId: string): Promise<boolean> {
+  if (projectId !== EDITOR_PROJECT_ID || siteId !== EDITOR_SITE_ID) return false;
+  const row = await env.DB.prepare(`
+    SELECT 1 AS allowed
+      FROM project_members AS m
+      JOIN sites AS s ON s.project_id = m.project_id
+     WHERE m.access_subject = ?1 AND m.project_id = ?2 AND s.id = ?3
+       AND m.role IN ('owner', 'editor')
+     LIMIT 1
+  `).bind(identity.subject, projectId, siteId).first<{ readonly allowed: number }>();
+  return row?.allowed === 1;
+}
+
+async function readBoundedBody(request: Request, maximumBytes: number): Promise<Uint8Array> {
+  const requestUrl = new URL(request.url);
+  if (request.headers.get("Origin") !== requestUrl.origin || request.headers.get("Sec-Fetch-Site") !== "same-origin") throw new AuthenticationError("invalid editor request origin");
+  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") throw new AuthenticationError("editor JSON required");
+  const declaredLength = request.headers.get("Content-Length");
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > maximumBytes)) throw new AuthenticationError("editor request body too large");
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > maximumBytes) { await reader.cancel("editor request body too large"); throw new AuthenticationError("editor request body too large"); }
+      chunks.push(chunk.value);
+    }
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  try {
+    const parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
+    if (!isRecord(parsed)) throw new Error("object required");
+  } catch { throw new AuthenticationError("invalid editor JSON"); }
+  return body;
+}
+
+async function readBoundedResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") throw new BridgeUnavailableError("invalid bridge response media type");
+  const declaredLength = response.headers.get("Content-Length");
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > MAX_EDITOR_RESPONSE_BYTES)) throw new BridgeUnavailableError("bridge response too large");
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > MAX_EDITOR_RESPONSE_BYTES) { await reader.cancel("bridge response too large"); throw new BridgeUnavailableError("bridge response too large"); }
+      chunks.push(chunk.value);
+    }
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
+  catch { throw new BridgeUnavailableError("invalid bridge JSON"); }
+  if (!isRecord(parsed)) throw new BridgeUnavailableError("invalid bridge response");
+  return parsed;
+}
+
+async function signedEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
+  const body = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyBytes = body.slice().buffer;
+  const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
+  const message = `v1\n${timestamp}\n${request.method}\n${route.upstreamPath}\n${bodyHash}\n${EDITOR_PROJECT_ID}\n${identity.subject}`;
+  const key = await crypto.subtle.importKey("raw", bridgeSecret(env).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
+  try {
+    const response = await fetch(`${EDITOR_UPSTREAM_ORIGIN}${route.upstreamPath}`, {
+      method: request.method,
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-store",
+        ...(request.method === "GET" ? {} : { "Content-Type": "application/json" }),
+        "X-NIHO-Studio-Project": EDITOR_PROJECT_ID,
+        "X-NIHO-Studio-Subject": identity.subject,
+        "X-NIHO-Studio-Timestamp": timestamp,
+        "X-NIHO-Studio-Signature": `v1=${signature}`
+      },
+      ...(request.method === "GET" ? {} : { body: bodyBytes })
+    });
+    if (response.status >= 300 && response.status < 400) throw new BridgeUnavailableError("bridge redirect rejected");
+    const value = await readBoundedResponse(response);
+    if (response.status === 409) return json({ error: "conflict" }, 409);
+    if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429 || response.status >= 500) throw new BridgeUnavailableError("bridge service unavailable");
+    if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 422 ? 400 : 503);
+    return json(value, response.status);
+  } catch { throw new BridgeUnavailableError("bridge request failed"); }
+  finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
+}
+
+async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
+  if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
+  if (projectId !== EDITOR_PROJECT_ID || siteId !== EDITOR_SITE_ID) return json({ error: "not_found" }, 404);
+  const route = editorRoute(action, request.method);
+  if (route === null) return json({ error: "not_found" }, 404);
+  if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
+  if (!await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
+  try { return await signedEditorRequest(request, env, identity, route); }
+  catch (error) {
+    if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
+    throw error;
+  }
+}
+
+function withStaticSecurity(response: Response, editor = false): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
-  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  headers.set("Content-Security-Policy", `default-src 'none'; script-src 'self'; style-src 'self'${editor ? " 'unsafe-inline'" : ""}; img-src 'self' https:; connect-src 'self'; font-src 'self';${editor ? " frame-src 'self';" : ""} frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -651,6 +821,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
+  if (action === "/editor" || action.startsWith("/editor/")) return editorApi(request, env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
@@ -693,9 +864,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
-  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname)) {
+  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname);
+  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })));
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }
