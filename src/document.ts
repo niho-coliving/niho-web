@@ -144,7 +144,7 @@ function instanceProps(value: unknown, shape: ComponentShape, path: string): { p
     // 公開をやめた名前の値も保持するため、文字列としてだけ検証する。
     const field = shape.props.get(name), at = `${path}.${name}`;
     if (field === "href" || field === "src") {
-      if (!isSafePublicUrl(raw)) fail(at, "unsafe URL");
+      if (field === "href" ? !isSafePublicLink(raw) : !isSafePublicUrl(raw)) fail(at, "unsafe URL");
       props[name] = raw;
     } else props[name] = string(raw, at, field === "alt" ? 2048 : 4096);
   }

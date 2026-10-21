@@ -75,9 +75,8 @@ function isSafeMailto(value: string, decoded: string): boolean {
   const payload = value.slice(value.indexOf(":") + 1), decodedPayload = decoded.slice(decoded.indexOf(":") + 1);
   if (payload.includes("#") || decodedPayload.includes("#")) return false;
   const queryIndex = payload.indexOf("?"), decodedQueryIndex = decodedPayload.indexOf("?");
-  const address = queryIndex < 0 ? payload : payload.slice(0, queryIndex);
   const decodedAddress = decodedQueryIndex < 0 ? decodedPayload : decodedPayload.slice(0, decodedQueryIndex);
-  if (address.includes("%") || /\s/u.test(decodedAddress) || !isSafeMailAddress(decodedAddress)) return false;
+  if (/\s/u.test(decodedAddress) || !isSafeMailAddress(decodedAddress)) return false;
   if (queryIndex < 0) return decodedQueryIndex < 0;
   if (decodedQueryIndex < 0) return false;
   const query = payload.slice(queryIndex + 1);
