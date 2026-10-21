@@ -22,7 +22,7 @@ import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js"
 import { isSafePublicUrl } from "./validation-utils.js";
 import type { ComponentUsageEntry, EditorBlockRegistry, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
 import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
-import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
+import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, socialImageProblem, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
@@ -932,6 +932,10 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   function applyLocalizationAsset(asset: LibraryAsset): string | undefined {
     const context = localization.context, unit = context?.collection.units.find((entry) => entry.unitId === localizationAssetUnit);
     if (!context || !unit || unit.kind !== "asset") return "翻訳する画像の欄を確認できません。";
+    if (unit.field === "meta.ogImage.src") {
+      const problem = socialImageProblem(asset);
+      if (problem) return problem;
+    }
     const entry = context.overlay.entries.find((item) => item.unitId === unit.unitId);
     void runLocalizationCommand({ action: "set-value", target: context.target, unitId: unit.unitId, value: { kind: "asset", asset: { provider: asset.provider, id: asset.id } },
       sourceFingerprint: unit.sourceFingerprint, expectedEntryVersion: entry?.version ?? 0, expectedSourceVersion: context.sourceVersion, expectedVersion: context.version, expectedOverlayVersion: context.overlay.version });
