@@ -29,7 +29,8 @@ test("the actual bundled localization demo initializes in a DOM runtime", async 
   assert.match(dom.window.document.getElementById("root")?.textContent ?? "", /合成データの多言語編集・言語全体公開デモ/);
   assert.match(dom.window.document.body.textContent ?? "", /偽ホスト/);
   assert.match(dom.window.document.body.textContent ?? "", /次の言語公開を409にする/);
-  assert.match(dom.window.document.body.textContent ?? "", /NIHO Web/);
+  assert.ok(dom.window.document.querySelector(".nw-editor .e-canvas"), "共通workspaceのキャンバスを描画する");
+  assert.ok(dom.window.document.querySelector('.e-inspector-actions[aria-label="編集操作"]'), "共通workspaceの編集操作を描画する");
   const document = dom.window.document;
   const button = (label, within = document) => [...within.querySelectorAll("button")].find((entry) => entry.textContent.trim() === label);
   const waitFor = async (condition) => {

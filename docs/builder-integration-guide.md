@@ -60,3 +60,17 @@ node --test test/studio-integration-registry.test.mjs test/atelier-builder-demo.
 npm run studio:typecheck
 npm run studio:build
 ```
+
+## 実ブラウザ受入（2026-10-22）
+
+第三サイトdemoを最終workspaceで操作し、次を確認した。
+
+- テキスト編集、undo/redo、保存、ブラウザ再読込後の保持。
+- 独自の作品カード挿入と `atelier_main` 配下への移動。選択IDと実DOMの親を照合。
+- 画像専用タブのURL・レスポンシブURL・説明欄と、対象別のタブ構成。
+- 375px幅・50%表示でiframeのCSS幅375px、画面上の幅約188px。文書幅と倍率を分離。
+- 条件付き変形Y=-6pxを直接入力し、キャンバスのcomputed styleと保存を確認。
+- 2タブのCAS競合で編集内容を保持。比較画面を閉じた後も「比較する」が表示され、最新内容へ復旧可能。
+- 左パネルを閉じてもツール列が残り、左右パネルとも復帰可能。390×844pxでも操作可能。
+
+Studioの公開アプリは確認時にメンテナンス画面だったため、公式ヘルプのエディタ全体・インスペクターの画像を視覚基準にした。指定された既存Kamakura管理画面とそのCSSも参照した。今回のブラウザ操作先はローカルの合成データdemoであり、本番2サイトのデータや公開状態は変更していない。
