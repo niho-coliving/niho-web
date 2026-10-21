@@ -653,6 +653,53 @@ test("部品を読み直す detaches a removed component on a page that uses sit
   } finally { await app.cleanup(); }
 });
 
+// 強調ラベルはライブラリの写しの brand で色を付け、サイト共通にも同名の brand がある。
+// 開くホームは部品を使わない。別ページは強調ラベルを置き、共通枠は brand をページで上書きしたうえで置く。
+function brandBadgeSite(options = {}) {
+  const brand = () => ({ type: "color", value: "#336655" });
+  const badge = { id: "badge", name: "強調ラベル", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "span", style: { base: { color: { token: "brand" } } }, children: [{ type: "text", text: "新着" }] } };
+  const withBadge = (tokens) => { const doc = structuredClone(fixture); Object.assign(doc.tokens, tokens); doc.body[0].children[1].children.push({ type: "instance", id: "lead_badge", component: "badge" }); return doc; };
+  const documents = { home: structuredClone(fixture), other: withBadge({}), chrome: withBadge({ brand: brand() }) };
+  return setup({ ...options, library: { ...library(), tokens: { brand: brand() }, components: [...library().components, badge] }, adapter: {
+    readDocument: async (request) => ({ document: { ...structuredClone(documents[request.pageId]), pageId: request.pageId }, version: "v1", releases: [{ revision: 1, label: "最初の公開" }] }),
+    readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", tokens: { brand: brand() } }, version: "s1" }),
+    saveSiteSettings: async () => ({ status: "saved", version: "s2" })
+  } });
+}
+/** スタイル欄の「サイト共通」で brand を色の候補から選んだ色に変え、影響の確認を返す。 */
+async function changeSiteBrand(value) {
+  await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+  const styles = document.querySelector('section[aria-label="共通スタイル"]');
+  await click("サイト共通", styles.querySelector('[aria-label="スタイルの保存先"]'));
+  await click([...styles.querySelectorAll(".e-lib-row")].find((row) => row.querySelector(".e-lib-name").textContent === "brand"));
+  await click(styles.querySelector('button[aria-label="色の候補を開く"]'));
+  const picker = styles.querySelector('input[type="color"][aria-label="色を選ぶ"]'); assert.ok(picker);
+  await act(async () => { Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(picker, value); picker.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+  const review = () => styles.querySelector('[aria-label="サイト共通スタイルの変更確認"]');
+  for (let attempt = 0; attempt < 5 && (!review() || review().textContent.includes("確認中")); attempt++) await flush();
+  assert.ok(review()); return review();
+}
+
+test("site-wide style changes count pages whose component instances change with them", async () => {
+  const app = await brandBadgeSite();
+  try {
+    const review = await changeSiteBrand("#aa2200");
+    assert.equal(review.querySelector("p").textContent, "1 ページの参照または見た目に反映されます。");
+    assert.deepEqual([...review.querySelectorAll("li")].map((item) => item.textContent), ["別ページ · ja-JP"], "a page that overrides brand keeps its look");
+    assert.equal(button("サイト共通スタイルを保存", review).disabled, false);
+  } finally { await app.cleanup(); }
+});
+
+test("site-wide styles cannot be saved while the pages that place components cannot be checked", async () => {
+  const app = await brandBadgeSite({ readLibrary: async () => { throw new Error("offline"); } });
+  try {
+    assert.ok(text().includes("共通部品を読み込めませんでした。"));
+    const review = await changeSiteBrand("#aa2200");
+    assert.equal(review.querySelector('[role="alert"]').textContent, "影響を検証できません。参照の種類・ページの取得権限を確認してください。編集内容は保持しています。");
+    assert.equal(button("サイト共通スタイルを保存", review).disabled, true);
+  } finally { await app.cleanup(); }
+});
+
 test("unsaved component changes are kept on the device per site and offered again after reopening", async () => {
   const { createBrowserRecoveryStore } = await import("@niho/web/history");
   const storage = memoryStorage(), key = "niho-web:recovery:v1:staff-a:library/demo", store = () => createBrowserRecoveryStore({ scope: "staff-a", storage });
