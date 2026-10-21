@@ -164,8 +164,9 @@ function dateLabel(value: string): string {
 
 function roleLabel(value: Role): string { return value === "owner" ? "オーナー" : "編集者"; }
 
+// Experience は Backend #19268 の本番反映と bridge secret 設定後に有効化する。
 function editorEnabled(project: Project): boolean {
-  return project.id === "project-experience" && project.site.id === "experience" || project.id === "project-kamakura" && project.site.id === "kamakura";
+  return project.id === "project-kamakura" && project.site.id === "kamakura";
 }
 
 function Notice({ title, children, retry }: { readonly title: string; readonly children: string; readonly retry?: () => void }) {
@@ -387,7 +388,7 @@ function App() {
       {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
         : selected && screen.kind === "editor"
-          ? selected.id === "project-experience" && selected.site.id === "experience"
+          ? editorEnabled(selected) && selected.id === "project-experience" && selected.site.id === "experience"
             ? <ExperienceEditor project={selected} />
             : selected.id === "project-kamakura" && selected.site.id === "kamakura"
               ? <KamakuraEditor project={selected} />
