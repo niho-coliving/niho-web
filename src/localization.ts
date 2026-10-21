@@ -1,12 +1,12 @@
 import { parseComponentLibrary } from "./components.js";
 import { parsePageDocument } from "./document.js";
 import type {
-  BlockContracts, ComponentDefinition, ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode
+  BlockContracts, ComponentDefinition, ComponentNode, ElementNode, InstanceNode, PageDocument, PageImage, PageNode
 } from "./types.js";
 import { fail, identifier, keys, line, localeCode, parseAssetReference, publicImageSrcSet, publicImageUrl, record, string } from "./validation-utils.js";
 import type {
   BlockLocalizationSchema, LocalizationCollection, LocalizationDraftEntry, LocalizationExtractionOptions, LocalizationIssue, LocalizationLocale,
-  LocalizationOverlay, LocalizationStatus, LocalizationUnit, LocalizationUnitScope, LocalizationValue, LocalizationValueKind, LocalizedRichText,
+  LocalizationOverlay, LocalizationStatus, LocalizationUnit, LocalizationUnitScope, LocalizationValue, LocalizationValueKind, LocalizedAsset, LocalizedRichText,
   LocalizedDocumentSaveValidation, LocalizedRichTextNode, MaterializedLocalization, SiteLocalizationConfig, TranslationCandidate, TranslationResult
 } from "./localization-types.js";
 
@@ -35,6 +35,8 @@ function fingerprint(value: unknown, path: string): string {
   return result;
 }
 function detached<T>(value: T): T { return structuredClone(value); }
+/** ソーシャルカバーの画像は URL か素材参照。srcset は持たない。 */
+const pageImageValue = (image: PageImage): LocalizedAsset => "asset" in image ? { kind: "asset", asset: detached(image.asset) } : { kind: "image-url", src: image.src };
 
 /** Validate config without inventing a source locale or inferring one from site metadata. */
 export function parseSiteLocalizationConfig(input: unknown): SiteLocalizationConfig {
@@ -273,7 +275,7 @@ export async function collectLocalizationUnits(configInput: unknown, documentInp
     field: "meta.ogImage.alt", kind: "text", translatable: true, required: true, sourceValue: document.meta.ogImage.alt, context: "Open Graph image alt", maxLength: 300, allowEmpty: true, singleLine: true });
   if (document.meta?.ogImage) addUnit(state, { unitId: "page.meta.ogImage.src", scope: "page", ownerId: document.pageId,
     field: "meta.ogImage.src", kind: "asset", translatable: false, required: false,
-    sourceValue: { kind: "image-url", src: document.meta.ogImage.src }, context: "Open Graph image source override" });
+    sourceValue: pageImageValue(document.meta.ogImage), context: "Open Graph image source override" });
   collectNodes(document.body, "page", document.pageId, definitions, allowlist, state);
   for (const component of components?.components ?? []) collectNodes([component.root], "shared-component", component.id, definitions, allowlist, state);
   const units = await Promise.all(state.units.map(async (pending): Promise<LocalizationUnit> => {
@@ -397,7 +399,6 @@ function assertGeneratedReferences(source: string, translated: string, path: str
 function valueForUnit(input: unknown, unit: LocalizationUnit, path: string, generated = false): LocalizationValue {
   if (generated && !unit.translatable) fail(path, "manual-only unit cannot accept generated output");
   const value = parseValue(input, unit.kind, path);
-  if (unit.field === "meta.ogImage.src" && (typeof value === "string" || value.kind !== "image-url")) fail(path, "Open Graph image requires a URL source");
   if (unit.field === "meta.ogImage.src" && typeof value !== "string" && value.kind === "image-url" && value.srcset !== undefined) fail(path, "Open Graph image does not support srcset");
   if (typeof value === "string") {
     if (unit.maxLength !== undefined && value.length > unit.maxLength) fail(path, "localized text exceeds field limit");
@@ -681,7 +682,7 @@ function valueFromPageUnit(document: PageDocument, unit: LocalizationUnit): Loca
   }
   if (unit.field === "meta.ogImage.src") {
     if (!document.meta?.ogImage) fail("$target.meta.ogImage", "localized field is missing");
-    return { kind: "image-url", src: document.meta.ogImage.src };
+    return pageImageValue(document.meta.ogImage);
   }
   const parts = unit.field.split("."), node = findNode(document.body, parts[1]!);
   if (!node) fail("$target.body", "localization node no longer exists");
@@ -735,8 +736,9 @@ function applyPageUnit(document: PageDocument, unit: LocalizationUnit, value: Lo
   if (unit.field === "meta.description") { if (!document.meta) document.meta = {}; document.meta.description = value as string; return; }
   if (unit.field === "meta.ogImage.alt") { if (!document.meta?.ogImage) fail("$overlay", "Open Graph image source changed"); document.meta.ogImage.alt = value as string; return; }
   if (unit.field === "meta.ogImage.src") {
-    if (!document.meta?.ogImage || typeof value === "string" || value.kind !== "image-url") fail("$overlay", "Open Graph image source changed");
-    document.meta.ogImage.src = value.src; return;
+    if (!document.meta?.ogImage || typeof value === "string" || value.kind === "rich-text") fail("$overlay", "Open Graph image source changed");
+    const { alt } = document.meta.ogImage;
+    document.meta.ogImage = value.kind === "asset" ? { asset: detached(value.asset), alt } : { src: value.src, alt }; return;
   }
   applyNodeField(document.body, unit, value);
 }

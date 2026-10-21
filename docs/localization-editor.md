@@ -74,7 +74,7 @@ const checked = await validateLocalizedDocumentSave(
 
 原文は従来の全デザイン機能を使えます。訳文では、現在のcollectionが宣言した次だけを編集できます。
 
-- ページtitle、description、OG画像のURLとalt
+- ページtitle、description、OG画像（URLか素材参照）とalt
 - ID付きtext / rich text、`alt` / `aria-label` / `title`
 - schemaで許可したcomponent instance / blockの表示文言
 - 言語別画像のasset referenceまたは安全なURL source
@@ -85,7 +85,7 @@ const checked = await validateLocalizedDocumentSave(
 
 URLと`srcset`は既存文書validatorと同じ制約です。各値は1〜2,048文字のHTTPS URLまたは`/`から始まるroot-relative URLで、空白・制御文字・引用符・`< >`・backslash、`http:`、`data:`、`javascript:`、protocol-relative、資格情報付きURL、fragment-onlyを拒否します。現行`srcset`は候補列ではなく**単一URLだけ**を許可し、commaや空白を含めません。width / height / style / href / ID / token / event / 業務propsは原文共通のままです。URLもasset参照も翻訳providerへ送りません。
 
-OG画像は`page.meta.ogImage.src`の任意・手動専用URL unitと、従来の`page.meta.ogImage.alt` text unitに分かれます。画像の手動変更は未確認draftとなり、現在のsource fingerprintに対して確認するまで言語版を完成扱いにしません。原文画像が変わっても手動draftは保持し、`review-needed`へ戻します。素材の権利・出所・公開可否、immutable referenceの発行は引き続きホストの責務であり、このライブラリのURL検証は素材認可ではありません。
+OG画像は`page.meta.ogImage.src`の任意・手動専用の画像unitと、従来の`page.meta.ogImage.alt` text unitに分かれます。画像unitの値は本文の画像と同じく素材参照（`{ kind: "asset" }`）か単一URL（`{ kind: "image-url" }`、`srcset`なし）で、「素材を選ぶ」から素材ライブラリの画像も選べます。画像の手動変更は未確認draftとなり、現在のsource fingerprintに対して確認するまで言語版を完成扱いにしません。原文画像が変わっても手動draftは保持し、`review-needed`へ戻します。素材の権利・出所・公開可否、immutable referenceの発行は引き続きホストの責務であり、このライブラリのURL検証は素材認可ではありません。
 
 共通部品のunitは定義ID＋定義内node IDで一度だけ表示します。通常文字・空alt・rich text・asset referenceの手修正、候補採用、確認は`command`でoverlayへ保存します。ホストはshared-component unitをサイト＋target localeの共有値として永続化し、同じ定義を使う全ページの`readPage`で同じ値・確認状態を返してください。ページごとのoverlay表現を採る場合も、1ページでの`set-value`／採用／確認を同一transactionまたは整合する更新処理で全利用ページへ反映し、ページ移動で値を巻き戻してはいけません。正本`ComponentLibrary`自体は変更しません。
 

@@ -1,5 +1,5 @@
 import type { EditorTarget } from "./editor-types.js";
-import type { ComponentNode, ElementNode, InstanceNode, NodeStyle, PageDocument, PageNode } from "./types.js";
+import type { ComponentNode, ElementNode, InstanceNode, NodeStyle, PageDocument, PageImage, PageNode } from "./types.js";
 
 /** 人が読む差分。path は日本語の箇所名、before / after は表示用の文字列。 */
 export type DocumentChange = { path: string; before: string; after: string };
@@ -98,7 +98,11 @@ export function diffDocuments(before: PageDocument, after: PageDocument, options
   push("ページタイトル", before.title, after.title);
   const oldMeta = before.meta ?? {}, newMeta = after.meta ?? {};
   push("説明文", oldMeta.description, newMeta.description);
-  push("ソーシャルカバー", oldMeta.ogImage, newMeta.ogImage, (value) => value && typeof value === "object" ? show(`${(value as { src: string }).src}（${(value as { alt: string }).alt}）`) : none);
+  push("ソーシャルカバー", oldMeta.ogImage, newMeta.ogImage, (value) => {
+    if (!value || typeof value !== "object") return none;
+    const image = value as PageImage;
+    return show(`${"asset" in image ? `素材 ${image.asset.provider}:${image.asset.id}` : image.src}（${image.alt}）`);
+  });
   push("ファビコン", oldMeta.favicon, newMeta.favicon);
   push("検索エンジンに表示しない", !!oldMeta.noindex, !!newMeta.noindex, (value) => value ? "表示しない" : "表示する");
   push("構造化データ", oldMeta.structuredData ?? [], newMeta.structuredData ?? []);

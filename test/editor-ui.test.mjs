@@ -311,6 +311,7 @@ test("public information edits are undoable document edits saved in meta", async
     await change(inputIn(page, "説明文"), "海のそばの暮らしを\n紹介します。");
     assert.equal(document.querySelector('[role="status"]').textContent, "未保存の変更あり");
     assert.ok(page.textContent.includes("16 / 500")); assert.ok(page.textContent.includes("検索結果に表示される文章です。"));
+    assert.equal(buttonIn(page, "画像を選ぶ"), undefined); assert.equal(inputIn(page, "画像 URL").closest("details"), null);
     await change(inputIn(page, "画像 URL"), "javascript:alert(1)");
     assert.ok(page.textContent.includes("URL は https:// か / から始まる形式")); assert.equal(button("下書き保存").disabled, true);
     await change(inputIn(page, "画像 URL"), "/cover.jpg"); await change(inputIn(page, "画像の説明"), "海の写真");
@@ -597,6 +598,77 @@ test("staff upload an image, set its alt, replace a page image, save the draft a
     assert.deepEqual(saved.asset, { provider: "uploads", id: "asset-1" }); assert.deepEqual(saved.attrs, { alt: "朝の海辺" });
     await click("最新の文書を再読込");
     assert.equal(app.calls.reads.length, 2); assert.equal(canvasNode("photo").getAttribute("src"), "/media/asset-1.png");
+  } finally { await app.cleanup(); }
+});
+
+const night = { id: "night", name: "夜の海.avif", mimeType: "image/avif", bytes: 1024, width: 1200, height: 630, alt: "夜の海", src: "/media/night.avif", thumbnailUrl: "/media/night.avif" };
+const coverFrame = (root) => root.querySelector(".e-cover-frame");
+test("staff choose the page social cover from the library, save it as an asset reference and see it after reload", async () => {
+  let app;
+  const terrace = { id: "terrace", name: "テラス.jpg", mimeType: "image/jpeg", bytes: 1024, width: 1200, height: 630, alt: "テラス", src: "/media/terrace.jpg", thumbnailUrl: "/media/terrace.jpg" };
+  const host = pageHost(), library = createMemoryAssetLibrary({ siteId: "demo", seed: [garden, night, terrace], documents: () => app ? [{ pageId: "home", locale: "ja-JP", title: "ホーム", state: "draft", document: app.stored() }] : [] });
+  app = await setup({ adapter: host.adapter, assets: library });
+  try {
+    let page = await panel("ページ");
+    assert.equal(coverFrame(page).textContent, "画像は未設定です"); assert.equal(buttonIn(page, "画像を外す"), undefined);
+    await press(buttonIn(page, "画像を選ぶ"));
+    assert.equal(assetPanel().closest("[hidden]"), null); assert.equal(assetPanel().querySelector("h2").textContent, "ソーシャルカバーを選ぶ");
+    await chooseAsset("夜の海.avif");
+    assert.equal(assetPanel().querySelector('[role="alert"]').textContent, "ソーシャルカバーに使えるのは JPEG・PNG・WebP・GIF の画像です。");
+    assert.equal(app.stored().meta, undefined); assert.equal(button("下書き保存").disabled, true);
+    await chooseAsset("庭の緑.png");
+    assert.ok(document.body.textContent.includes("ソーシャルカバーを設定しました。画像の説明を確認してください。"));
+    assert.equal(assetPanel().closest("[hidden]") !== null, true);
+    page = await panel("ページ");
+    assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/garden.png");
+    assert.ok(page.textContent.includes("素材ライブラリの画像")); assert.equal(inputIn(page, "画像の説明").value, "庭の緑");
+    assert.equal(inputIn(page, "画像 URL").value, ""); assert.equal(inputIn(page, "画像 URL").closest("details").open, false);
+    await change(inputIn(page, "画像の説明"), "庭に面したリビング");
+    await click("下書き保存");
+    assert.deepEqual(app.calls.saves[0].document.meta, { ogImage: { asset: { provider: "uploads", id: "garden" }, alt: "庭に面したリビング" } });
+    await click("最新の文書を再読込");
+    page = await panel("ページ");
+    assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/garden.png"); assert.equal(inputIn(page, "画像の説明").value, "庭に面したリビング");
+    // ソーシャルカバーで使っている素材は削除できず、使用箇所の置き換えでカバーも差し替わる（SNS で表示できない形式は拒否）。
+    await tool("素材"); await chooseAsset("庭の緑.png");
+    assert.equal(button("削除…").disabled, true); assert.ok(assetPanel().textContent.includes("このページで使用中です。"));
+    await click("このページの使用箇所を置き換え"); await chooseAsset("夜の海.avif");
+    assert.equal(assetPanel().querySelector('[role="alert"]').textContent, "この画像はソーシャルカバーにも使われています。ソーシャルカバーに使えるのは JPEG・PNG・WebP・GIF の画像です。");
+    await chooseAsset("テラス.jpg"); assert.ok(document.body.textContent.includes("このページの使用箇所を置き換えました。"));
+    page = await panel("ページ");
+    assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/terrace.jpg"); assert.equal(inputIn(page, "画像の説明").value, "庭に面したリビング");
+    // URL を空で確定しても素材の画像は外れない。URL を入れると URL の画像へ切り替わる。
+    await change(inputIn(page, "画像 URL"), ""); assert.ok(page.textContent.includes("素材ライブラリの画像")); assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/terrace.jpg");
+    await change(inputIn(page, "画像 URL"), "/cover.jpg");
+    assert.ok(page.textContent.includes("URL で指定した画像")); assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "https://example.test/cover.jpg");
+    await press(buttonIn(page, "画像を外す")); assert.equal(coverFrame(page).textContent, "画像は未設定です");
+    await click("下書き保存"); assert.equal(app.calls.saves[1].document.meta, undefined);
+  } finally { await app.cleanup(); }
+});
+
+test("the site social cover is chosen from the library, saved with site settings and resolved after reload", async () => {
+  const host = pageHost(), library = createMemoryAssetLibrary({ siteId: "demo", seed: [garden] });
+  let app = await setup({ adapter: host.adapter, assets: library });
+  try {
+    const site = await panel("サイト");
+    assert.equal(inputIn(site, "画像の説明").disabled, true);
+    await press(buttonIn(site, "画像を選ぶ"));
+    assert.equal(assetPanel().querySelector("h2").textContent, "ソーシャルカバーを選ぶ");
+    await chooseAsset("庭の緑.png");
+    assert.equal(assetPanel().closest("[hidden]") !== null, true); assert.equal(button("下書き保存").disabled, true);
+    assert.equal(coverFrame(site).querySelector("img").getAttribute("src"), "/media/garden.png"); assert.equal(inputIn(site, "画像の説明").value, "庭の緑");
+    await press(buttonIn(site, "サイト設定を保存"));
+    assert.deepEqual(host.calls.settingsSaves[0].settings, { title: "デモサイト", description: "サイトの説明", ogImage: { asset: { provider: "uploads", id: "garden" }, alt: "庭の緑" }, locale: "ja" });
+    const page = await panel("ページ"); assert.equal(coverFrame(page).textContent, "サイト共通の画像を使います");
+  } finally { await app.cleanup(); }
+  app = await setup({ adapter: host.adapter, assets: library });
+  try {
+    const site = await panel("サイト");
+    assert.equal(coverFrame(site).querySelector("img").getAttribute("src"), "/media/garden.png");
+    assert.ok(site.textContent.includes("素材ライブラリの画像"));
+    await press(buttonIn(site, "画像を外す")); assert.equal(inputIn(site, "画像の説明").value, "");
+    await press(buttonIn(site, "サイト設定を保存"));
+    assert.deepEqual(host.calls.settingsSaves[1].settings, { title: "デモサイト", description: "サイトの説明", locale: "ja" });
   } finally { await app.cleanup(); }
 });
 
