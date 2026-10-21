@@ -3,6 +3,7 @@ import { PageEditor } from "../src/editor.js";
 import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
 import type { EditorAdapter, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSite, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
+import { kamakuraAssetLibrary } from "./kamakura-assets.js";
 
 const BASE = "/api/projects/project-kamakura/sites/kamakura/editor";
 const DOMAIN = "https://next-kamakura.niho.life";
@@ -212,7 +213,7 @@ export function KamakuraEditor({ project }: { readonly project: Project }) {
         <div><h2 id="legacy-pages-title">旧形式ページ（読み取り専用）</h2><p>一覧は確認用です。編集は上の「旧形式のデザイン編集を開く」から行ってください。</p></div>
         {ready.legacy.length === 0 ? <p>旧形式ページはありません。</p> : <ul>{ready.legacy.map((page) => <li key={page.name}><span>{page.name}</span><code>{page.path}</code></li>)}</ul>}
       </section>
-      {adapter && ready.pages.length > 0 && <PageEditor adapter={adapter} insertableBlocks={[]} />}
+      {adapter && ready.pages.length > 0 && <PageEditor adapter={adapter} assets={kamakuraAssetLibrary} insertableBlocks={[]} />}
     </>}
   </main>;
 }

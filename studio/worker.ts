@@ -674,7 +674,67 @@ async function enforceMutationBoundary(request: Request): Promise<Record<string,
   return parsed;
 }
 
-type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number };
+type KamakuraAssetOperation = "list" | "upload-intent" | "update" | "usages" | "resolve";
+type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number; readonly assetOperation?: KamakuraAssetOperation };
+
+const KAMAKURA_ASSET_PROVIDERS = new Set(["kamakura-upload", "kamakura-studio", "kamakura-cms"]);
+const KAMAKURA_ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
+const KAMAKURA_UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const KAMAKURA_ASSET_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"]);
+const MAX_KAMAKURA_ASSET_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+function assetText(value: unknown, maximum: number, allowEmpty = false): value is string {
+  return typeof value === "string" && value.length <= maximum && (allowEmpty || !!value.trim()) && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
+function onlyAssetKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): void {
+  const keys = new Set([...required, ...optional]);
+  if (required.some((key) => !Object.hasOwn(value, key)) || Object.keys(value).some((key) => !keys.has(key))) throw new AuthenticationError("invalid asset request");
+}
+
+function exactAssetKeys(value: Record<string, unknown>, expected: readonly string[]): void {
+  const actual = Object.keys(value).sort(), keys = [...expected].sort();
+  if (actual.length !== keys.length || actual.some((key, index) => key !== keys[index])) throw new AuthenticationError("invalid asset request");
+}
+
+function kamakuraAssetReference(value: unknown, uploadOnly = false): Record<string, string> {
+  if (!isRecord(value)) throw new AuthenticationError("invalid asset reference");
+  exactAssetKeys(value, ["provider", "id"]);
+  if (typeof value.provider !== "string" || !KAMAKURA_ASSET_PROVIDERS.has(value.provider) || (uploadOnly && value.provider !== "kamakura-upload") || typeof value.id !== "string" || !(value.provider === "kamakura-upload" ? KAMAKURA_UPLOAD_ID.test(value.id) : KAMAKURA_ASSET_ID.test(value.id))) throw new AuthenticationError("invalid asset reference");
+  return { provider: value.provider, id: value.id };
+}
+
+function validateKamakuraAssetBody(body: Uint8Array, operation: KamakuraAssetOperation): Uint8Array {
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
+  catch { throw new AuthenticationError("invalid asset JSON"); }
+  if (!isRecord(parsed) || parsed.siteId !== KAMAKURA_EDITOR_SITE_ID) throw new AuthenticationError("invalid asset site");
+  if (operation === "list") {
+    onlyAssetKeys(parsed, ["siteId", "search", "kind", "folderId", "limit"], ["cursor", "provider", "recent"]);
+    if (!assetText(parsed.search, 200, true) || !["all", "image", "video", "pdf", "other"].includes(String(parsed.kind)) || parsed.folderId !== null || !Number.isSafeInteger(parsed.limit) || (parsed.limit as number) < 1 || (parsed.limit as number) > 60) throw new AuthenticationError("invalid asset list request");
+    if (parsed.cursor !== undefined && !assetText(parsed.cursor, 500)) throw new AuthenticationError("invalid asset cursor");
+    if (parsed.provider !== undefined && (typeof parsed.provider !== "string" || !KAMAKURA_ASSET_PROVIDERS.has(parsed.provider))) throw new AuthenticationError("invalid asset provider");
+    if (parsed.recent !== undefined && typeof parsed.recent !== "boolean") throw new AuthenticationError("invalid asset recent flag");
+  } else if (operation === "upload-intent") {
+    exactAssetKeys(parsed, ["siteId", "folderId", "name", "mimeType", "bytes", "provider"]);
+    if (parsed.folderId !== null || parsed.provider !== "kamakura-upload" || !assetText(parsed.name, 200) || typeof parsed.mimeType !== "string" || !KAMAKURA_ASSET_IMAGE_TYPES.has(parsed.mimeType) || !Number.isSafeInteger(parsed.bytes) || (parsed.bytes as number) < 1 || (parsed.bytes as number) > MAX_KAMAKURA_ASSET_UPLOAD_BYTES) throw new AuthenticationError("invalid asset upload request");
+  } else if (operation === "update") {
+    exactAssetKeys(parsed, ["siteId", "reference", "expectedVersion", "changes"]);
+    const reference = kamakuraAssetReference(parsed.reference, true);
+    if (!assetText(parsed.expectedVersion, 200) || !isRecord(parsed.changes)) throw new AuthenticationError("invalid asset update request");
+    onlyAssetKeys(parsed.changes, [], ["name", "alt"]);
+    if (Object.keys(parsed.changes).length === 0 || parsed.changes.name !== undefined && !assetText(parsed.changes.name, 200) || parsed.changes.alt !== undefined && !assetText(parsed.changes.alt, 1000, true)) throw new AuthenticationError("invalid asset metadata");
+    parsed.reference = reference;
+  } else if (operation === "usages") {
+    exactAssetKeys(parsed, ["siteId", "reference"]);
+    parsed.reference = kamakuraAssetReference(parsed.reference);
+  } else {
+    exactAssetKeys(parsed, ["siteId", "references"]);
+    if (!Array.isArray(parsed.references) || parsed.references.length > 5000) throw new AuthenticationError("invalid asset references");
+    parsed.references = parsed.references.map((reference) => kamakuraAssetReference(reference));
+  }
+  return new TextEncoder().encode(JSON.stringify(parsed));
+}
 
 function experienceEditorRoute(action: string, method: string, staging = false): EditorRoute | "method_not_allowed" | null {
   const routeAction = staging ? action.replace(/^\/editor-staging(?=\/|$)/u, "/editor") : action;
@@ -696,6 +756,12 @@ function experienceEditorRoute(action: string, method: string, staging = false):
 }
 
 function kamakuraEditorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
+  const asset = /^\/editor\/assets\/(list|upload-intent|update|usages|resolve)$/u.exec(action);
+  if (asset) {
+    if (method !== "POST") return "method_not_allowed";
+    const operation = asset[1] as KamakuraAssetOperation;
+    return { upstreamPath: `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/assets/${operation}`, bodyLimit: operation === "resolve" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES, assetOperation: operation };
+  }
   if (action === "/editor/catalog") {
     if (method !== "GET") return "method_not_allowed";
     return { upstreamPath: `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`, bodyLimit: MAX_MUTATION_BODY_BYTES };
@@ -760,11 +826,11 @@ async function readBoundedBody(request: Request, maximumBytes: number): Promise<
   return body;
 }
 
-async function readBoundedResponse(response: Response): Promise<unknown> {
+async function readBoundedResponse(response: Response, maximumBytes = MAX_EDITOR_RESPONSE_BYTES): Promise<unknown> {
   const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json") throw new BridgeUnavailableError("invalid bridge response media type");
   const declaredLength = response.headers.get("Content-Length");
-  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > MAX_EDITOR_RESPONSE_BYTES)) throw new BridgeUnavailableError("bridge response too large");
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > maximumBytes)) throw new BridgeUnavailableError("bridge response too large");
   const reader = response.body?.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -773,7 +839,7 @@ async function readBoundedResponse(response: Response): Promise<unknown> {
       const chunk = await reader.read();
       if (chunk.done) break;
       total += chunk.value.byteLength;
-      if (total > MAX_EDITOR_RESPONSE_BYTES) { await reader.cancel("bridge response too large"); throw new BridgeUnavailableError("bridge response too large"); }
+      if (total > maximumBytes) { await reader.cancel("bridge response too large"); throw new BridgeUnavailableError("bridge response too large"); }
       chunks.push(chunk.value);
     }
   }
@@ -868,7 +934,8 @@ function sanitizeKamakuraCatalog(value: unknown): Record<string, unknown> {
 
 async function signedKamakuraEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
   if (request.method === "GET" && (request.body !== null || ![null, "0"].includes(request.headers.get("Content-Length")))) throw new AuthenticationError("GET body rejected");
-  const body = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
+  const rawBody = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
+  const body = route.assetOperation ? validateKamakuraAssetBody(rawBody, route.assetOperation) : rawBody;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const bodyBytes = body.slice().buffer;
   const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
@@ -908,6 +975,67 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
   finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
 }
 
+async function signedKamakuraAssetPreview(request: Request, env: Env, identity: AccessIdentity, assetId: string): Promise<Response> {
+  if (!KAMAKURA_UPLOAD_ID.test(assetId)) return json({ error: "not_found" }, 404);
+  if (request.body !== null || ![null, "0"].includes(request.headers.get("Content-Length"))) return json({ error: "invalid_request" }, 400);
+  if (request.headers.get("Sec-Fetch-Site") !== "same-origin") return json({ error: "invalid_request" }, 400);
+  const path = `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/assets/preview`;
+  const method = "POST";
+  const body = new TextEncoder().encode(JSON.stringify({ siteId: KAMAKURA_EDITOR_SITE_ID, assetId }));
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", body.slice().buffer));
+  const message = `v1\n${timestamp}\n${method}\n${path}\n${bodyHash}\n${KAMAKURA_EDITOR_PROJECT_ID}\n${identity.subject}`;
+  const key = await crypto.subtle.importKey("raw", bridgeSecret(env.KAMAKURA_STUDIO_BRIDGE_SECRET).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
+  let streaming = false;
+  const cleanup = () => { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); };
+  try {
+    const signedRequest = new Request(`${KAMAKURA_EDITOR_UPSTREAM_ORIGIN}${path}`, {
+      method, cache: "no-store", redirect: "manual", signal: controller.signal,
+      headers: {
+        Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store",
+        "X-NIHO-Studio-Project": KAMAKURA_EDITOR_PROJECT_ID, "X-NIHO-Studio-Subject": identity.subject,
+        "X-NIHO-Studio-Timestamp": timestamp, "X-NIHO-Studio-Signature": `v1=${signature}`
+      }, body: body.slice().buffer
+    });
+    const imageResponse = await env.KAMAKURA_SITE.fetch(signedRequest);
+    if (imageResponse.status >= 300 && imageResponse.status < 400) throw new BridgeUnavailableError("preview redirect rejected");
+    if (imageResponse.status === 404) { await imageResponse.body?.cancel(); return json({ error: "not_found" }, 404); }
+    if (imageResponse.status === 401 || imageResponse.status === 403 || imageResponse.status === 429 || imageResponse.status >= 500) throw new BridgeUnavailableError("preview service unavailable");
+    if (!imageResponse.ok) {
+      await imageResponse.body?.cancel();
+      return json({ error: "invalid_request" }, imageResponse.status === 400 || imageResponse.status === 413 || imageResponse.status === 422 ? 400 : 503);
+    }
+    const contentType = imageResponse.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    if (!KAMAKURA_ASSET_IMAGE_TYPES.has(contentType) || !imageResponse.body) {
+      await imageResponse.body?.cancel();
+      return json({ error: "invalid_request" }, 503);
+    }
+    clearTimeout(timeout);
+    const reader = imageResponse.body.getReader();
+    const streamedBody = new ReadableStream<Uint8Array>({
+      async pull(streamController) {
+        try {
+          const chunk = await reader.read();
+          if (chunk.done) { streamController.close(); cleanup(); }
+          else streamController.enqueue(chunk.value);
+        } catch (error) { streamController.error(error); cleanup(); }
+      },
+      async cancel(reason) { try { await reader.cancel(reason); } finally { controller.abort(); cleanup(); } }
+    });
+    const headers = securityHeaders(contentType);
+    const streamedResponse = new Response(streamedBody, { status: 200, headers });
+    streaming = true;
+    return streamedResponse;
+  } catch {
+    throw new BridgeUnavailableError("preview request failed");
+  } finally { if (!streaming) cleanup(); }
+}
+
 async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
   if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
   const experience = projectId === EDITOR_PROJECT_ID && siteId === EDITOR_SITE_ID;
@@ -915,6 +1043,16 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   const kamakura = projectId === KAMAKURA_EDITOR_PROJECT_ID && siteId === KAMAKURA_EDITOR_SITE_ID;
   if (!experience && !kamakura) return json({ error: "not_found" }, 404);
   if (experience && !staging && action !== "/editor" && !action.startsWith("/editor/")) return json({ error: "not_found" }, 404);
+  const assetPreview = kamakura ? /^\/editor\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/preview$/iu.exec(action) : null;
+  if (assetPreview) {
+    if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+    if (!await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
+    try { return await signedKamakuraAssetPreview(request, env, identity, assetPreview[1]!); }
+    catch (error) {
+      if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
+      throw error;
+    }
+  }
   const route = experience ? experienceEditorRoute(action, request.method, staging) : kamakuraEditorRoute(action, request.method);
   if (route === null) return json({ error: "not_found" }, 404);
   if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
@@ -931,10 +1069,11 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   }
 }
 
-function withStaticSecurity(response: Response, editor = false): Response {
+function withStaticSecurity(response: Response, editor = false, allowKamakuraUpload = false): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
-  headers.set("Content-Security-Policy", `default-src 'none'; script-src 'self'; style-src 'self'${editor ? " 'unsafe-inline'" : ""}; img-src 'self' https:; connect-src 'self'; font-src 'self';${editor ? " frame-src 'self';" : ""} frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
+  const connectSrc = "connect-src 'self'" + (allowKamakuraUpload ? " " + KAMAKURA_EDITOR_UPSTREAM_ORIGIN : "") + ";";
+  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + " font-src 'self';" + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -994,11 +1133,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
   const isStagingExperienceEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(url.pathname);
-  const isEditor = /^\/projects\/(?:project-experience\/sites\/experience|project-kamakura\/sites\/kamakura)\/editor\/?$/u.test(url.pathname) || isStagingExperienceEditor;
+  const isKamakuraEditor = /^\/projects\/project-kamakura\/sites\/kamakura\/editor\/?$/u.test(url.pathname);
+  const isEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/?$/u.test(url.pathname) || isKamakuraEditor || isStagingExperienceEditor;
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
     if (isStagingExperienceEditor && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, isKamakuraEditor);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }
