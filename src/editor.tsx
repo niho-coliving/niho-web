@@ -546,6 +546,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     if (masterId) {
       const current = libraryRef.current; if (!current) return;
       const history = travelLibrary(current.history, direction), page = sessionRef.current?.history.present;
+      if (Object.keys(siteSettings.styles.tokens ?? {}).some((name) => JSON.stringify(history.present.tokens[name]) !== JSON.stringify(current.history.present.tokens[name]))) { setNotice(sharedTokenReason(siteSettings.editable)); return; }
       if (page && !fitsLibrary(page, history.present, blocks, siteSettings.styles)) { setNotice(mismatch); return; }
       replaceLibrary({ ...current, history }); setSelection(null); setNotice("");
       if (!history.present.components.some((component) => component.id === masterId)) resetMode();

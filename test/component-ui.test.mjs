@@ -925,3 +925,31 @@ test("the component editor's style panel names who owns each library token and l
     assert.deepEqual(saved.components.find((component) => component.id === "site_header").root.children[0].style, { base: { color: { token: "brand" } } });
   } finally { await app.cleanup(); }
 });
+
+test("component undo cannot change a library token after the site takes ownership of its name", async () => {
+  let savedSettings;
+  const app = await setup({ library: { ...library(), tokens: { "color-1": { type: "color", value: "#111111", label: "カラー 1" } } }, adapter: {
+    readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja" }, version: "s1" }),
+    saveSiteSettings: async ({ settings }) => { savedSettings = structuredClone(settings); return { status: "saved", version: "s2" }; }
+  } });
+  const styles = () => document.querySelector('section[aria-label="共通スタイル"]');
+  try {
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+    const libraryRow = styles().querySelector("button.e-lib-row"); assert.ok(libraryRow);
+    await click(libraryRow); await change(input("色", styles()), "#222222"); await click("下書き保存");
+    assert.equal(app.calls.librarySaves.length, 1); assert.equal(app.calls.librarySaves[0].library.tokens["color-1"].value, "#222222");
+
+    await click(button("ページに戻る", document.querySelector(".e-part-banner")));
+    await click(document.querySelector('nav[aria-label="編集ツール"] button[title="スタイル"]'));
+    await click("サイト共通", styles()); await click(styles().querySelector('button[aria-label="カラーを追加"]'));
+    await wait(20); await click("サイト共通スタイルを保存"); await flush();
+    assert.equal(savedSettings?.tokens?.["color-1"]?.type, "color");
+
+    await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
+    await click("元に戻す");
+    assert.ok(text().includes("サイト共通の値のため、部品の編集では変更できません。"));
+    assert.equal(button("下書き保存").disabled, true, "blocked undo does not dirty the library");
+    assert.equal(app.calls.librarySaves.length, 1, "blocked undo cannot save an older shared-token value");
+  } finally { await app.cleanup(); }
+});
