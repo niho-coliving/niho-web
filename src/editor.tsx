@@ -13,7 +13,7 @@ import { styleEditorCss } from "./editor-style-css.js";
 import { Field } from "./editor-fields.js";
 import { StyleInspector, type StyleRange } from "./editor-style-inspector.js";
 import { SharedStyleLibrary } from "./editor-shared-styles.js";
-import { detachRemovedSiteStyles, parseSiteStyles, resolvePageStyles, retainPageStyles, type SiteStyles } from "./site-styles.js";
+import { detachRemovedSiteStyles, parseSiteStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type { StyleState } from "./editor-style-motion.js";
 import { carouselPreset, togglePreset } from "./interaction-presets.js";
 import { editorTiers, hiddenAt, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
@@ -879,9 +879,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
       // 部品は文書の文字スタイルを参照できないため、選んだ範囲の文字スタイルは同じ見た目の個別指定にしてから登録する。
       const source = textStylePaths(current.history.present, path).reduce((document, at) => editDocument(document, { type: "nodeTextStyle", path: at, name: undefined, detach: true }, blocks, current.locks, lib.history.present, siteSettings.styles), current.history.present);
       // 選んだ要素は同じ ID のインスタンスになるため、選択はそのまま新しいインスタンスを指す。
-      const created = createComponentFromNode(resolvePageStyles(source, siteSettings.styles), path, lib.history.present, { name, kind }, blocks, current.locks);
-      const page = retainPageStyles(created.document, source, siteSettings.styles);
-      replaceLibrary({ ...lib, history: commitLibrary(lib.history, created.library) }); replace({ ...current, history: commitHistory(current.history, page) });
+      const created = createComponentFromNode(source, path, lib.history.present, { name, kind }, blocks, current.locks, siteSettings.styles);
+      replaceLibrary({ ...lib, history: commitLibrary(lib.history, created.library) }); replace({ ...current, history: commitHistory(current.history, created.document) });
       setNotice(""); setFieldEpoch((value) => value + 1); return undefined;
     } catch (error) { return componentProblem(error) ?? message(error); }
   }
