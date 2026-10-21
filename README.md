@@ -4,6 +4,8 @@
 
 このリポジトリには公開可能な文書契約と描画処理を置きます。認証情報、管理 API、サイトの非公開データ、価格・在庫・予約の判断処理は利用側が所有します。
 
+`studio/` には、このライブラリとは独立して配置する NIHO Web Studio host があります。Cloudflare Access の Google 認証、Studio専用D1のProject/Site・membership、参加Project一覧とDashboardを所有し、niho-appのUser/Project DBやcookieには接続しません。サイト編集bridgeは未接続で、公開・解析など未取得の値は合成しません。構成、security boundary、D1 migration、owner bootstrap、配置手順は [Studio runbook](studio/README.md) を参照してください。
+
 ソースは公開されていますが、第三者への再利用ライセンスは付与していません（`UNLICENSED`）。
 
 ## 利用開始
@@ -211,6 +213,13 @@ npm ci
 npm test
 npm run typecheck
 npm pack --dry-run
+```
+
+Studio hostだけの静的UI・Worker buildは次で確認します（test suiteには追加しません）。
+
+```sh
+npm run studio:typecheck
+npm run studio:build
 ```
 
 テストは文書検証、拒否すべき URL / 属性 / CSS、レイアウト、スコープ分離、ブロック契約、React SSR と HTML helper の出力を確認します。public GitHub Actions は secrets・外部 API・非公開リポジトリに依存せず同じ確認を実行します。

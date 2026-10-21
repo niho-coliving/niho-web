@@ -13,6 +13,12 @@ export type ProjectDirectoryProps = {
   onCreateProject: () => void;
   onOpenDashboard: (project: Project) => void;
   onOpenEditor: (project: Project) => void;
+  /** ホストに作成機能がない場合は、実行不能であることを明示する。既定値は従来どおりenabled。 */
+  createAction?: "enabled" | "disabled";
+  /** editor bridge未接続時も、ホストの説明surfaceを開ける正直なラベルにする。 */
+  editorAction?: "enabled" | "pending";
+  /** membership詳細を返さないホストでは、人数・表示名を推測表示しない。 */
+  memberDetails?: "visible" | "hidden";
   /** 一覧へ戻ったとき、読込後にこのProjectの行へ一度だけfocusを戻す。 */
   initialFocusProjectId?: string;
 };
@@ -30,7 +36,7 @@ export function ProjectDirectory(props: ProjectDirectoryProps) {
   if (source.adapter !== props.adapter) { setSource({ adapter: props.adapter, generation: source.generation + 1 }); return null; }
   return <DirectorySession key={source.generation} {...props} />;
 }
-function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEditor, initialFocusProjectId }: ProjectDirectoryProps) {
+function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEditor, createAction = "enabled", editorAction = "enabled", memberDetails = "visible", initialFocusProjectId }: ProjectDirectoryProps) {
   const reader = useCallback(async (signal: AbortSignal) => parseProjectDirectoryResult(await adapter.loadDirectory(signal), (url) => adapter.isThumbnailUrlAllowed(url)), [adapter]);
   const { state, reload } = useProjectRead(reader);
   const [query, setQuery] = useState("");
@@ -52,7 +58,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
     row?.focus(); row?.scrollIntoView?.({ block: "nearest" });
   }, [entries, initialFocusProjectId]);
   return <section className="nw-project-view" aria-label="プロジェクト一覧"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
-    <header className="pv-header"><h1 className="pv-heading">プロジェクト一覧</h1><button type="button" className="pv-primary" onClick={onCreateProject}>作成</button></header>
+    <header className="pv-header"><h1 className="pv-heading">プロジェクト一覧</h1><button type="button" className="pv-primary" onClick={onCreateProject} disabled={createAction === "disabled"} title={createAction === "disabled" ? "プロジェクト作成は管理者対応です" : undefined}>{createAction === "disabled" ? "作成（管理者対応）" : "作成"}</button></header>
     {state.status !== "complete" ? <ReadNotice status={state.status} noun="プロジェクト一覧" retry={reload} />
       : state.value.status === "forbidden" ? <ReadNotice status="forbidden" noun="プロジェクト一覧" retry={reload} />
       : <><div className="pv-toolbar">
@@ -60,15 +66,15 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
         <label><span>並び順</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated">更新が新しい順</option><option value="name">名前順</option></select></label>
         <button type="button" onClick={reload}>再読込</button>
       </div><p className="pv-muted" role="status">{visible.length}件</p>
-      {entries?.length === 0 ? <div className="pv-notice"><p>参加中のプロジェクトはまだありません。作成するか、管理者に参加を依頼してください。</p></div>
+      {entries?.length === 0 ? <div className="pv-notice"><p>{createAction === "disabled" ? "参加中のプロジェクトはまだありません。管理者に参加を依頼してください。" : "参加中のプロジェクトはまだありません。作成するか、管理者に参加を依頼してください。"}</p></div>
         : visible.length === 0 ? <div className="pv-notice"><p>条件に一致するプロジェクトがありません。</p><button type="button" onClick={() => setQuery("")}>検索解除</button></div>
         : <ul className="pv-grid" ref={list}>{visible.map(({ project, summary }) => <li className="pv-card" key={project.id}>
           <button type="button" className="pv-open" data-project-id={project.id} onClick={() => onOpenDashboard(project)} aria-label={`${project.name}（${project.site.name}）のダッシュボード`}><Thumbnail thumbnail={summary.thumbnail} /><span className="pv-card-title"><strong>{project.name}</strong><span>{project.site.name}</span></span></button>
           <div className="pv-card-body"><PublicationBadge status={summary.publicationStatus} />
             <div>{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</div>
-            <p className="pv-muted">参加者 {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>
+            {memberDetails === "visible" && <p className="pv-muted">参加者 {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>}
             <dl className="pv-meta"><div><dt>最終更新</dt><dd><Timestamp value={summary.updatedAt} /></dd></div><div><dt>最終アクセス</dt><dd><Timestamp value={summary.lastAccessedAt} /></dd></div></dl>
-            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>エディター</button></div>
+            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
           </div>
         </li>)}</ul>}
       </>}
