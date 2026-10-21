@@ -15,6 +15,7 @@
 - 公開契約：[niho-web #43](https://github.com/niho-coliving/niho-web/issues/43)
 - 鎌倉接続：[niho-app #19245](https://github.com/niho-coliving/niho-app/issues/19245)
 - Experience接続：[niho-experience #59](https://github.com/niho-coliving/niho-experience/issues/59)
+- Experienceの体験紹介・予約UI文言：[niho-app #19249](https://github.com/niho-coliving/niho-app/issues/19249)
 
 原文言語を設定しない状態を日本語として補完しない。Experienceのサイト原稿は英語→日本語とする。業務ブロック内の商品・体験等については、その実体の原稿言語と既存の翻訳を尊重し、サイト設定で元データの言語を変更しない。
 
@@ -53,7 +54,7 @@ NIHOkamakuraでは日本語原稿から英語版を、NIHO experienceでは英�
 
 再利用するのは翻訳エンジン・認証・非同期処理・変更検知の仕組み。今回必要な「訳文の手編集」「承認」「日英別の公開版保持」は追加する。既存の拠点公開ページの自動翻訳方針は変更しない。
 
-制作プロジェクトは拠点と独立した所有物であるため、既存 `ContentTranslation` のspot所属へ無理に格納しない。翻訳・用語集・候補・公開版はProjectの唯一のSiteに所属させ、APIとworkerがProjectへの権限を検証する。ホスト実装時には `specs/policies/data-ownership.md` にこの所属と削除連動を追記する。
+翻訳・用語集・候補・公開版は制作Siteに所属させ、既存 `ContentTranslation` のspot所属へ格納しない。初期2サイトは既存 `NihoWebPage` と同じNIHO法人所有の事業コンテンツであり、拠点や編集者個人の削除には連動しない。APIとworkerは許可済みSiteと現在のスタッフ権限を検証する。ライブラリのProjectは制作上の論理的なまとまりで、存在しないDBのProject／会員権限を前提にしない。ホスト実装時には `specs/policies/data-ownership.md` にこの所属とサイト廃止時の保持・公開停止を追記する。
 
 ## 読む人と編集する人の操作
 

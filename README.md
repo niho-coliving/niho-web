@@ -182,6 +182,8 @@ const html = renderPageToHtml(document);
 
 スタッフ向けエディターは `@niho/web/editor` の `PageEditor` を使います。左の追加・ページ・レイヤーパネル、中央キャンバスでの直接文字編集とドラッグ配置、右インスペクタ、下書き保存、楽観ロック、公開/rollbackの対象ドメインと差分確認を提供します。[ホスト接続・編集・公開の契約](docs/editor-contract.md)と `npm run demo` のインメモリ動作例を参照してください。
 
+同じ論理ページの日英編集はoptionalな`EditorAdapter.localization`で追加できます。原文言語を明示し、訳文の実キャンバス編集、候補比較・採用・確認、サイト全体の翻訳job状態、サーバー側でも使える共通構造検証を提供します。[多言語エディターのホスト接続](docs/localization-editor.md)と`npm run demo:localization`を参照してください。
+
 ページ一覧（検索・フォルダ・テンプレートと共通枠の区別）、ページの作成・複製・URL変更・公開切替の影響確認、ページ別とサイト共通の公開情報は [ページ管理・公開情報の契約](docs/page-contract.md) を参照してください。公開ページの `<head>` は `@niho/web/pages` の `resolvePageMetadata` で、編集画面と同じ値から作ります。
 画像は URL を直接書く代わりに、サイト別の素材ライブラリの素材ID（`{ provider, id }`）で参照できます。`PageEditor` に `assets` adapter を渡すと、素材のアップロード・検索・代替テキスト編集・配置・置き換え・使用中素材の削除防止を使えます。サイトのアップロード素材、NIHO の公開許可済み CMS 画像、ライセンス確認済みストックを出所ごとに分けて、同じパネルから選べます。公開時の URL 解決は `PageRenderer` / `renderPageToHtml` の `assets` で行います。[素材ライブラリ契約](docs/asset-contract.md)を参照してください。
 

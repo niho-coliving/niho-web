@@ -92,6 +92,7 @@
     "demo": "node examples/editor-demo.mjs",
     "demo:projects": "node examples/projects-demo.mjs",
     "demo:analytics": "node examples/analytics-demo.mjs",
+    "demo:localization": "node examples/localization-demo.mjs",
     "prepare": "npm run build"
   },
   "peerDependencies": {

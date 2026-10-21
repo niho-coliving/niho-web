@@ -393,9 +393,10 @@ export function acceptSavedRevision(history: EditorHistory, submitted: PageDocum
     saved: fingerprint(rebase(submitted))
   };
 }
-export function travelHistory(history: EditorHistory, direction: "undo" | "redo", blocks: EditorBlockRegistry, locks: readonly EditorLock[]): EditorHistory {
+export function travelHistory(history: EditorHistory, direction: "undo" | "redo", blocks: EditorBlockRegistry, locks: readonly EditorLock[], components?: ComponentLibrary): EditorHistory {
   const target = direction === "undo" ? history.past.at(-1) : history.future[0];
   if (!target) return history;
+  parsePageDocument(target, blocks, components ? { components } : {});
   assertLocks(history.present, target, effectiveLocks(history.present, locks, blocks));
   return direction === "undo" ? { past: history.past.slice(0, -1), present: target, future: [history.present, ...history.future] }
     : { past: [...history.past, history.present], present: target, future: history.future.slice(1) };

@@ -1,5 +1,5 @@
 import { normalizePageChange, validatePageChangePlan, validateReleasePlan } from "./editor-model.js";
-import type { EditorAdapter, EditorComponentAdapter, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
+import type { EditorAdapter, EditorComponentAdapter, EditorLocalizationAdapter, EditorLocalizationCommand, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorStructuredDataPreset, EditorTarget } from "./editor-types.js";
 import { parseRevisionEntry, parseRevisionPage } from "./history.js";
 import { parseSiteSettings } from "./pages.js";
 import { parseProject, type Project } from "./projects.js";
@@ -114,6 +114,35 @@ function componentsForProject(components: EditorComponentAdapter, site: EditorSi
   };
 }
 
+function localizationForProject(localization: EditorLocalizationAdapter, site: EditorSite): EditorLocalizationAdapter {
+  const command = (request: EditorLocalizationCommand): EditorLocalizationCommand => {
+    const target = targetForProject(request.target, site), common = { target, expectedSourceVersion: request.expectedSourceVersion, expectedVersion: request.expectedVersion, expectedOverlayVersion: request.expectedOverlayVersion };
+    if (request.action === "request-translation") return { action: request.action, ...common };
+    if (request.action === "adopt-candidate") return { action: request.action, ...common, unitId: request.unitId, candidateVersion: request.candidateVersion };
+    if (request.action === "set-value") return { action: request.action, ...common, unitId: request.unitId, value: structuredClone(request.value), sourceFingerprint: request.sourceFingerprint, expectedEntryVersion: request.expectedEntryVersion };
+    return { action: request.action, ...common, unitId: request.unitId };
+  };
+  return {
+    async readSite(siteId, signal) {
+      if (siteId !== site.id) throw new Error("プロジェクト外のサイトは参照できません。");
+      const snapshot = structuredClone(await localization.readSite(site.id, signal));
+      if (record(snapshot.config, "localization.config").siteId !== site.id || snapshot.pages.some((page) => page.siteId !== site.id)) throw new Error("多言語設定に別サイトの内容が含まれています。");
+      return snapshot;
+    },
+    async readPage(target, signal) {
+      const checked = targetForProject(target, site), snapshot = structuredClone(await localization.readPage(checked, signal));
+      const source = record(snapshot.sourceDocument, "localization.sourceDocument");
+      if (source.siteId !== site.id || source.pageId !== checked.pageId) throw new Error("多言語原文の対象が一致しません。");
+      return snapshot;
+    },
+    async command(request, signal) { return localization.command(command(request), signal); },
+    ...(localization.requestSiteTranslation ? { async requestSiteTranslation(request, signal) {
+      if (request.siteId !== site.id) throw new Error("プロジェクト外のサイトは翻訳できません。");
+      return localization.requestSiteTranslation!({ siteId: site.id, targetLocale: request.targetLocale, expectedVersion: request.expectedVersion }, signal);
+    } } : {})
+  };
+}
+
 /**
  * EditorAdapter を Project の唯一の Site に限定する。これは認可機構ではないため、
  * 元 adapter は各呼出しで認証・サイト権限・永続化を検証しなければならない。
@@ -144,7 +173,9 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       const target = targetForProject(request.target, site);
       const document = structuredClone(request.document);
       assertDocumentTarget(document, target);
-      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion, ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}) }, signal);
+      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion, ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}),
+        ...(request.localization ? { localization: { expectedSourceVersion: request.localization.expectedSourceVersion, expectedVersion: request.localization.expectedVersion,
+          expectedOverlayVersion: request.localization.expectedOverlayVersion } } : {}) }, signal);
     },
     async prepareRelease(request, signal) {
       const checked = releaseRequest(request, targetForProject(request.target, site));
@@ -163,6 +194,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       return result;
     },
     ...(adapter.components ? { components: componentsForProject(adapter.components, site) } : {}),
+    ...(adapter.localization ? { localization: localizationForProject(adapter.localization, site) } : {}),
     ...(adapter.preparePageChange ? {
       async preparePageChange(change, signal) {
         const checked = changeForProject(change, site);

@@ -7,7 +7,7 @@ import { fail, identifier, keys, line, localeCode, parseAssetReference, record, 
 import type {
   BlockLocalizationSchema, LocalizationCollection, LocalizationDraftEntry, LocalizationExtractionOptions, LocalizationIssue, LocalizationLocale,
   LocalizationOverlay, LocalizationStatus, LocalizationUnit, LocalizationUnitScope, LocalizationValue, LocalizationValueKind, LocalizedRichText,
-  LocalizedRichTextNode, MaterializedLocalization, SiteLocalizationConfig, TranslationCandidate, TranslationResult
+  LocalizedDocumentSaveValidation, LocalizedRichTextNode, MaterializedLocalization, SiteLocalizationConfig, TranslationCandidate, TranslationResult
 } from "./localization-types.js";
 
 export type * from "./localization-types.js";
@@ -658,6 +658,61 @@ function findNode(nodes: PageNode[], id: string): ElementNode | ComponentNode | 
   return undefined;
 }
 
+function valueFromPageUnit(document: PageDocument, unit: LocalizationUnit): LocalizationValue {
+  if (unit.field === "title") return document.title;
+  if (unit.field === "meta.description") {
+    if (document.meta?.description === undefined) fail("$target.meta.description", "localized field is missing");
+    return document.meta.description;
+  }
+  if (unit.field === "meta.ogImage.alt") {
+    if (!document.meta?.ogImage) fail("$target.meta.ogImage", "localized field is missing");
+    return document.meta.ogImage.alt;
+  }
+  const parts = unit.field.split("."), node = findNode(document.body, parts[1]!);
+  if (!node) fail("$target.body", "localization node no longer exists");
+  if (parts[0] === "node") {
+    if (node.type !== "element") fail("$target.body", "localization node kind changed");
+    if (parts[2] === "text") {
+      if (node.children.length !== 1 || node.children[0]?.type !== "text") fail("$target.body", "localized text structure changed");
+      return node.children[0].text;
+    }
+    if (parts[2] === "richText") {
+      const children = node.children.map(richNode);
+      if (children.some((child) => child === undefined)) fail("$target.body", "localized rich text structure changed");
+      return { kind: "rich-text", children: children as LocalizedRichTextNode[] };
+    }
+    if (parts[2] === "asset") return node.asset ? { kind: "asset", asset: detached(node.asset) } : detached(unit.sourceValue);
+    if (parts[2] === "attr") {
+      const value = node.attrs?.[parts[3]!];
+      if (typeof value !== "string") fail("$target.body", "localized attribute is missing");
+      return value;
+    }
+  }
+  if (parts[0] === "instance") {
+    if (node.type !== "instance") fail("$target.body", "localization instance kind changed");
+    const value = node.props?.[parts[3]!];
+    if (typeof value !== "string") fail("$target.body", "localized instance value is missing");
+    return value;
+  }
+  if (parts[0] === "block") {
+    if (node.type !== "component") fail("$target.body", "localization block kind changed");
+    const value = node.props[parts[3]!];
+    if (typeof value !== "string") fail("$target.body", "localized block value is missing");
+    return value;
+  }
+  fail("$target", "unsupported localized field");
+}
+
+/** Read only the page values declared by a previously collected localization contract. */
+export function localizedValuesForDocument(documentInput: unknown, collection: LocalizationCollection,
+  options: LocalizationExtractionOptions = {}): Readonly<Record<string, LocalizationValue>> {
+  validateCollection(collection);
+  const components = options.components === undefined ? undefined : parseComponentLibrary(options.components, options.blocks ?? {});
+  const document = parsePageDocument(documentInput, options.blocks ?? {}, components ? { components } : {});
+  if (document.siteId !== collection.siteId || document.pageId !== collection.pageId) fail("$document", "document scope does not match localization collection");
+  return Object.fromEntries(collection.units.filter((unit) => unit.scope === "page").map((unit) => [unit.unitId, detached(valueFromPageUnit(document, unit))]));
+}
+
 function applyPageUnit(document: PageDocument, unit: LocalizationUnit, value: LocalizationValue): void {
   if (unit.field === "title") { document.title = value as string; return; }
   if (unit.field === "meta.description") { if (!document.meta) document.meta = {}; document.meta.description = value as string; return; }
@@ -716,4 +771,34 @@ export async function materializeLocalizedPage(configInput: unknown, documentInp
   const parsedComponents = components && parseComponentLibrary(components, blocks);
   const parsedDocument = parsePageDocument(document, blocks, parsedComponents ? { components: parsedComponents } : {});
   return { document: parsedDocument, ...(parsedComponents ? { components: parsedComponents } : {}), status: localizationStatus(overlay, currentCollection) };
+}
+
+/**
+ * Validate a translated document at the host save boundary. The target is reduced to values declared by
+ * the current collector and rebuilt through the normal materializer, so node IDs, links, layout, styles,
+ * business props and every other common field must still match the authoritative source document.
+ */
+export async function validateLocalizedDocumentSave(configInput: unknown, sourceDocumentInput: unknown, targetDocumentInput: unknown,
+  options: LocalizationExtractionOptions = {}): Promise<LocalizedDocumentSaveValidation> {
+  const config = parseSiteLocalizationConfig(configInput), blocks = options.blocks ?? {};
+  const components = options.components === undefined ? undefined : parseComponentLibrary(options.components, blocks);
+  const sourceDocument = parsePageDocument(sourceDocumentInput, blocks, components ? { components } : {});
+  const targetDocument = parsePageDocument(targetDocumentInput, blocks, components ? { components } : {});
+  if (sourceDocument.siteId !== targetDocument.siteId || sourceDocument.pageId !== targetDocument.pageId) fail("$target", "translated document scope does not match source");
+  if (sourceDocument.locale !== config.documentLocales[config.sourceLocale]) fail("$source.locale", "source document locale does not match config");
+  const targetLocale = localizationLocaleFor(config, targetDocument.locale);
+  if (targetLocale === config.sourceLocale) fail("$target.locale", "translated document must use a configured target locale");
+  const collection = await collectLocalizationUnits(config, sourceDocument, targetLocale, options);
+  if (collection.issues.length) fail("$source", "source document has unsupported or unanchored localization content");
+  let overlay = createLocalizationOverlay(collection);
+  const values: Record<string, LocalizationValue> = {};
+  for (const unit of collection.units.filter((entry) => entry.scope === "page")) {
+    const value = valueFromPageUnit(targetDocument, unit);
+    values[unit.unitId] = detached(value);
+    overlay = editLocalizedValue(overlay, collection, { unitId: unit.unitId, value, expectedVersion: overlay.version });
+  }
+  const materialized = await materializeLocalizedPage(config, sourceDocument, collection, overlay, options);
+  const expected = { ...materialized.document, revision: targetDocument.revision };
+  if (canonical(expected) !== canonical(targetDocument)) fail("$target", "translated document changed common structure or a non-localizable field");
+  return { document: detached(targetDocument), collection: detached(collection), values: detached(values) };
 }
