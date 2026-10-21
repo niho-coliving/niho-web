@@ -180,7 +180,7 @@ wrangler dev --config studio/wrangler.toml
 ## 制約と follow-up
 
 - Experience editor の本番UIは Backend Draft PR #19268 の本番配備と、Studio Worker／NIHO API の本番 secret 設定が揃った場合だけ有効にします。secret が欠落・不正なら API 接続は 503 で fail-closed します。STG用 secret は本番で再利用しません。
-- Kamakura editor は新形式の共通ページだけを扱います。現時点の `src/site/niho-web` は0件で、旧形式一覧は読み取り専用です。作成、素材 upload、旧形式ページ編集、CMS 操作、全面移行はこの bridge の対象外です。
+- Kamakura editor は新形式の共通ページだけを扱います。ブロック契約は kamakura-site の `GET catalog` が保存時検証と同じ正本から返し、Studio はそれを検証して安全なローカルプレビューを組み立てます。外部表示・予約・送信・CMS取得のコードは実行しません。旧形式一覧は読み取り専用です。作成、素材 upload、旧形式ページ編集、CMS 操作、全面移行はこの bridge の対象外です。
 - Experience editor は production API が提供するページ文書・下書き・公開・復元だけを扱います。自由追加できない NIHO 業務ブロックは `insertableBlocks=[]` とし、components / localization / assets は未実装です。
 - 招待メールの配信、再送、token の再表示はありません。URL の安全な共有は owner の運用責任です。
 - Access email の変更や IdP account の統合は自動追従しません。membership の主体は安定 `sub` で、保存 email は招待照合と owner 表示用です。
