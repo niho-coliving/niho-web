@@ -11,6 +11,7 @@
 .studio-members button.studio-danger{border:1px solid #ecd0cb;background:#fff8f6;color:#963f32}
 .studio-invite-form{display:grid;grid-template-columns:minmax(220px,1fr) minmax(120px,.3fr) minmax(110px,.25fr) auto;align-items:end;gap:12px;padding:18px;border-radius:13px;background:#f3f7f1}
 .studio-invite-form label,.studio-copy label{display:grid;gap:7px;font-size:12px;font-weight:650;color:#52665b}
+.studio-account{position:relative;font-size:12px;color:#52665b}.studio-account summary{cursor:pointer;list-style:none;max-width:32vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-account summary::-webkit-details-marker{display:none}.studio-account summary::after{content:" ▾"}.studio-account>div{position:absolute;right:0;top:30px;z-index:20;display:grid;gap:9px;width:min(340px,calc(100vw - 28px));padding:15px;border:1px solid #d9e2db;border-radius:10px;background:#fff;box-shadow:0 16px 40px rgba(23,50,40,.13)}.studio-account small{color:#64756b}.studio-account label{display:grid;gap:5px;font-weight:650}.studio-account code{overflow-wrap:anywhere;font-weight:400;color:#173228}
 .studio-invite-form input,.studio-invite-form select,.studio-copy input{width:100%;height:42px;border:1px solid #cbd8ce;border-radius:8px;background:#fff;padding:0 11px;color:var(--niho-text);font:inherit}
 .studio-help{margin:10px 0 0;color:var(--niho-text-sub);font-size:13px;line-height:1.65}
 .studio-message{margin:0 0 14px;padding:10px 12px;border-radius:9px;background:#e9f4ec;color:#285b3f;font-size:13px}

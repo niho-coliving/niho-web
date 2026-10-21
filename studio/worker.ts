@@ -148,7 +148,7 @@ function accessConfiguration(env: Env): { readonly issuer: string; readonly audi
 async function loadJwks(url: string, force = false): Promise<readonly SigningJwk[]> {
   const now = Date.now();
   if (!force && jwksCache?.url === url && jwksCache.expiresAt > now) return jwksCache.keys;
-  const response = await fetch(url, { redirect: "error", headers: { Accept: "application/json" } });
+  const response = await fetch(url, { redirect: "manual", headers: { Accept: "application/json" } });
   if (!response.ok) throw new SigningKeysUnavailableError("unable to load signing keys");
   const text = await response.text();
   if (text.length > 256 * 1024) throw new SigningKeysUnavailableError("signing keys response too large");

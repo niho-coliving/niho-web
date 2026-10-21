@@ -14,7 +14,7 @@ type SessionState =
   | { readonly status: "loading" }
   | { readonly status: "expired" }
   | { readonly status: "error" }
-  | { readonly status: "ready"; readonly directory: ProjectDirectoryResult };
+  | { readonly status: "ready"; readonly directory: ProjectDirectoryResult; readonly identity: { readonly subject: string; readonly email: string } };
 type Member = {
   readonly subject: string;
   readonly email: string | null;
@@ -145,6 +145,12 @@ function parseInvitationPreview(value: unknown): InvitationPreview {
   if (source.status !== "ready") throw new Error("invalid API response");
   const invitation = record(source.invitation);
   return { projectName: text(invitation.projectName, 120), siteName: text(invitation.siteName, 120), role: role(invitation.role), expiresAt: timestamp(invitation.expiresAt) };
+}
+
+function parseIdentity(value: unknown): { readonly subject: string; readonly email: string } {
+  const source = record(value);
+  if (source.status !== "authenticated") throw new Error("invalid API response");
+  return { subject: text(source.subject, 128), email: text(source.email) };
 }
 
 function dateLabel(value: string): string {
@@ -295,9 +301,8 @@ function App() {
     const controller = new AbortController();
     setSession({ status: "loading" });
     void api("/api/session", { signal: controller.signal })
-      .then(() => api("/api/projects", { signal: controller.signal }))
-      .then((value) => parseProjectDirectoryResult(value, () => false))
-      .then((directory) => setSession({ status: "ready", directory }))
+      .then(async (value) => ({ identity: parseIdentity(value), directory: parseProjectDirectoryResult(await api("/api/projects", { signal: controller.signal }), () => false) }))
+      .then(({ identity, directory }) => setSession({ status: "ready", directory, identity }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setSession({ status: error instanceof SessionExpiredError ? "expired" : "error" });
@@ -355,7 +360,7 @@ function App() {
     : undefined;
 
   return <div className="studio-app">
-    <header className="studio-shell-header"><a href="/" onClick={(event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><span className="studio-access">Protected by Access</span></header>
+    <header className="studio-shell-header"><a href="/" onClick={(event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
     <main className="studio-content">
       {screen.kind === "dashboard" && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
