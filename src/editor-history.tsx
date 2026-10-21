@@ -1,6 +1,6 @@
 "use client";
 
-import type { SiteStyles } from "./site-styles.js";
+import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { parsePageDocument } from "./document.js";
@@ -233,16 +233,16 @@ type RevisionList = { status: "idle" | "loading" | "error" | "ready"; entries: r
 const emptyList: RevisionList = { status: "idle", entries: [], next: undefined, more: "idle" };
 type SnapshotForm = { label: string; error: string; busy: boolean };
 /** 版履歴パネルの状態。ページ・サイトの切替と再読込で閉じ、進行中の要求を abort する。 */
-export function useVersionHistory({ adapter, blocks, components, siteStyles, target, version, epoch, report, guard }: {
+export function useVersionHistory({ adapter, blocks, components, target, version, epoch, report, guard }: {
   /** 版のインスタンスを検証する共通部品。 */
-  adapter: EditorAdapter; blocks: EditorBlockRegistry; components?: ComponentLibrary | undefined; siteStyles?: SiteStyles | undefined; target: EditorTarget | undefined; version: string | undefined; epoch: number;
+  adapter: EditorAdapter; blocks: EditorBlockRegistry; components?: ComponentLibrary | undefined; target: EditorTarget | undefined; version: string | undefined; epoch: number;
   report: (text: string) => void; guard: () => string | undefined;
 }) {
   const [open, setOpen] = useState(false), [list, setList] = useState<RevisionList>(emptyList), [attempt, setAttempt] = useState(0);
   const [viewing, setViewing] = useState<{ entry: EditorRevisionEntry; document: PageDocument } | null>(null), [reading, setReading] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"diff" | "snapshot" | null>(null), [snapshot, setSnapshot] = useState<SnapshotForm>({ label: "", error: "", busy: false });
-  const controllers = useRef(new Set<AbortController>()), latest = useRef({ target, version, report, guard, list, components, siteStyles });
-  latest.current = { target, version, report, guard, list, components, siteStyles };
+  const controllers = useRef(new Set<AbortController>()), latest = useRef({ target, version, report, guard, list, components });
+  latest.current = { target, version, report, guard, list, components };
   const key = targetKeyOf(target);
   const track = () => { const controller = new AbortController(); controllers.current.add(controller); return controller; };
   const untrack = (controller: AbortController) => { controllers.current.delete(controller); };
@@ -282,7 +282,9 @@ export function useVersionHistory({ adapter, blocks, components, siteStyles, tar
     const controller = track(); readController.current = controller; setReading(entry.id);
     adapter.readRevision({ target: requested, id: entry.id }, controller.signal).then((result) => {
       if (controller.signal.aborted || targetKeyOf(latest.current.target) !== targetKeyOf(requested)) return;
-      const library = latest.current.components, document = parsePageDocument(result?.document, blocks, { ...(library ? { components: library } : {}), ...(latest.current.siteStyles ? { siteStyles: latest.current.siteStyles } : {}) });
+      // 現在のサイト設定を過去版へ混ぜない。参照を持つ版はホストが保存時の snapshot を返す。
+      const library = latest.current.components, raw = parsePageDocument(result?.document, blocks, { ...(library ? { components: library } : {}), ...(result.siteStyles ? { siteStyles: result.siteStyles } : {}) });
+      const document = result.siteStyles ? resolvePageStyles(raw, result.siteStyles) : raw;
       if (!sameTarget(document, requested)) throw new Error("target mismatch");
       setViewing({ entry, document });
     }).catch(() => { if (!controller.signal.aborted) latest.current.report("この版を読み込めませんでした。"); })

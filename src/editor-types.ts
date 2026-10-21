@@ -222,7 +222,8 @@ export interface EditorAdapter {
   }, signal: AbortSignal): Promise<EditorSiteSettingsSaveResult>;
   /** 版履歴。新しい順で、続きは next を cursor に渡す。実装した場合だけ「履歴」を表示する。 */
   listRevisions?(request: { target: EditorTarget; cursor?: string }, signal: AbortSignal): Promise<EditorRevisionPage>;
-  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown }>;
+  /** 共通スタイルを参照する版は、その版に対応する不変のスタイル snapshot も返す。 */
+  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown; siteStyles?: SiteStyles }>;
   /** 保存済みの状態に名前を付ける。ホストは expectedVersion を検証する。 */
   createSnapshot?(request: { target: EditorTarget; expectedVersion: string; label: string }, signal: AbortSignal): Promise<EditorSnapshotResult>;
 }

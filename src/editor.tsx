@@ -337,7 +337,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   const masterId = editing && libraryPresent?.components.some((component) => component.id === editing) ? editing : null;
   const libraryDirty = !!library && libraryFingerprint(library.history.present) !== library.saved, pendingChanges = dirty || libraryDirty, locale = session?.target.locale ?? "ja";
   const blocked = !!busy || !!plan || !!localeReleasePlan || !!pageChange;
-  const versions = useVersionHistory({ adapter, blocks, components: libraryPresent, siteStyles: siteSettings.settings, target: session?.target, version: session?.version, epoch: loadEpoch, report: setNotice,
+  const versions = useVersionHistory({ adapter, blocks, components: libraryPresent, target: session?.target, version: session?.version, epoch: loadEpoch, report: setNotice,
     guard: () => hasInput ? "入力を適用するか取り消してから版を選んでください。" : busy ? "処理が完了してから版を選んでください。" : undefined });
   // 部品の保存中はライブラリの編集だけを止め、ページは保存中と同じく編集を続けられる。版の表示中はどちらも止める。
   const documentReadOnly = !masterId ? session?.readOnly : undefined;
@@ -346,7 +346,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     pageBlocked = pageOperationalBlocked || !!documentReadOnly;
   const editBlocked = masterId ? libraryBlocked : pageBlocked || siteSettings.stylesDirty || siteSettings.busy;
   // 退避はページの作業コピーだけ。共通部品の現在の内容で展開できない退避内容は復元させない。
-  const recoveryState = useRecovery({ store: recovery, session: session && !session.readOnly ? { target: session.target, version: session.version, present: session.history.present } : undefined, dirty: dirty && !session?.readOnly, blocks, components: libraryPresent, siteStyles: siteSettings.settings, epoch: loadEpoch, report: setNotice });
+  const recoveryState = useRecovery({ store: recovery, session: session && !session.readOnly ? { target: session.target, version: session.version, present: session.history.present } : undefined, dirty: dirty && !session?.readOnly, blocks, components: libraryPresent, siteStyles: session?.siteStyles, epoch: loadEpoch, report: setNotice });
   const autosaveMs = autosaveDelay(autosave), autosaveActive = autosaveMs !== undefined && autosaveOn;
   // オフラインで失敗した後、接続が戻ったら自動保存は1回だけ再試行する。
   const online = useOnline(() => { if (problemRef.current !== "offline") return; if (!autosaveActive) setProblem("failed"); else if (!pendingChanges) setProblem(null); else void save("auto"); });
@@ -781,7 +781,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   const shownTier = tierForWidth(tiers, width), canvasDocument = document && draft && draft.base === rawDocument ? resolvePageStyles(draft.document, master ? {} : siteSettings.styles) : document;
   const nextTier = tiers[tiers.findIndex((entry) => entry.key === tier) + 1], until = range === "only" ? nextTier?.start : undefined;
   // キャンバスは部品を展開した文書を描き、素材・状態の強制表示も展開後の文書から作る（部品の中の画像も表示する）。
-  const shown = versions.viewing?.document ? resolvePageStyles(versions.viewing.document, siteSettings.settings) : canvasDocument;
+  const shown = versions.viewing?.document ?? canvasDocument;
   // 訳文では正本 LibrarySession 自体を変えず、同じ canonical ID を持つ表示専用のlocalized libraryだけを展開に使う。
   const canvasLibrary = targetMode && !masterId ? localization.context?.localizedComponents : libraryPresent;
   const canvas = useMemo(() => shown && resolveCanvas(shown, canvasLibrary, blocks), [shown, canvasLibrary, blocks]);

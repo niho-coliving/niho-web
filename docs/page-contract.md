@@ -166,3 +166,5 @@ Next.js では `metadata` の各項目へ対応付けます。Astro では `rend
 切り離しの補助関数は `detachRemovedSiteStyles(page, previousStyles, nextStyles)`（`@niho/web/core`）です。削除 token を参照する宣言を旧 literal 値へ置き換え、削除文字スタイルは responsive を含むページ所有の定義へ移します。既存のページ override を優先し、共有参照から独立した状態で以前の見た目を保ちます。切り離し後は `parsePageDocument(result, blocks, { components, siteStyles: nextStyles })` で検証してから保存します。この関数はページ1件の純粋変換で、DBトランザクションや全参照列挙を代行しません。
 
 サイト設定の保存は下書き保存です。`prepareRelease` は現在の公開 snapshot と次の設定を比較し、サイト共通 token / 文字スタイルの before / after と全影響ページを `changes` / `affected` に含めてください。確認 token はサイト設定の version と対象ページ・部品の版に結び付け、`release` で再検証します。削除に伴う切り離しだけで見た目が変わらない場合も、参照の変更を公開差分に明示します。
+
+`readRevision` は共通スタイルを参照する版について、その版に対応する不変の `siteStyles` snapshot を文書とともに返してください。履歴表示・差分・復元では現在のサイト設定を過去版へ合成しません。旧来の自己完結した文書は `siteStyles` を省略できます。ホストは公開版とロールバック版でも同じ snapshot を固定し、後からサイト設定を更新・削除しても過去版の見た目を変えないでください。
