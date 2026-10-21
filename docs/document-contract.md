@@ -35,7 +35,7 @@ element / component / instance の `id` は文書全体で一意です。element
 
 tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。任意の `label` は編集画面の表示名で、前後の空白を除いて 1 文字以上・60 文字以内、制御文字を含みません。CSS には出力しません。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
 
-`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、任意の selector・擬似クラス・擬似要素、任意のアニメーション・`transform` 文字列は v1 に含めません。状態（hover・focus・active）、変形、遷移、登場、幅別の非表示は下の「演出」の範囲だけを許可します。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
+`color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。幅・高さ・最小幅・最大幅に限り、`calc(<数値>% ± <数値>px)` の形も使えます（割合は 1,000 以下、px は 10,000 以下）。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、任意の `calc()`、カスタム CSS 変数、任意の selector・擬似クラス・擬似要素、任意のアニメーション・`transform` 文字列は v1 に含めません。状態（hover・focus・active）、変形、遷移、登場、幅別の非表示は下の「演出」の範囲だけを許可します。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
 
 枠線幅は `borderWidth` で四辺共通の幅を指定し、`borderTopWidth` / `borderRightWidth` / `borderBottomWidth` / `borderLeftWidth` で各辺を上書きできます。辺ごとの指定は、同じ段の共通指定より優先します。各プロパティは非負の長さまたは `length` token を受け付け、幅の上限は他の長さと同じです。生の CSS 値は保存しません。
 
@@ -45,6 +45,7 @@ tokens は最大 128 件です。名前は小文字英字から始まる英数�
 
 | プロパティ | 値 |
 | --- | --- |
+| `fontVariantEastAsian` | `normal` / `proportional-width` |
 | `fontStyle` | `normal` / `italic` |
 | `textDecorationLine` | `none` / `underline` / `line-through` |
 
@@ -53,7 +54,7 @@ node の `style` は `base` と `responsive` の宣言を持ちます。base を
 
 ## 文字スタイル
 
-`textStyles` は名前付きの文字の見た目（STUDIO のテキストスタイル相当）で、最大 64 件です。名前は token と同じ規則です。各スタイルは任意の `label`、必須の `base`、任意の `responsive` を持ちます。使えるプロパティは `fontFamily` / `fontSize` / `fontWeight` / `lineHeight` / `letterSpacing` / `fontStyle` / `textDecorationLine` だけです。色は含めず、カラーの token で共通化します。値・token 参照の型と解決値の検証、`responsive` の規則（320〜3840px、昇順、重複なし、最大 12 個）は node style と同じです。
+`textStyles` は名前付きの文字の見た目（STUDIO のテキストスタイル相当）で、最大 64 件です。名前は token と同じ規則です。各スタイルは任意の `label`、必須の `base`、任意の `responsive` を持ちます。使えるプロパティは `fontFamily` / `fontSize` / `fontWeight` / `lineHeight` / `letterSpacing` / `fontVariantEastAsian` / `fontStyle` / `textDecorationLine` だけです。色は含めず、カラーの token で共通化します。値・token 参照の型と解決値の検証、`responsive` の規則（320〜3840px、昇順、重複なし、最大 12 個）は node style と同じです。
 
 ```json
 {

@@ -194,6 +194,7 @@ export function StyleInspector(props: StyleInspectorProps) {
         preview={draft("fontFamily")} pending={pending} fieldKey={key("fontFamily")} disabled={disabled || !!lock("fontFamily")} status={status(["fontFamily"], fontHint)} />}
       <div className="e-grid2">{ui.unit("fontSize", "文字サイズ", { units: ["px", "rem", "em", "%", "vw"] })}{ui.select("fontWeight", "文字の太さ", weightChoices, true)}</div>
       <div className="e-grid2">{ui.unit("lineHeight", "行間", { units: ["", "px", "%", "rem", "em"], numberUnit: "", numberLabel: "倍", keywords: [["normal", "標準"]] })}{ui.unit("letterSpacing", "字間", { units: ["px", "em", "rem"] })}</div>
+      {ui.select("fontVariantEastAsian", "日本語の字幅", [["normal", "標準"], ["proportional-width", "プロポーショナル"]])}
       {segment(["textAlign"], "文字揃え", <Segmented label="文字揃え" value={String(effective("textAlign") ?? "")} options={aligns} disabled={disabled || !!lock("textAlign")} onChange={(value) => report(set({ textAlign: value }))} />)}
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
     </section>}
