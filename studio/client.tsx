@@ -4,6 +4,7 @@ import { ProjectDashboard } from "../src/project-dashboard.js";
 import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
+import { parseProjectAliasPath, projectRoutePath } from "./project-routes.mjs";
 import { ExperienceEditor } from "./experience-editor.js";
 import { KamakuraEditor } from "./kamakura-editor.js";
 
@@ -64,6 +65,12 @@ class ApiError extends Error {
 }
 
 function screenFromLocation(): Screen {
+  const projectAlias = parseProjectAliasPath(window.location.pathname);
+  if (projectAlias) {
+    return projectAlias.page === "editor"
+      ? { kind: "editor", projectId: projectAlias.projectId, siteId: projectAlias.siteId, staging: false }
+      : { kind: "dashboard", projectId: projectAlias.projectId, siteId: projectAlias.siteId };
+  }
   const invite = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/invite\/?$/u.exec(window.location.pathname);
   if (invite) {
     const token = new URLSearchParams(window.location.search).get("token") ?? new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
@@ -336,7 +343,11 @@ function App() {
   }, []);
 
   const navigate = useCallback((next: Exclude<Screen, { kind: "invite" }>) => {
-    const path = next.kind === "directory" ? "/" : `/projects/${encodeURIComponent(next.projectId)}/sites/${encodeURIComponent(next.siteId)}${next.kind === "editor" ? "/editor" : ""}`;
+    const path = next.kind === "directory"
+      ? "/"
+      : next.kind === "editor" && next.staging
+        ? "/projects/project-experience/sites/experience/editor/staging"
+        : projectRoutePath(window.location.pathname, next.projectId, next.siteId, next.kind === "editor" ? "editor" : "dashboard");
     window.history.pushState(null, "", path);
     setPendingProject(null);
     setScreen(next);
@@ -365,7 +376,7 @@ function App() {
 
   const openEditor = useCallback((project: Project) => {
     if (editorEnabled(project)) {
-      window.location.assign(`/projects/${encodeURIComponent(project.id)}/sites/${encodeURIComponent(project.site.id)}/editor`);
+      window.location.assign(projectRoutePath(window.location.pathname, project.id, project.site.id, "editor"));
       return;
     }
     setPendingProject(project);
