@@ -207,11 +207,16 @@ export function StyleInspector(props: StyleInspectorProps) {
       tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="settings" />}
     {show("box") && normal && <Layout ui={ui} />}
     {show("box") && normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
-    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
       {appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
-      <div className="e-grid2">{ui.unit("borderWidth", "枠線の太さ", { units: ["px", "rem", "em"] })}{ui.select("borderStyle", "枠線の種類", borders)}</div>
+      {(["borderWidth", "borderStyle"] as const).some(can) && <div className="e-grid2">{ui.unit("borderWidth", "枠線の太さ", { units: ["px", "rem", "em"] })}{ui.select("borderStyle", "枠線の種類", borders)}</div>}
+      {(["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"] as const).some(can) && <Collapse key={key("border-width-sides")} title="辺ごとの太さ"
+        initial={!can("borderWidth") || (["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"] as const).some((property) => state(property).own !== undefined)}>
+        <div className="e-box"><div className="e-grid2">{(["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"] as const).map((property, at) =>
+          ui.unit(property, `${["上", "右", "下", "左"][at]}の枠線の太さ`, { units: ["px", "rem", "em"] }))}</div></div>
+      </Collapse>}
       {color("borderColor", "枠線の色")}
       {can("opacity") && <PercentField key={key("opacity")} caption="不透明度" value={state("opacity").own} apply={(value) => set({ opacity: value })} preview={draft("opacity")} pending={pending} fieldKey={key("opacity")}
         disabled={disabled || !!lock("opacity")} status={status(["opacity"])} placeholder={typeof effective("opacity") === "number" ? String(Math.round(Number(effective("opacity")) * 100)) : "100"} />}

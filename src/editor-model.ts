@@ -142,20 +142,25 @@ export function inheritedStyle(document: PageDocument, node: ElementNode | Compo
 const neutral: Partial<Record<StyleProperty, string | number>> = { width: "auto", height: "auto", minWidth: "auto", minHeight: "auto", flexBasis: "auto", maxWidth: "none", maxHeight: "none",
   top: "auto", right: "auto", bottom: "auto", left: "auto", zIndex: "auto", position: "static", flexDirection: "row", flexWrap: "nowrap", gap: 0, rowGap: 0, columnGap: 0,
   opacity: 1, borderRadius: 0, backgroundColor: "transparent", borderStyle: "none", overflow: "visible", objectFit: "fill" };
-const boxGroup = (property: string) => /^margin/.test(property) ? "margin" : /^padding/.test(property) ? "padding" : undefined;
-const boxMembers = (group: string) => [group, ...["Top", "Right", "Bottom", "Left"].map((side) => `${group}${side}`)] as StyleProperty[];
+const boxGroup = (property: string) => /^margin(?:Top|Right|Bottom|Left)?$/.test(property) ? "margin"
+  : /^padding(?:Top|Right|Bottom|Left)?$/.test(property) ? "padding"
+    : property === "borderWidth" || /^border(?:Top|Right|Bottom|Left)Width$/.test(property) ? "borderWidth" : undefined;
+const boxMembers = (group: string) => group === "borderWidth"
+  ? ["borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"] as StyleProperty[]
+  : [group, ...["Top", "Right", "Bottom", "Left"].map((side) => `${group}${side}`)] as StyleProperty[];
 function preserveRange(original: PageDocument, before: ElementNode | ComponentNode | InstanceNode, node: ElementNode | ComponentNode | InstanceNode, breakpoint: number | "base", until: number, values: Partial<Record<StyleProperty, StyleValue | undefined>>): void {
   if (!Number.isInteger(until) || until <= (breakpoint === "base" ? 0 : breakpoint)) throw new Error("反映する範囲が不正です。");
   const refuse = () => new Error(`広い幅（${until}px〜）の値が決まっていないため、この幅だけの指定にできません。先に「${until}px 以上」で値を入れてください。`);
   const own = (property: StyleProperty) => before.style?.responsive?.find((entry) => entry.minWidth === until)?.declarations[property] !== undefined;
   const properties = Object.keys(values) as StyleProperty[], writes: Declarations = {};
-  // 余白は shorthand と上下左右が重なるため、組ごとに広い幅の値を保つ。
+  // 余白と枠線幅は shorthand と上下左右が重なるため、組ごとに広い幅の値を保つ。
   const targets = new Set(properties.flatMap((property) => { const group = boxGroup(property); return group ? boxMembers(group) : [property]; }));
   const current = breakpoint === "base" ? before.style?.base : before.style?.responsive?.find((entry) => entry.minWidth === breakpoint)?.declarations;
   for (const property of targets) {
     // 無い値の削除は何も変えないので、広い幅に書き足さない。
     if (own(property) || Object.hasOwn(values, property) && values[property] === undefined && current?.[property] === undefined) continue;
-    const value = inheritedStyle(original, before, property, until)?.value ?? (boxGroup(property) || values[property] === undefined ? undefined : neutral[property]);
+    const group = boxGroup(property);
+    const value = inheritedStyle(original, before, property, until)?.value ?? (group || values[property] === undefined ? undefined : neutral[property]);
     if (value !== undefined) writes[property] = structuredClone(value);
     else if (!boxGroup(property) && values[property] !== undefined) throw refuse();
   }

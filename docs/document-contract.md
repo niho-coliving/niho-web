@@ -12,7 +12,7 @@
 
 文書契約の非互換変更は `schemaVersion` を上げ、移行処理を明示してから導入します。未知版の暗黙変換は行いません。既存の鎌倉サイトの文書を直接受け入れる形式ではありません。移行時には現行の HTML / CSS を新しい許可リストに対応付ける adapter と視覚確認が必要です。
 
-token の `label`、`textStyles`、node style の `textStyle`、文字の見た目プロパティ（`fontStyle` / `textDecorationLine`）は v1 への後方互換な追加で、`schemaVersion` は 1 のままです。入力に無いキーは出力にも付けないため、既存文書の検証結果・直列化・fingerprint・CSS は変わりません。これらのキーを含む文書は、追加前のパッケージでは未知フィールドとして拒否されます。ホストは保存・公開側の検証も新しい commit SHA へ更新してから、新しい編集機能を使ってください。
+token の `label`、`textStyles`、node style の `textStyle`、文字の見た目プロパティ（`fontStyle` / `textDecorationLine`）、辺ごとの枠線幅（`borderTopWidth` / `borderRightWidth` / `borderBottomWidth` / `borderLeftWidth`）は v1 への後方互換な追加で、`schemaVersion` は 1 のままです。入力に無いキーは出力にも付けないため、既存文書の検証結果・直列化・fingerprint・CSS は変わりません。これらのキーを含む文書は、追加前のパッケージでは未知フィールドとして拒否されます。ホストは保存・公開側の検証も新しい commit SHA へ更新してから、新しい編集機能を使ってください。
 
 `siteId/pageId/locale/revision` の組が公開内容を一意に表します。同じ組の内容を変更すると同一 scope の CSS が競合するため、内容更新時は必ず revision を増やします。scope は各値を長さ付きで連結して生成し、他ページ・サイト・revision と衝突しない形にします。`pageScope` は検証済みの ID を持つ文書に対して使います。
 
@@ -36,6 +36,8 @@ element / component / instance の `id` は文書全体で一意です。element
 tokens は最大 128 件です。名前は小文字英字から始まる英数字・`-` とし、`color` / `length` / `fontFamily` / `number` の型を持ちます。任意の `label` は編集画面の表示名で、前後の空白を除いて 1 文字以上・60 文字以内、制御文字を含みません。CSS には出力しません。`{ token: 'ink' }` は定義済みかつプロパティと型が一致し、解決した値自体もそのプロパティに適合するときだけ使えます。token value から別 token への参照はできません。
 
 `color` は HEX（3/4/6/8桁）と限定した基本色名、`length` は 0 または px / rem / em / % / vh / vw / vmin / vmax / ch、`fontFamily` は引用符を要しない名前のカンマ区切り、`number` は有限数です。細かい値の正は `src/style-values.ts` の検証です。`rgb()`、`hsl()`、`calc()`、カスタム CSS 変数、任意の selector・擬似クラス・擬似要素、任意のアニメーション・`transform` 文字列は v1 に含めません。状態（hover・focus・active）、変形、遷移、登場、幅別の非表示は下の「演出」の範囲だけを許可します。画像 URL は style に直接書けません。背景画像は `backgroundImage: { asset: { provider, id } }` の素材参照だけを受け付け、解決済みの安全な URL から `background-image:url("…")` を生成します。未解決の背景画像は宣言を出しません。`backgroundSize` / `backgroundPosition` / `backgroundRepeat` は列挙値です。
+
+枠線幅は `borderWidth` で四辺共通の幅を指定し、`borderTopWidth` / `borderRightWidth` / `borderBottomWidth` / `borderLeftWidth` で各辺を上書きできます。辺ごとの指定は、同じ段の共通指定より優先します。各プロパティは非負の長さまたは `length` token を受け付け、幅の上限は他の長さと同じです。生の CSS 値は保存しません。
 
 表示を壊す過大値は拒否します。長さの上限は px が 10,000、rem / em / ch が 1,000、% / vh / vw / vmin / vmax が 1,000 です（負値は絶対値で判定）。数値だけの指定（px として扱うプロパティ）と length token も同じ上限です。`zIndex` は `auto` か絶対値 9,999 以下の整数です。
 
