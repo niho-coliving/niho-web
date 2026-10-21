@@ -13,6 +13,7 @@ const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
+const group = (name, root = right()) => root.querySelector(`[role="group"][aria-label="${name}"]`);
 const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text);
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
@@ -23,6 +24,7 @@ const canvasExtra = () => [...frame().contentDocument.querySelectorAll("style")]
 const publishedCss = (document) => renderPageToHtml(document).match(/<style data-nw-style="[^"]+">([^]*?)<\/style>/)[1];
 async function click(target) { assert.ok(target); await act(async () => target.click()); await flush(); }
 async function toggle(target) { assert.ok(target); await act(async () => target.click()); await flush(); }
+async function editorTab(name) { const target = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name); assert.ok(target, name); if (target.getAttribute("aria-selected") !== "true") await click(target); }
 async function change(target, value) {
   assert.ok(target);
   await act(async () => {
@@ -52,7 +54,10 @@ const stateButton = (name) => right().querySelector(`[role="group"][aria-label="
 test("a link's hover and focus look is created with the keyboard, forced on the canvas, saved and reproduced in published CSS", async () => {
   const app = await setup();
   try {
-    await click(button("a · link"));
+    await click(button("a · link")); await editorTab("変形");
+    const transformText = right().textContent;
+    assert.ok(transformText.indexOf("イージング") < transformText.indexOf("時間") && transformText.indexOf("時間") < transformText.indexOf("遅延"));
+    assert.ok(group("移動") && group("拡大・縮小") && group("傾き"));
     const hover = stateButton("ホバー");
     assert.equal(hover.tagName, "BUTTON"); assert.equal(hover.type, "button"); assert.equal(hover.getAttribute("aria-pressed"), "false"); assert.ok(hover.tabIndex >= 0);
     hover.focus(); assert.equal(document.activeElement, hover);
@@ -62,12 +67,13 @@ test("a link's hover and focus look is created with the keyboard, forced on the 
     assert.equal(check("キーボードのフォーカス時も同じ見た目にする").checked, true);
     input("文字色", right()).focus();
     await change(input("文字色", right()), "#c0392b");
-    await change(input("移動 Y", right()), "-2");
+    await change(input("Y", group("移動")), "-2");
     assert.ok(canvasExtra().includes('[data-nw-node="link"]{color:#c0392b;translate:0 -2px;}'), "the canvas shows the hover look without a pointer");
     assert.ok(canvasExtra().includes("*{animation:none!important;transition:none!important}"));
     await click(stateButton("通常"));
-    assert.ok(input("幅", right()));
-    await change(input("変化の時間", right()), "0.2");
+    await editorTab("ボックス"); assert.ok(input("幅", right()));
+    await editorTab("変形");
+    await change(input("時間", right()), "0.2");
     await click(button("下書き保存"));
     const saved = app.calls.saves[0].document.body[0].children[2].style;
     assert.deepEqual(saved.states, { hover: { color: "#c0392b", translate: "0 -2px" }, focus: { color: "#c0392b", translate: "0 -2px" } });
@@ -81,10 +87,25 @@ test("a link's hover and focus look is created with the keyboard, forced on the 
   } finally { await app.cleanup(); }
 });
 
+test("transform inspector edits both scale and skew axes and renders safe skew CSS", async () => {
+  const app = await setup();
+  try {
+    await click(button("section · hero")); await editorTab("変形");
+    await change(input("X", group("拡大・縮小")), "125");
+    await change(input("Y", group("拡大・縮小")), "150");
+    await change(input("X", group("傾き")), "12");
+    await change(input("Y", group("傾き")), "5");
+    await click(button("下書き保存"));
+    assert.equal(app.calls.saves[0].document.body[0].style.base.scale, "1.25 1.5");
+    assert.equal(app.calls.saves[0].document.body[0].style.base.skew, "12deg 5deg");
+    assert.ok(pageCss().includes("scale:1.25 1.5;transform:skew(12deg,5deg);"));
+  } finally { await app.cleanup(); }
+});
+
 test("a section hidden only on tablets is marked in layers, cannot hide everywhere and reaches the published CSS", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero"));
+    await click(button("section · hero")); await editorTab("設定");
     await toggle(check("タブレット 768px〜"));
     await change(document.querySelector('[aria-label="表示幅"]'), "768");
     const layer = [...document.querySelectorAll(".e-layer")].find((node) => node.textContent.startsWith("section · hero"));
@@ -102,7 +123,7 @@ test("a section hidden only on tablets is marked in layers, cannot hide everywhe
 test("appear settings explain reduced motion and scroll timing and are saved", async () => {
   const app = await setup();
   try {
-    await click(button("section · hero"));
+    await click(button("section · hero")); await editorTab("変形");
     assert.ok(right().textContent.includes("動きを減らす設定の利用者には動きなしで表示します。"));
     await change(input("登場の効果", right()), "fade-up");
     await change(input("登場の時間", right()), "0.8");
@@ -119,19 +140,19 @@ test("motion is stopped while editing, replays on demand and in preview, where s
   const doc = structuredClone(fixture); doc.body[0].children[2].style = { states: { hover: { color: "#c0392b" } } }; doc.body[0].style.appear = { effect: "fade", trigger: "load", duration: 500, delay: 0 };
   const app = await setup({ document: doc });
   try {
-    const play = button("動きを再生");
+    const play = button("アニメーションを再生");
     assert.equal(play.getAttribute("aria-pressed"), "false");
     assert.ok(canvasExtra().includes("*{animation:none!important;transition:none!important}"));
     const before = frame().contentDocument.querySelector("[data-nw-scope]");
     await click(play);
-    assert.equal(button("動きを再生").getAttribute("aria-pressed"), "true");
+    assert.equal(button("アニメーションを再生").getAttribute("aria-pressed"), "true");
     assert.ok(!canvasExtra().includes("animation:none"));
     assert.notEqual(frame().contentDocument.querySelector("[data-nw-scope]"), before, "the page is drawn again so the appear effect plays");
-    await click(button("動きを再生"));
-    await click(button("a · link")); await click(stateButton("ホバー"));
+    await click(button("アニメーションを再生"));
+    await click(button("a · link")); await editorTab("変形"); await click(stateButton("ホバー"));
     assert.ok(canvasExtra().includes('[data-nw-node="link"]{color:#c0392b;}'));
     await click(button("プレビュー"));
-    assert.equal(button("動きを再生").getAttribute("aria-pressed"), "true"); assert.equal(button("動きを再生").disabled, true);
+    assert.equal(button("アニメーションを再生").getAttribute("aria-pressed"), "true"); assert.equal(button("アニメーションを再生").disabled, true);
     assert.ok(!canvasExtra().includes("link") && !canvasExtra().includes("animation:none"));
   } finally { await app.cleanup(); }
 });
@@ -161,7 +182,7 @@ test("business blocks show motion controls only for permitted keys", async () =>
   const blocks = { Notice: { label: "お知らせ", props: {}, styleProperties: ["backgroundColor", "states"], component: () => createElement("p", null, "お知らせ") } };
   const app = await setup({ document: doc, props: { blocks } });
   try {
-    await click(button("お知らせ · notice"));
+    await click(button("お知らせ · notice")); await editorTab("変形");
     assert.ok(stateButton("ホバー"));
     assert.equal(input("登場の効果", right()), undefined); assert.equal(check("基本"), undefined); assert.equal(input("回転", right()), undefined);
     await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");

@@ -12,6 +12,7 @@ import type { ComponentNode, ElementNode, InstanceNode, PageDocument, PageNode, 
 type Values = Partial<Record<StyleProperty, StyleValue | undefined>>;
 /** wide: 選んだ段から上の幅すべて（mobile first の通常の指定）。only: 次の段の手前まで。 */
 export type StyleRange = "wide" | "only";
+export type InspectorTab = "text" | "box" | "transform" | "settings";
 export type StyleInspectorProps = {
   document: PageDocument;
   /** 「外観」の背景色の直後に差し込むホスト側の欄（素材の背景画像など）。 */
@@ -42,6 +43,8 @@ export type StyleInspectorProps = {
   setStyleState?: (state: StyleState) => void;
   /** slot: 業務ブロックの表示領域。base / responsive だけを持つため、テキストスタイル・状態・演出・幅別の非表示・背景画像を出さない。 */
   scope?: "node" | "slot";
+  /** InspectorのStudio準拠タブ。省略すると既存の一括表示として扱う。 */
+  tab?: InspectorTab;
 };
 
 const textTags = new Set("h1 h2 h3 h4 h5 h6 p span a li strong em small blockquote figcaption time".split(" "));
@@ -163,7 +166,8 @@ export function StyleInspector(props: StyleInspectorProps) {
     : `${span}に適用。${higher.length ? current.key === "base" ? "上の幅で上書きした項目を除きます。" : `${higher.map(tierName).join("・")} で上書きした項目を除きます。` : ""}`;
   const outside = props.width < current.start || only && props.width >= next!.start;
   const target = props.width < current.start ? current.start : current.start === 0 ? Math.min(375, next!.start - 1) : current.start;
-  const motionVisible = !slot && (["states", "appear", "hidden", "translate", "rotate", "scale", "transformOrigin", "transitionDuration"] as const).some(can);
+  const motionVisible = !slot && (["states", "appear", "hidden", "translate", "rotate", "scale", "skew", "transformOrigin", "transitionDuration", "transitionDelay", "transitionTimingFunction"] as const).some(can);
+  const show = (section: InspectorTab) => !props.tab || props.tab === section;
   const appearanceExtra = slot ? undefined : props.appearanceExtra;
   return <div className="e-inspector" data-tone={tone}>
     {normal && <div className="e-tierbar">
@@ -177,7 +181,7 @@ export function StyleInspector(props: StyleInspectorProps) {
       {shown.key !== current.key && <button type="button" className="e-small e-follow" disabled={disabled || props.tierLocked} onClick={() => chooseTier(shown.key)}>表示中の幅（{tierName(shown)}）の段を編集</button>}
     </div>}
     {normal && allowed && <p className="e-help">{slot ? "この領域で変更できる見た目だけを表示しています。" : "このブロックで変更できる見た目だけを表示しています。"}</p>}
-    {normal && textual && (can("textStyle") || textStyleProperties.some(can) || can("color") || can("textAlign")) && <section className="e-sec"><h3>テキスト</h3>
+    {show("text") && normal && textual && (can("textStyle") || textStyleProperties.some(can) || can("color") || can("textAlign")) && <section className="e-sec"><h3>テキスト</h3>
       {can("textStyle") && <Row caption="テキストスタイル" htmlFor={`${uid}-ts`} status={{ unsaved: (saved?.style?.textStyle ?? "") !== (node.style?.textStyle ?? ""), lock: reason("style.textStyle") }}>
         <span className="e-inline"><select id={`${uid}-ts`} aria-label="テキストスタイル" value={node.style?.textStyle ?? ""} disabled={disabled || !!reason("style.textStyle")}
           onChange={(event) => report(apply({ type: "nodeTextStyle", path, name: event.target.value || undefined }))}>
@@ -193,9 +197,17 @@ export function StyleInspector(props: StyleInspectorProps) {
       {segment(["textAlign"], "文字揃え", <Segmented label="文字揃え" value={String(effective("textAlign") ?? "")} options={aligns} disabled={disabled || !!lock("textAlign")} onChange={(value) => report(set({ textAlign: value }))} />)}
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
     </section>}
-    {normal && <Layout ui={ui} />}
-    {normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
-    {normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {show("transform") && motionVisible && <>
+      <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
+        fieldKey={fieldKey} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
+        tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="transform" />
+    </>}
+    {show("settings") && motionVisible && <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
+      fieldKey={`${fieldKey}-settings`} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
+      tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="settings" />}
+    {show("box") && normal && <Layout ui={ui} />}
+    {show("box") && normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
+    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
       {appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
@@ -204,24 +216,19 @@ export function StyleInspector(props: StyleInspectorProps) {
       {can("opacity") && <PercentField key={key("opacity")} caption="不透明度" value={state("opacity").own} apply={(value) => set({ opacity: value })} preview={draft("opacity")} pending={pending} fieldKey={key("opacity")}
         disabled={disabled || !!lock("opacity")} status={status(["opacity"])} placeholder={typeof effective("opacity") === "number" ? String(Math.round(Number(effective("opacity")) * 100)) : "100"} />}
     </section>}
-    {normal && (["position", "top", "right", "bottom", "left", "zIndex", "overflow"] as const).some(can) && <Collapse key={key("position-section")} title="位置">
+    {show("box") && normal && (["position", "top", "right", "bottom", "left", "zIndex", "overflow"] as const).some(can) && <Collapse key={key("position-section")} title="位置">
       {ui.select("position", "配置の基準", positions)}
       {position !== "static" && <div className="e-grid2">{ui.unit("top", "上から", { keywords: auto })}{ui.unit("right", "右から", { keywords: auto })}{ui.unit("bottom", "下から", { keywords: auto })}{ui.unit("left", "左から", { keywords: auto })}</div>}
       {can("zIndex") && <Stepper key={key("zIndex")} caption="重ね順" value={state("zIndex").own} apply={(value) => set({ zIndex: value })} preview={draft("zIndex")} pending={pending} fieldKey={key("zIndex")}
         disabled={disabled || !!lock("zIndex")} status={status(["zIndex"])} placeholder={text(state("zIndex").inherited?.value)} />}
       {ui.select("overflow", "はみ出し", overflows)}
     </Collapse>}
-    {normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
+    {show("box") && normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
       <div className="e-grid2">{ui.unit("flexGrow", "伸びる比率", { units: [""], numberUnit: "" })}{ui.unit("flexShrink", "縮む比率", { units: [""], numberUnit: "" })}</div>
       {ui.unit("flexBasis", "基準サイズ", { keywords: sizes })}
       <div className="e-grid2">{ui.unit("gridColumn", "グリッドの列位置", { units: [] })}{ui.unit("gridRow", "グリッドの行位置", { units: [] })}</div>
       {ui.select("alignSelf", "自身の揃え", selfAligns)}
       {(element?.tag === "img" || slot) && ui.select("objectFit", "画像の収まり", fits)}
-    </Collapse>}
-    {motionVisible && <Collapse key={`${fieldKey}-motion`} title="演出" initial={!normal}>
-      <MotionFields document={document} node={node} saved={saved} path={path} tiers={tiers} state={styleState} setState={props.setStyleState ?? (() => undefined)} apply={apply} preview={preview} pending={pending}
-        fieldKey={fieldKey} disabled={disabled} reason={reason} notify={notify} can={can} colorTokens={colorTokens}
-        tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} />
     </Collapse>}
   </div>;
 }
