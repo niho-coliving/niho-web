@@ -45,6 +45,8 @@ const box = (id, children) => ({ id, name: `部品 ${id}`, kind: "part", version
 const instance = (id, component, extra = {}) => ({ type: "instance", id, component, ...extra });
 const page = (body, pageId = "home") => ({ ...structuredClone(fixture), pageId, body: [...structuredClone(body), ...structuredClone(fixture.body)] });
 const rejects = (action, pattern) => assert.throws(action, (error) => error instanceof DocumentValidationError && pattern.test(error.message));
+// 「部品にする」「複製」で作る部品の ID。component_ に、紛らわしい i・l・o・u を除いた乱数の英数字10文字が続く。
+const newIdFormat = /^component_[0-9a-hjkmnp-tv-z]{10}$/;
 const resolved = (document, components = library()) => resolvePageDocument(document, components).document;
 const find = (nodes, id) => {
   for (const node of nodes) {
@@ -440,11 +442,11 @@ test("createComponentFromNode replaces an element with an instance, renumbers ma
   const source = library(); source.tokens.ink = { type: "color", value: "#000000" };
   const components = parseComponentLibrary(source);
   const document = parsePageDocument(input, {}, { components });
-  const created = createComponentFromNode(document, [0], components, { name: "  紹介セクション ", kind: "section" });
-  assert.equal(created.componentId, "component_1");
-  assert.deepEqual(created.document.body, [{ type: "instance", id: "hero", component: "component_1" }]);
+  const created = createComponentFromNode(document, [0], components, { name: "  紹介セクション ", kind: "section" }), id = created.componentId;
+  assert.match(id, newIdFormat);
+  assert.deepEqual(created.document.body, [{ type: "instance", id: "hero", component: id }]);
   const definition = created.library.components.at(-1);
-  assert.deepEqual([definition.id, definition.name, definition.kind, definition.version, Object.hasOwn(definition, "props")], ["component_1", "紹介セクション", "section", 1, false]);
+  assert.deepEqual([definition.id, definition.name, definition.kind, definition.version, Object.hasOwn(definition, "props")], [id, "紹介セクション", "section", 1, false]);
   assert.deepEqual([definition.root, ...definition.root.children].map((node) => node.id), ["n1", "n2", "n3", "n4"]);
   assert.equal(definition.root.attrs.id, "intro"); assert.equal(definition.root.children[2].attrs.href, "#intro");
   assert.deepEqual(definition.root.style, fixture.body[0].style);
@@ -454,7 +456,8 @@ test("createComponentFromNode replaces an element with an instance, renumbers ma
   assert.ok(generatePageCss(result).includes(`[data-nw-node="hero"]{color:var(--nw-ink);`));
   assert.equal(result.tokens.ink.value, "#172d25");
   assert.ok(renderPageToHtml(result).includes(">海のそばで過ごす</h1>"));
-  assert.equal(createComponentFromNode(document, [0, 1], created.library, { name: "リード", kind: "part" }).componentId, "component_2");
+  const lead = createComponentFromNode(document, [0, 1], created.library, { name: "リード", kind: "part" }).componentId;
+  assert.match(lead, newIdFormat); assert.notEqual(lead, id);
   assert.throws(() => createComponentFromNode(document, [0, 0, 0], components, { name: "文字", kind: "part" }), /要素を選択してください/);
   assert.throws(() => createComponentFromNode(document, [0], components, { name: " ナビゲーション", kind: "part" }), /同じ名前の部品があります/);
   assert.throws(() => createComponentFromNode(document, [0], components, { name: " ", kind: "part" }), /部品の名前/);
@@ -464,7 +467,7 @@ test("createComponentFromNode replaces an element with an instance, renumbers ma
   const wrapped = createComponentFromNode(nested, [0], parseComponentLibrary(library()), { name: "外枠", kind: "section" });
   assert.deepEqual(wrapped.library.components.at(-1).root.children, [{ type: "instance", id: "n2", component: "navbar", style: { base: { color: { token: "ink" } } } }]);
   assert.deepEqual(wrapped.library.tokens.ink, fixture.tokens.ink);
-  assert.deepEqual(componentUsage(wrapped.document, wrapped.library), { component_1: 1, navbar: 1, badge: 1 });
+  assert.deepEqual(componentUsage(wrapped.document, wrapped.library), { [wrapped.componentId]: 1, navbar: 1, badge: 1 });
 });
 
 test("createComponentFromNode validates with site-wide styles, copies the effective tokens of the selection and keeps the page JSON page-owned", () => {
@@ -480,7 +483,7 @@ test("createComponentFromNode validates with site-wide styles, copies the effect
   const document = parsePageDocument(input, {}, { siteStyles }), empty = parseComponentLibrary({ ...library(), tokens: {}, components: [] });
   rejects(() => createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }), /unknown token/);
   const created = createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }, {}, [], siteStyles);
-  assert.deepEqual(created.document.body[0].children[2], { type: "instance", id: "link", component: "component_1" });
+  assert.deepEqual(created.document.body[0].children[2], { type: "instance", id: "link", component: created.componentId });
   assert.deepEqual(created.document.body[0].children.slice(0, 2), document.body[0].children.slice(0, 2));
   assert.deepEqual([created.document.tokens, Object.hasOwn(created.document, "textStyles")], [fixture.tokens, false], "site-wide definitions are not written back to the page");
   assert.deepEqual(created.library.tokens, { accent: siteStyles.tokens.accent, ink: fixture.tokens.ink });
@@ -522,11 +525,12 @@ test("library operations keep names unique, protect referenced components and ma
   assert.equal(setComponentKind(components, "navbar", "header").components[0].kind, "header");
   rejects(() => setComponentKind(components, "navbar", "page"), /kind: unknown component kind/);
   const first = duplicateComponent(components, "navbar"), copy = first.library.components.at(-1);
-  assert.equal(first.componentId, "component_1");
+  assert.match(first.componentId, newIdFormat); assert.equal(copy.id, first.componentId);
   assert.deepEqual({ ...copy, id: "navbar", name: "ナビゲーション" }, components.components[0]);
   assert.equal(copy.name, "ナビゲーション のコピー"); assert.equal(copy.version, 1);
   const second = duplicateComponent(first.library, "navbar");
-  assert.equal(second.componentId, "component_2"); assert.equal(second.library.components.at(-1).name, "ナビゲーション のコピー 2");
+  assert.match(second.componentId, newIdFormat); assert.notEqual(second.componentId, first.componentId);
+  assert.equal(second.library.components.at(-1).name, "ナビゲーション のコピー 2");
   const longName = duplicateComponent(renameComponent(components, "card", "長".repeat(COMPONENT_LIMITS.nameLength)), "card").library.components.at(-1).name;
   assert.equal(longName.length, COMPONENT_LIMITS.nameLength); assert.ok(longName.endsWith(" のコピー"));
   assert.throws(() => removeComponent(components, "badge"), /他の部品から使われているため削除できません/);
@@ -549,13 +553,35 @@ test("library operations keep names unique, protect referenced components and ma
   assert.equal(find(resolved(document, components).body, "b1--n2").children[0].text, "注目");
 });
 
+test("components added to the same saved library from two editors get different IDs", () => {
+  // 2つの編集画面が、同じ保存済みのライブラリと文書からそれぞれ部品を追加する。同じ部品を複製しても ID は重ならない。
+  const base = parseComponentLibrary(library()), document = parsePageDocument(structuredClone(fixture), {}, { components: base });
+  const mine = createComponentFromNode(document, [0], base, { name: "紹介セクション", kind: "section" }), theirs = createComponentFromNode(document, [0, 1], base, { name: "リード", kind: "part" });
+  const ids = [mine, theirs, duplicateComponent(base, "navbar"), duplicateComponent(base, "navbar")].map((result) => result.componentId);
+  for (const id of ids) assert.match(id, newIdFormat);
+  assert.equal(new Set(ids).size, ids.length);
+  // 先に保存された部品の上に、もう一方の部品を ID を変えずに重ねられる。
+  const merged = parseComponentLibrary({ ...mine.library, tokens: { ...theirs.library.tokens, ...mine.library.tokens }, components: [...mine.library.components, theirs.library.components.at(-1)] });
+  assert.deepEqual(merged.components.slice(-2).map((component) => component.id), [mine.componentId, theirs.componentId]);
+});
+
+test("a new component ID is drawn again when the library already uses it, and existing IDs stay as they are", (t) => {
+  // 乱数を固定する。1バイトの下位5ビットが1文字になり、1回目は使用済みの ID なので引き直す。
+  const draws = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [10, 11, 12, 13, 14, 15, 16, 17, 18, 255]];
+  const random = t.mock.method(globalThis.crypto, "getRandomValues", (bytes) => { bytes.set(draws.shift()); return bytes; });
+  const source = library(); source.components.push(box("component_0123456789", []), box("component_1", []));
+  const result = duplicateComponent(parseComponentLibrary(source), "navbar");
+  assert.equal(result.componentId, "component_abcdefghjz"); assert.equal(random.mock.callCount(), 2);
+  assert.deepEqual(result.library.components.map((component) => component.id), ["navbar", "badge", "card", "component_0123456789", "component_1", "component_abcdefghjz"]);
+});
+
 test("bumpChangedComponentVersions increments only definitions that differ from the saved library", () => {
   const saved = parseComponentLibrary(library()); saved.components[1].version = 5;
   const master = editDocument(componentDocument(saved, "navbar", "ja"), { type: "text", path: [0, 0, 0], value: "トップ" }, {}, [], saved);
-  const edited = duplicateComponent(withComponentDocument(saved, "navbar", master), "card").library;
+  const duplicated = duplicateComponent(withComponentDocument(saved, "navbar", master), "card"), edited = duplicated.library;
   edited.components[2].version = 9;
   const bumped = bumpChangedComponentVersions(edited, saved);
-  assert.deepEqual(bumped.components.map(({ id, version }) => [id, version]), [["navbar", 2], ["badge", 5], ["card", 1], ["component_1", 1]]);
+  assert.deepEqual(bumped.components.map(({ id, version }) => [id, version]), [["navbar", 2], ["badge", 5], ["card", 1], [duplicated.componentId, 1]]);
   assert.equal(edited.components[0].version, 1);
   assert.deepEqual(bumpChangedComponentVersions(edited, undefined).components.map(({ version }) => version), [1, 5, 9, 1]);
 });

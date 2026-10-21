@@ -27,11 +27,15 @@ function checkedName(library: ComponentLibrary, name: string, except?: string): 
   if (library.components.some((component) => component.id !== except && component.name.trim() === trimmed)) throw new Error("同じ名前の部品があります。");
   return trimmed;
 }
+// 新しい部品の ID は乱数で作る。連番だと、2人が同じライブラリから同時に部品を追加したときに同じ ID になる。
+// 文字は紛らわしい i・l・o・u を除いた32種で、乱数1バイトの下位5ビットを1文字にする（偏りなし。10文字で50ビット）。
+const idAlphabet = "0123456789abcdefghjkmnpqrstvwxyz";
+const randomComponentId = () => `component_${Array.from(crypto.getRandomValues(new Uint8Array(10)), (byte) => idAlphabet.charAt(byte & 31)).join("")}`;
 function nextComponentId(library: ComponentLibrary): string {
   const used = new Set(library.components.map((component) => component.id));
-  let index = 1;
-  while (used.has(`component_${index}`)) index++;
-  return `component_${index}`;
+  let id = randomComponentId();
+  while (used.has(id)) id = randomComponentId();
+  return id;
 }
 
 /** ページのノードIDに結び付くロックは、部品へ移せない。 */

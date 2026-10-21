@@ -568,10 +568,11 @@ test("部品を読み直す keeps the page content when the page uses a discarde
   try {
     await click("section · hero"); await click("部品にする"); await change(input("部品名", dialog()), "紹介セクション"); await click(button("登録する", dialog()));
     assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
-    // ほかの人も同じ ID で別の部品を登録して保存した。
-    const others = { id: "component_1", name: "お知らせの帯", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "div", children: [{ type: "element", id: "n2", tag: "p", children: [{ type: "text", text: "別の人の部品" }] }] } };
-    app.host.saveRemotely((source) => ({ ...source, revision: source.revision + 1, components: [...source.components, others] }));
     await click("下書き保存"); assert.equal(status(), "部品が競合しています");
+    // ほかの保存で、手元で追加した部品と同じ ID の別の部品が登録された。新しい ID は乱数なので普通は重ならないが、重なっても取り違えない。
+    const id = app.calls.librarySaves[0].library.components.find((component) => component.name === "紹介セクション").id;
+    const others = { id, name: "お知らせの帯", kind: "part", version: 1, root: { type: "element", id: "n1", tag: "div", children: [{ type: "element", id: "n2", tag: "p", children: [{ type: "text", text: "別の人の部品" }] }] } };
+    app.host.saveRemotely((source) => ({ ...source, revision: source.revision + 1, components: [...source.components, others] }));
     await click("部品を読み直す");
     assert.ok(dialog().textContent.includes("編集中のページにある次の部品は、最新の共通部品と合わないため、部品を解除して通常の要素にします。文字と見た目はそのまま残ります。"));
     assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["紹介セクション追加", "ink変更", "bodyFont変更", "space変更", "紹介セクション解除"]);
@@ -684,6 +685,43 @@ test("recovered component changes skip components saved again later, and 破棄 
     await click(button("破棄", libraryBanner()));
     assert.equal(libraryBanner(), null); assert.equal(entry, null); assert.equal(removed.at(-1), "demo");
     await openPanel(); assert.ok(card("予備の帯"), "破棄 does not change the library");
+  } finally { await again.cleanup(); }
+});
+
+test("two editors add components to the same library under different IDs, so the later one is restored instead of rebuilt", async () => {
+  const { createBrowserRecoveryStore } = await import("@niho/web/history");
+  // 2つの編集画面が同じ保存先を使う。読み込んだ version が最新でなければ保存は競合する。
+  let latest = library(), saves = 1;
+  const shared = {
+    readLibrary: async () => ({ library: structuredClone(latest), version: `lib-${saves}` }),
+    saveLibrary: async (request) => {
+      if (request.expectedVersion !== `lib-${saves}`) return { status: "conflict" };
+      latest = { ...structuredClone(request.library), revision: latest.revision + 1 }; saves++;
+      return { status: "saved", version: `lib-${saves}`, revision: latest.revision };
+    }
+  };
+  const storage = memoryStorage(), recovery = () => createBrowserRecoveryStore({ scope: "staff-a", storage });
+  // 1つ目の画面で予備の帯を複製し、保存しないまま閉じた（部品の変更は端末に残る）。
+  const first = await setup({ ...shared, props: { recovery: recovery() } });
+  try { await openPanel(); await click(button("複製", card("予備の帯"))); await wait(900); } finally { await first.cleanup(); }
+  const { changed } = JSON.parse(storage.data.get("niho-web:recovery:v1:staff-a:library/demo")), [added] = Object.keys(changed);
+  assert.deepEqual(changed, { [added]: null });
+  // 同じライブラリを開いていた2つ目の画面で「部品にする」を使い、先に保存した。
+  const second = await setup(shared);
+  try {
+    await click("section · hero"); await click("部品にする"); await change(input("部品名", dialog()), "紹介セクション"); await click(button("登録する", dialog()));
+    await click("下書き保存"); assert.ok(status().startsWith("保存済み"));
+  } finally { await second.cleanup(); }
+  const saved = latest.components.find((component) => component.name === "紹介セクション").id;
+  assert.notEqual(added, saved);
+  // 1つ目の画面を開き直すと、複製した部品は先の保存と ID が重ならないため、作り直さずに復元して保存できる。
+  const again = await setup({ ...shared, props: { recovery: recovery() } });
+  try {
+    await flush();
+    assert.ok(libraryBanner().textContent.includes("復元する部品: 予備の帯 のコピー（追加）"));
+    assert.ok(!libraryBanner().textContent.includes("ほかの保存で変更されたため復元しない部品"));
+    await click(button("復元する", libraryBanner())); await click("下書き保存");
+    assert.deepEqual(latest.components.slice(-2).map((component) => [component.id, component.name]), [[saved, "紹介セクション"], [added, "予備の帯 のコピー"]]);
   } finally { await again.cleanup(); }
 });
 
