@@ -198,7 +198,7 @@ const blocks = {
 
 ## 公開 / rollback の二段階確認
 
-公開操作は保存済みの文書だけに許可します。prepareRelease は現在の公開内容と保存済み下書きの差分をホスト側で計算し、人が理解できる `path/before/after` の文字列配列として返してください。rollback の場合は指定した公開版を反映した結果との差分にします。UI は plan をコピーして保持します。
+公開操作は保存済みの文書だけに許可します。ホストは初回など保存済み下書きがない snapshot に `hasSavedDraft: false` を返すと、公開前確認を無効化して下書き保存を案内できます。省略した既存ホストの挙動は変わりません。保存成功後はエディターがこの状態を true に進め、再読込時はホストの現在値を使います。ホストは公開 API 側でも保存済み下書きを再確認してください。prepareRelease は現在の公開内容と保存済み下書きの差分をホスト側で計算し、人が理解できる `path/before/after` の文字列配列として返してください。rollback の場合は指定した公開版を反映した結果との差分にします。UI は plan をコピーして保持します。
 
 plan の target、expectedVersion、action、rollback revision が要求と一致し、domain が listSites の許可済み HTTPS origin に含まれることを確認してからダイアログを開きます。origin は `https://example.com` の形式で、パス・資格情報・末尾 `/` を含めません。対象ドメインと差分を表示し、明示チェック後だけ実行ボタンを有効にします。確認中は背後の編集を無効化します。
 
