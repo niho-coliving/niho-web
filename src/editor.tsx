@@ -503,8 +503,8 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   // ページの移動では部品の変更を保持するため、部品の未保存はサイトの移動だけで確認する。
   function requestNavigation(next: Navigation) { if (siteSettings.stylesDirty && (next.type === "page" || next.type === "reload")) { setNotice("サイト共通スタイルを保存するか取り消してからページを移動してください。"); return; } if (blocked || next.type === "site" && siteSettings.busy) return; if (dirty || hasInput || next.type === "site" && (siteSettings.dirty || libraryDirty)) setNavigation(next); else navigate(next); }
   function requestInspector(next: Inspector) { if (next === inspector) return; if (manualInputPending) { setNavigation({ type: "inspector", inspector: next }); return; } setInspector(next); }
-  function defaultElementTab(path: NodePath): InspectorTab {
-    const current = currentDocument(), selected = current ? nodeAt(current, path) : undefined;
+  function defaultElementTab(path: NodePath, source: PageDocument | undefined = currentDocument()): InspectorTab {
+    const selected = source ? nodeAt(source, path) : undefined;
     if (selected?.type === "component" || selected?.type === "instance") return "settings";
     if (selected?.type === "text" || selected?.type === "element" && selected.children.length === 1 && selected.children[0]?.type === "text") return "text";
     return "box";
@@ -892,7 +892,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
     const next = componentDocument(lib, componentId, locale), path = nodeId ? walkNodes(next).find(({ node }) => node.type !== "text" && node.id === nodeId)?.path : undefined;
     // 部品の外枠の外（ページ直下）には置けないため、追加・移動先の既定を外枠にする。版履歴はページのものなので閉じる。
     if (versions.open) versions.close();
-    setEditing(componentId); setParentId(next.body[0]?.type === "element" ? next.body[0].id : ""); setSelection(path ?? null); if (path) setElementTab(defaultElementTab(path)); setInspector(path ? "element" : "page"); setDraft(null); setPicker(null); setStyleState("normal"); setFieldEpoch((value) => value + 1);
+    setEditing(componentId); setParentId(next.body[0]?.type === "element" ? next.body[0].id : ""); setSelection(path ?? null); if (path) setElementTab(defaultElementTab(path, next)); setInspector(path ? "element" : "page"); setDraft(null); setPicker(null); setStyleState("normal"); setFieldEpoch((value) => value + 1);
   }
   function resetMode() { setEditing(null); setSelection(null); setInspector("page"); setDraft(null); setPicker(null); setStyleState("normal"); setParentId(""); setFieldEpoch((value) => value + 1); }
   function leaveComponent() { if (hasInput) setNotice("入力を適用するか取り消してから選択を変えてください。"); else resetMode(); }
