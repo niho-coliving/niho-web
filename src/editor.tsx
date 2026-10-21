@@ -39,7 +39,7 @@ import { documentLocaleFor, localizationLocaleFor, validateLocalizedDocumentSave
 
 export type * from "./editor-types.js";
 const emptyBlocks: EditorBlockRegistry = {};
-type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
+type Session = { target: EditorTarget; history: EditorHistory; version: string; saved: string; hasSavedDraft?: boolean; locks: readonly EditorLock[]; releases: NonNullable<EditorSnapshot["releases"]>; readOnly?: EditorReadOnly };
 type Inspector = "element" | "page" | "site" | "localization";
 type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorTarget } | { type: "reload" }
   | { type: "inspector"; inspector: Inspector } | { type: "node"; path: NodePath; canvasId?: string }
@@ -47,6 +47,13 @@ type Navigation = { type: "site"; id: string } | { type: "page"; target: EditorT
 const message = (error: unknown) => error instanceof DocumentValidationError ? publicInfoMessage(error) ??
   (/nesting|parent|void element/.test(error.message) ? "この場所には要素を配置できません。別のセクションかボックスを選んでください。" : "文書のルールに合いません。URL・単位・親要素を確認してください。") :
   error instanceof Error ? error.message : "入力を適用できません。";
+const releasePreparationNotice = (error: unknown): string => {
+  const status = error && typeof error === "object" && "status" in error ? error.status : null;
+  if (status === 409) return "公開する下書きの状態が変わりました。編集内容を保持しています。最新の文書を確認してから再試行してください。";
+  if (status === 401) return "認証を確認してから、公開前の確認をやり直してください。編集内容は保持しています。";
+  if (status === 403) return "公開する権限がありません。管理者に確認してください。編集内容は保持しています。";
+  return "公開先と差分を確認できませんでした。接続を確認して再試行してください。編集内容は保持しています。";
+};
 const label = (node: PageNode, blocks: EditorBlockRegistry, names?: ReadonlyMap<string, string>) => node.type === "text" ? `文字: ${node.text.slice(0, 24) || "（空）"}` : node.type === "component" ? `${blocks[node.block]?.label ?? node.block} · ${node.id}` : node.type === "instance" ? names?.get(node.component) ?? "共通部品" : `${node.tag} · ${node.id}`;
 const partGlyph = (node: PageNode | undefined) => node?.type === "instance" && <span className="e-part-glyph" aria-hidden="true">◇ </span>;
 const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
@@ -54,8 +61,9 @@ const noOrigins: ReadonlyMap<string, ResolvedOrigin> = new Map();
 function sessionFrom(snapshot: EditorSnapshot, target: EditorTarget, blocks: EditorBlockRegistry, components?: ComponentLibrary): Session {
   const document = parsePageDocument(snapshot.document, blocks, components ? { components } : {});
   if (!sameTarget(document, target) || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("読込対象が一致しません。");
+  if (snapshot.hasSavedDraft !== undefined && typeof snapshot.hasSavedDraft !== "boolean") throw new Error("公開状態が正しくありません。");
   const readOnly = parseEditorReadOnly(snapshot.readOnly);
-  return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [], ...(readOnly ? { readOnly } : {}) };
+  return { target, history: { past: [], present: document, future: [] }, version: snapshot.version, saved: fingerprint(document), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [], ...(snapshot.hasSavedDraft === undefined ? {} : { hasSavedDraft: snapshot.hasSavedDraft }), ...(readOnly ? { readOnly } : {}) };
 }
 
 class PreviewBoundary extends Component<{ document: PageDocument; children: ReactNode }, { failed: boolean }> {
@@ -563,7 +571,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       const latest = sessionRef.current;
       if (latest && sameTarget(latest.target, current.target) && latest.version === current.version) {
         const acknowledged = acceptSavedRevision(latest.history, document, result.revision);
-        replace({ ...latest, ...acknowledged, version: result.version });
+        replace({ ...latest, ...acknowledged, version: result.version, hasSavedDraft: true });
       }
       if (sameSession()) { setProblem(null); setSavedAt(new Date()); setConflictView(0); }
       if (localized) localization.reloadPage();
@@ -583,7 +591,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   }
   async function prepare(actionType: "publish" | "rollback", revision = Number(rollbackRevision)) {
     const current = sessionRef.current, site = sites.find((site) => site.id === current?.target.siteId);
-    if (!current || current.readOnly || !site || action.current || blocked || dirty || libraryDirty || masterId || hasInput || targetMode || !localizationReady || (actionType === "rollback" && !current.releases.some((release) => release.revision === revision))) return;
+    if (!current || current.readOnly || !site || action.current || blocked || dirty || libraryDirty || masterId || hasInput || targetMode || !localizationReady || (actionType === "publish" && current.hasSavedDraft === false) || (actionType === "rollback" && !current.releases.some((release) => release.revision === revision))) return;
     const controller = new AbortController(); action.current = controller; setBusy("公開差分を取得中"); setNotice("");
     // 確認 token を、表示している部品ライブラリの version にも結び付ける。
     const input: EditorReleaseRequest = { target: current.target, expectedVersion: current.version, action: actionType,
@@ -592,7 +600,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       const result = await adapter.prepareRelease(input, controller.signal);
       if (controller.signal.aborted) return;
       const reviewed = structuredClone(result); validateReleasePlan(reviewed, input, site); setPlan(reviewed); setConfirmed(false);
-    } catch { if (!controller.signal.aborted) setNotice("対象ドメインと差分を確認できませんでした。保存状態と権限を確認して再試行してください。"); }
+    } catch (error) { if (!controller.signal.aborted) setNotice(releasePreparationNotice(error)); }
     finally { if (!controller.signal.aborted) setBusy(""); action.current = null; }
   }
   async function release() {
@@ -710,7 +718,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
     }
     const rebase = (document: PageDocument): PageDocument => ({ ...document, revision: latest.revision });
     const history = { past: current.history.past.map(rebase), present: rebase(current.history.present), future: current.history.future.map(rebase) };
-    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
+    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), hasSavedDraft: snapshot.hasSavedDraft, locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
     setConflictView(0); setProblem(null);
     if (fingerprint(history.present) === fingerprint(latest)) { setNotice("最新の保存内容と同じ内容です。"); return; }
     void save("manual");
@@ -994,7 +1002,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
   const recoveryStale = !!recoveryState.offer && !!session && recoveryState.offer.baseVersion !== session.version;
   const viewed = versions.viewing?.entry, viewedRelease = viewed && (viewed.kind === "publish" || viewed.kind === "rollback") && session?.releases.some((release) => release.revision === viewed.revision) ? viewed.revision : undefined;
   const activeHistory = masterId ? library?.history : session?.history;
-  const publishHold = libraryDirty ? "部品の変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : undefined;
+  const publishHold = libraryDirty ? "部品の変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : session?.hasSavedDraft === false ? "文字や画像を編集し、下書きを保存してから公開を確認してください。" : undefined;
   const rawSelected = document && selection ? nodeAt(document, selection) : undefined;
   const rawSelectedOwner = document && rawSelected?.type === "text" && selection && selection.length > 1 ? nodeAt(document, selection.slice(0, -1)) : rawSelected;
   const canvasSelectedNodeId = selectedCanvasNode ?? (rawSelectedOwner && rawSelectedOwner.type !== "text" ? rawSelectedOwner.id : undefined);
@@ -1015,7 +1023,7 @@ export function PageEditor({ adapter, blocks = emptyBlocks, insertableBlocks, as
       {targetMode ? localePublication ? <button className="e-primary" title={session?.readOnly?.reason ?? "この言語の全ページと共通内容をまとめて確認します"} onClick={() => void prepareLocaleRelease("publish")}
         disabled={!localeRelease || localeReleaseLoading || !session || !!session.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>言語全体の公開確認</button>
         : <button className="e-primary" title="このサイトでは訳文の公開を利用できません。管理者に確認してください。" disabled>公開前の確認</button>
-        : <button className="e-primary" title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={!session || !!session.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
+        : <button className="e-primary" title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={!session || !!session.readOnly || session.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
       {publishHold && !targetMode && <small className="e-hold">{publishHold}</small>}
       {targetMode && !localePublication && <small className="e-hold">このサイトでは訳文の公開を利用できません。管理者に確認してください。</small>}
     </header>

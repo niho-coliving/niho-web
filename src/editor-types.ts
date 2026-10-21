@@ -118,6 +118,8 @@ export type EditorSnapshot = {
   document: unknown;
   /** ホストが発行する opaque な楽観ロック値。 */
   version: string;
+  /** false の場合、初回など保存済み下書きがなく公開確認を開始できない。省略時は従来の動作。 */
+  hasSavedDraft?: boolean;
   locks?: readonly EditorLock[];
   releases?: readonly { revision: number; label: string }[];
   /** 省略時は従来どおり編集可能。ブラウザ退避や履歴からは復元せず、毎回ホストの現在値を使う。 */
