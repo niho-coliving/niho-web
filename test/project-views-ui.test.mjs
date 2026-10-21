@@ -175,9 +175,11 @@ test("dashboard back navigation stays available while its read is pending", asyn
   let resolve; const selected = project();
   const app = await setup(ProjectDashboard, { project: selected, adapter: dashboardAdapter(() => new Promise((done) => { resolve = done; })) });
   try {
+    assert.equal(document.querySelector(".nw-project-dashboard h1")?.textContent, "プロジェクトダッシュボード");
     assert.ok(button("プロジェクト一覧へ戻る"));
     await click("プロジェクト一覧へ戻る"); assert.equal(app.calls.backs, 1);
     await act(async () => resolve({ status: "forbidden", projectId: selected.id, siteId: selected.site.id })); await flush();
+    assert.equal(document.querySelector(".nw-project-dashboard h1")?.textContent, "プロジェクトダッシュボード");
     assert.ok(button("プロジェクト一覧へ戻る")); assert.ok(document.body.textContent.includes("権限がありません"));
   } finally { await app.cleanup(); }
 });

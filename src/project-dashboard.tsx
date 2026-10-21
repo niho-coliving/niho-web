@@ -67,7 +67,7 @@ function DashboardSession({ project: inputProject, adapter, onBackToProjects, on
   const { state, reload } = useProjectRead(reader);
   const [view, setView] = useState<"overview" | "analytics" | "members">("overview");
   const result = state.status === "complete" && state.value.status === "ready" ? state.value : null;
-  return <section className="nw-project-view nw-project-dashboard" aria-label="プロジェクトダッシュボード"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} />
+  return <section className="nw-project-view nw-project-dashboard" aria-label="プロジェクトダッシュボード"><style dangerouslySetInnerHTML={{ __html: projectViewCss }} /><h1 className="pv-sr-only">プロジェクトダッシュボード</h1>
     <header className="pv-project-bar">
       <button type="button" className="pv-project-back" onClick={onBackToProjects} aria-label="プロジェクト一覧へ戻る">‹</button>
       {result && project && <>
