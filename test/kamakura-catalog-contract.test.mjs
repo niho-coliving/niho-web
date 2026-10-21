@@ -127,6 +127,7 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
   let upstreamResponse = new Response(JSON.stringify(catalog(communityDinnerTitle)), { headers: { "Content-Type": "application/json" } });
   let jwksReads = 0;
   let bindingFailure = false;
+  let bindingResponseFactory = null;
   const boundRequestIds = [];
   const bridgeLogs = [];
   t.mock.method(globalThis, "fetch", async (input) => {
@@ -143,6 +144,7 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
     KAMAKURA_SITE: { fetch: async (request) => {
       if (bindingFailure) throw new Error("binding failure detail must not be logged");
       boundRequestIds.push(request.headers.get("X-NIHO-Studio-Request-ID"));
+      if (bindingResponseFactory) return bindingResponseFactory(request);
       return upstreamResponse;
     } },
     ACCESS_ISSUER: issuer,
@@ -153,6 +155,14 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
   const callCatalog = () => workerModule.default.fetch(new Request("https://studio.niho.life/api/projects/project-kamakura/sites/kamakura/editor/catalog", {
     headers: { "Cf-Access-Jwt-Assertion": token }
   }), env);
+  const callPage = () => workerModule.default.fetch(new Request("https://studio.niho.life/api/projects/project-kamakura/sites/kamakura/editor/kamakura-community-dinner", {
+    headers: { "Cf-Access-Jwt-Assertion": token }
+  }), env);
+  const callAssetList = () => workerModule.default.fetch(new Request("https://studio.niho.life/api/projects/project-kamakura/sites/kamakura/editor/assets/list", {
+    method: "POST",
+    headers: { "Cf-Access-Jwt-Assertion": token, "Content-Type": "application/json", Origin: "https://studio.niho.life", "Sec-Fetch-Site": "same-origin" },
+    body: JSON.stringify({ siteId: "kamakura", search: "", kind: "all", folderId: null, limit: 60 })
+  }), env);
 
   const accepted = await callCatalog();
   assert.equal(accepted.status, 200);
@@ -161,9 +171,9 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
   assert.deepEqual(acceptedCatalog.blockContracts, catalog().blockContracts);
   assert.match(boundRequestIds[0], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
 
-  const assertFailure = async (response, { status, code, category, upstreamStatus }) => {
-    assert.equal(response.status, status);
+  const assertFailure = async (response, { status, code, category, upstreamStatus, operation = "catalog" }) => {
     const body = await response.json();
+    assert.equal(response.status, status, JSON.stringify(body));
     assert.equal(body.error, code);
     assert.equal(JSON.stringify(body).includes(env.KAMAKURA_STUDIO_BRIDGE_SECRET), false);
     assert.equal(JSON.stringify(body).includes("catalog-contract-test"), false);
@@ -172,7 +182,7 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
     assert.ok(log, "the returned support ID must be present in Worker logs");
     assert.deepEqual(log[1], {
       supportId: body.supportId,
-      operation: "catalog",
+      operation,
       category,
       ...(upstreamStatus === undefined ? {} : { upstreamStatus })
     });
@@ -208,9 +218,23 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
   upstreamResponse = new Response("ignored", { status: 429 });
   await assertFailure(await callCatalog(), { status: 503, code: "service_unavailable", category: "upstream_rate_limited", upstreamStatus: 429 });
 
+  upstreamResponse = new Response("unexpected method", { status: 405 });
+  await assertFailure(await callPage(), { status: 503, code: "service_unavailable", category: "upstream_unexpected_4xx", upstreamStatus: 405, operation: "page_read" });
+
+  upstreamResponse = new Response("asset failure", { status: 500 });
+  await assertFailure(await callAssetList(), { status: 503, code: "service_unavailable", category: "upstream_server_error", upstreamStatus: 500, operation: "asset_list" });
+
   bindingFailure = true;
   await assertFailure(await callCatalog(), { status: 503, code: "service_unavailable", category: "service_binding_failed" });
   bindingFailure = false;
+
+  t.mock.method(globalThis, "setTimeout", (callback) => { queueMicrotask(callback); return 1; });
+  t.mock.method(globalThis, "clearTimeout", () => {});
+  bindingResponseFactory = (request) => new Response(new ReadableStream({
+    start(controller) { request.signal.addEventListener("abort", () => controller.error(new Error("response body aborted")), { once: true }); }
+  }), { headers: { "Content-Type": "application/json" } });
+  await assertFailure(await callCatalog(), { status: 503, code: "service_unavailable", category: "service_binding_timeout" });
+  bindingResponseFactory = null;
 
   const missingSecret = await workerModule.default.fetch(new Request("https://studio.niho.life/api/projects/project-kamakura/sites/kamakura/editor/catalog", {
     headers: { "Cf-Access-Jwt-Assertion": token }
@@ -222,6 +246,7 @@ test("Kamakura Worker accepts valid long titles and separates contract errors fr
   assert.equal(serializedLogs.includes("catalog-contract-test"), false);
   assert.equal(serializedLogs.includes("SENSITIVE_UPSTREAM_BODY"), false);
   assert.equal(serializedLogs.includes("binding failure detail must not be logged"), false);
+  assert.equal(serializedLogs.includes("response body aborted"), false);
   assert.equal(boundRequestIds.includes(incompatibleId), true, "the same support ID must cross the service binding");
   assert.equal(jwksReads, 1);
 });

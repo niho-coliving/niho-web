@@ -108,13 +108,24 @@ class BridgeUnavailableError extends Error {
   }
 }
 
-type KamakuraBridgeOperation = "catalog" | "page_read" | "draft_save" | "release_plan" | "release";
+type KamakuraBridgeOperation =
+  | "catalog"
+  | "page_read"
+  | "draft_save"
+  | "release_plan"
+  | "release"
+  | "asset_list"
+  | "asset_upload_intent"
+  | "asset_update"
+  | "asset_usages"
+  | "asset_resolve";
 type KamakuraBridgeFailureCategory =
   | "bridge_secret_missing_or_invalid"
   | "bridge_signing_failed"
   | "service_binding_failed"
   | "service_binding_timeout"
   | "upstream_auth_rejected"
+  | "upstream_unexpected_4xx"
   | "catalog_endpoint_missing"
   | "upstream_rate_limited"
   | "upstream_server_error"
@@ -936,6 +947,11 @@ async function signedEditorRequest(
 }
 
 function kamakuraBridgeOperation(route: EditorRoute): KamakuraBridgeOperation {
+  if (route.assetOperation === "list") return "asset_list";
+  if (route.assetOperation === "upload-intent") return "asset_upload_intent";
+  if (route.assetOperation === "update") return "asset_update";
+  if (route.assetOperation === "usages") return "asset_usages";
+  if (route.assetOperation === "resolve") return "asset_resolve";
   if (route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`) return "catalog";
   if (route.upstreamPath.endsWith("/draft")) return "draft_save";
   if (route.upstreamPath.endsWith("/release-plan")) return "release_plan";
@@ -1007,14 +1023,18 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
       if (isCatalog) throw kamakuraBridgeFailure(supportId, operation, "catalog_endpoint_missing", response.status);
       return json({ error: "not_found" }, 404);
     }
+    if (isCatalog && !response.ok) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
+    if (!isCatalog && !response.ok) {
+      if (response.status === 400 || response.status === 413 || response.status === 422) return json({ error: "invalid_request" }, 400);
+      throw kamakuraBridgeFailure(supportId, operation, "upstream_unexpected_4xx", response.status);
+    }
     let value: unknown;
     try { value = await readBoundedResponse(response); }
     catch {
+      if (timedOut) throw kamakuraBridgeFailure(supportId, operation, "service_binding_timeout");
       if (isCatalog) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
       throw kamakuraBridgeFailure(supportId, operation, "upstream_invalid_response", response.status);
     }
-    if (isCatalog && !response.ok) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
-    if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 413 || response.status === 422 ? 400 : 503);
     if (!isCatalog) return json(value, response.status);
     try { return json(parseKamakuraCatalog(value), response.status); }
     catch (error) {
