@@ -5,6 +5,7 @@ import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
 import { ExperienceEditor } from "./experience-editor.js";
+import { KamakuraEditor } from "./kamakura-editor.js";
 
 type Role = "owner" | "editor";
 type Screen =
@@ -163,8 +164,10 @@ function dateLabel(value: string): string {
 
 function roleLabel(value: Role): string { return value === "owner" ? "オーナー" : "編集者"; }
 
-// Backend #19268 が本番反映され、両側の bridge secret を設定した時点で有効化する。
-function editorEnabled(_project: Project): boolean { return false; }
+// Experience は Backend #19268 の本番反映と bridge secret 設定後に有効化する。
+function editorEnabled(project: Project): boolean {
+  return project.id === "project-kamakura" && project.site.id === "kamakura";
+}
 
 function Notice({ title, children, retry }: { readonly title: string; readonly children: string; readonly retry?: () => void }) {
   return <main className="studio-state"><p className="studio-kicker">NIHO WEB</p><h1>{title}</h1><p>{children}</p>{retry && <button type="button" onClick={retry}>再試行</button>}</main>;
@@ -387,7 +390,9 @@ function App() {
         : selected && screen.kind === "editor"
           ? editorEnabled(selected) && selected.id === "project-experience" && selected.site.id === "experience"
             ? <ExperienceEditor project={selected} />
-            : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
+            : selected.id === "project-kamakura" && selected.site.id === "kamakura"
+              ? <KamakuraEditor project={selected} />
+              : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
           ? <>
               <ProjectDashboard
