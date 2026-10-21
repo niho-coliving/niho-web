@@ -259,7 +259,8 @@ function Box({ ui, kind }: { ui: Ui; kind: "margin" | "padding" }) {
   const sides = (["Top", "Right", "Bottom", "Left"] as const).map((side) => `${kind}${side}` as StyleProperty);
   const own = sides.map((property) => ui.state(property).own), [choice, setChoice] = useState(false);
   if (![kind, ...sides].some(ui.can)) return null;
-  const split = choice || own.some((value) => value !== undefined) || !ui.can(kind);
+  // undo で shorthand が戻った時は、一時的な表示選択を残して4欄表示にしない。
+  const split = (choice && ui.state(kind).own === undefined) || own.some((value) => value !== undefined) || !ui.can(kind);
   function toggle() {
     if (split) {
       const defined = own.filter((value): value is StyleValue => value !== undefined);

@@ -14,7 +14,7 @@ const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const left = () => document.querySelector('[aria-label="サイト・ページ・レイヤー"]');
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
-const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text);
+const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text) ?? (text.includes(" · ") ? root.querySelector(`[data-node-id="${text.split(" · ").at(-1)}"] button.e-layer`) : undefined);
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
 const frame = () => document.querySelector("iframe");
@@ -60,7 +60,7 @@ test("a shared color is created, applied to two elements, recolored live and sav
     await canvasClick("h1"); await click(button("選択中の要素の文字色に適用", left()));
     await canvasClick("p"); await click(button("選択中の要素の文字色に適用", left()));
     assert.ok(left().textContent.includes("2 か所に反映されます"));
-    assert.deepEqual([...left().querySelectorAll(".e-usage button")].map((node) => node.textContent), ["h1 · heading", "p · lead"]);
+    assert.deepEqual([...left().querySelectorAll(".e-usage button")].map((node) => node.textContent), ["海のそばで過ごす", "同じ文書を複数の公開サイトで描画できます。"]);
     await type(input("色", left()), "#00aa00");
     assert.ok(canvasCss().includes("--nw-color-1:#00aa00;"), "typing previews the new value before it is committed");
     assert.equal(button("下書き保存").disabled, true);
@@ -153,13 +153,13 @@ test("switching margins between one value and four sides is undone in one step",
     assert.equal(input("右の外余白", right()).value, ""); assert.equal(field("右の外余白", right()).querySelector("select").value, "k:auto");
     await click(button("元に戻す"));
     assert.equal(button("下書き保存").disabled, true);
-    await click(button("section · hero"));
+    await click(button("section · hero")); await editorTab("ボックス");
     assert.equal(input("外側の余白", right()).value, "0 auto");
     await click(button("外側の余白を上下左右で個別に指定", right()));
     await change(input("左の外余白", right()), "24");
     await click(button("外側の余白を上下左右で個別に指定", right()));
     assert.equal(input("外側の余白", right()).value, "0");
-    await click(button("元に戻す")); await click(button("section · hero"));
+    await click(button("元に戻す")); await click(button("section · hero")); await editorTab("ボックス");
     assert.equal(input("左の外余白", right()).value, "24");
     await click(button("下書き保存"));
     assert.deepEqual(app.calls.saves[0].document.body[0].style.responsive[0].declarations, { maxWidth: "64rem", marginTop: "0", marginRight: "auto", marginBottom: "0", marginLeft: 24 });

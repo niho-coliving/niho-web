@@ -13,7 +13,7 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { PageEditor } = await import("@niho/web/editor");
 const flush = async (turns = 3) => { for (let index = 0; index < turns; index++) await act(async () => new Promise((resolve) => setTimeout(resolve, 0))); };
-const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
+const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? document.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
 async function showInspector(value) {
   const target = document.querySelector('select[aria-label="編集する対象"]'); assert.ok(target, "inspector selector");

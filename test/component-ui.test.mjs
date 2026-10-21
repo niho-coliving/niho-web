@@ -38,7 +38,7 @@ const defaultUsage = () => [
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const wait = (ms) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text);
+const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? scope.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 const layerButton = (label, scope = document) => [...scope.querySelectorAll("button.e-layer")].find((node) => node.querySelector(".e-layer-label")?.textContent === label);
 const input = (text, scope = document) => [...scope.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
 async function openLayers() {

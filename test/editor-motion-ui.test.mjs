@@ -14,7 +14,7 @@ const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
 const group = (name, root = right()) => root.querySelector(`[role="group"][aria-label="${name}"]`);
-const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text);
+const button = (text, root = document) => [...root.querySelectorAll("button")].find((node) => node.textContent === text || node.getAttribute("aria-label") === text || node.title === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? root.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 const field = (text, root = document) => [...root.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text);
 const input = (text, root = document) => field(text, root)?.querySelector("input,textarea,select");
 const check = (text, root = right()) => [...root.querySelectorAll("label.e-check")].find((node) => node.textContent === text)?.querySelector("input");
@@ -110,7 +110,7 @@ test("a section hidden only on tablets is marked in layers, cannot hide everywhe
     await click(button("section · hero")); await editorTab("設定");
     await toggle(check("タブレット 768px〜"));
     await change(document.querySelector('[aria-label="表示幅"]'), "768");
-    const layer = [...document.querySelectorAll(".e-layer")].find((node) => node.textContent.startsWith("section · hero"));
+    const layer = document.querySelector('[data-node-id="hero"]');
     assert.ok(layer.classList.contains("is-hidden-here")); assert.ok(layer.textContent.includes("この幅で非表示"));
     await toggle(check("基本")); await toggle(check("PC 1280px〜"));
     assert.ok(document.body.textContent.includes("どこかの幅では表示してください。"));

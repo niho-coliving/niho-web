@@ -24,6 +24,7 @@ const flush = () => act(async () => { await new Promise((resolve) => setTimeout(
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text);
 const input = (text) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
+async function clickLayer(nodeId) { const target = document.querySelector(`[data-node-id="${nodeId}"] button.e-layer`); assert.ok(target, nodeId); await act(async () => target.click()); await flush(); }
 async function editorTab(name) { const target = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name); assert.ok(target, name); if (target.getAttribute("aria-selected") !== "true") await act(async () => target.click()); await flush(); }
 const pageRow = (title) => [...document.querySelectorAll("button.e-page")].find((node) => node.querySelector(".e-page-name")?.textContent === title);
 async function clickPage(title) { const target = pageRow(title); assert.ok(target, title); await act(async () => target.click()); await flush(); }
@@ -90,7 +91,7 @@ test("three rails edit live text, color, size, position and viewport before draf
     await change(input("テキスト"), "編集した見出し");
     assert.ok(document.querySelector("iframe").contentDocument.body.textContent.includes("編集した見出し"));
     assert.equal(button("公開前の確認").disabled, true);
-    await click("section · hero"); await editorTab("テキスト"); await change(input("文字色"), "#ff0000"); await change(input("文字サイズ"), "24");
+    await clickLayer("hero"); await editorTab("テキスト"); await change(input("文字色"), "#ff0000"); await change(input("文字サイズ"), "24");
     await editorTab("ボックス"); await change(input("配置の基準"), "absolute"); await change(input("上から"), "12");
     await change(document.querySelector('[aria-label="表示幅"]'), "375"); assert.equal(document.querySelector("iframe").style.width, "375px");
     await click("下書き保存"); assert.equal(app.calls.saves[0].expectedVersion, "v1"); assert.equal("trigger" in app.calls.saves[0], false);
@@ -127,7 +128,7 @@ test("read-only documents stay selectable and navigable but block every document
     const canonical = [...document.querySelectorAll("a")].find((node) => node.textContent === "業務原稿を編集"); assert.equal(canonical?.getAttribute("href"), readOnly.editUrl);
     assert.equal(input("ページタイトル").disabled, true); assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, true);
     const openTool = async (name) => { const target = [...document.querySelectorAll(".e-tools button")].find((node) => node.querySelector("small")?.textContent === name); assert.ok(target); await act(async () => target.click()); await flush(); };
-    await openTool("レイヤー"); const heading = button("h1 · heading"); assert.equal(heading.disabled, false); await act(async () => heading.click()); await flush(); assert.equal(input("テキスト").disabled, true);
+    await openTool("レイヤー"); const heading = document.querySelector('[data-node-id="heading"] button.e-layer'); assert.equal(heading.disabled, false); await act(async () => heading.click()); await flush(); assert.equal(input("テキスト").disabled, true);
     await openTool("ページ"); assert.equal(document.querySelector('button[aria-label="ページを追加"]').disabled, true); assert.equal(document.querySelector('button[aria-label="ホーム の操作"]').disabled, true);
     await click("履歴"); await act(async () => [...document.querySelectorAll("button")].find((node) => node.textContent.includes("2026/10/21"))?.click()); await flush();
     assert.equal(button("この版を復元").disabled, true); assert.ok(document.body.textContent.includes(readOnly.reason));
@@ -137,7 +138,7 @@ test("read-only documents stay selectable and navigable but block every document
 test("invalid URL buffers stay visible, block saving, and can be cancelled", async () => {
   const app = await setup();
   try {
-    await click("a · link"); await editorTab("設定"); await change(input("リンク先 URL"), "javascript:alert(1)");
+    await clickLayer("link"); await editorTab("設定"); await change(input("リンク先 URL"), "javascript:alert(1)");
     assert.equal(input("リンク先 URL").value, "javascript:alert(1)");
     assert.ok(document.body.textContent.includes("文書のルールに合いません"));
     assert.equal(button("下書き保存").disabled, true);
@@ -150,7 +151,7 @@ test("409 and network failures retain edits, history and expectedVersion for ret
   let mode = "conflict";
   const app = await setup({ save: async () => { if (mode === "throw") throw new Error("offline"); if (mode === "throw409") throw { status: 409 }; return mode === "conflict" ? { status: "conflict" } : { status: "saved", version: "v2", revision: 2 }; } });
   try {
-    await click("文字: 海のそばで過ごす"); await change(input("テキスト"), "失わない編集");
+    await clickLayer("heading"); await change(input("テキスト"), "失わない編集");
     await click("下書き保存"); assert.ok(document.body.textContent.includes("409")); assert.equal(input("テキスト").value, "失わない編集");
     mode = "throw"; await click("下書き保存"); assert.ok(document.body.textContent.includes("編集内容を保持しています"));
     mode = "throw409"; await click("下書き保存"); assert.ok(document.body.textContent.includes("409"));
@@ -163,7 +164,7 @@ test("in-flight save checkpoints the captured document without losing later edit
   let finish; let saves = 0;
   const app = await setup({ save: () => ++saves === 1 ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve({ status: "saved", version: "v3", revision: 3 }) });
   try {
-    await click("文字: 海のそばで過ごす"); await change(input("テキスト"), "保存開始時"); await click("下書き保存");
+    await clickLayer("heading"); await change(input("テキスト"), "保存開始時"); await click("下書き保存");
     await change(input("テキスト"), "保存中に続けた編集");
     await act(async () => finish({ status: "saved", version: "v2", revision: 2 })); await flush();
     assert.equal(input("テキスト").value, "保存中に続けた編集"); assert.equal(button("下書き保存").disabled, false);
@@ -181,7 +182,7 @@ test("data-linked props show a lock reason while display props remain editable",
   const blocks = { Notice: { props: { heading: { type: "string", required: true }, count: { type: "number", required: true } }, lockedProps: { count: "外部データから取得します" }, component: ({ heading, count }) => createElement("p", null, `${heading}: ${count}`) } };
   const app = await setup({ document: doc, blocks });
   try {
-    await click("Notice · notice"); await editorTab("設定"); assert.equal(input("count").disabled, true); assert.ok(document.body.textContent.includes("ロック: 外部データから取得します"));
+    await clickLayer("notice"); await editorTab("設定"); assert.equal(input("count").disabled, true); assert.ok(document.body.textContent.includes("ロック: 外部データから取得します"));
     await change(input("heading"), "編集後の表示名"); await click("下書き保存");
     assert.deepEqual(app.calls.saves[0].document.body.at(-1).props, { heading: "編集後の表示名", count: 5 });
   } finally { await app.cleanup(); }
@@ -192,7 +193,7 @@ test("host can hide business block insertion while retaining existing block edit
   const app = await setup({ document: doc, blocks, insertableBlocks: [] });
   try {
     assert.equal(document.querySelector('select[aria-label="追加する要素"] option[value="block:Notice"]'), null);
-    await click("Notice · notice"); await editorTab("設定"); await change(input("heading"), "After"); await click("下書き保存");
+    await clickLayer("notice"); await editorTab("設定"); await change(input("heading"), "After"); await click("下書き保存");
     assert.equal(app.calls.saves[0].document.body.at(-1).props.heading, "After");
   } finally { await app.cleanup(); }
 });
@@ -515,7 +516,23 @@ test("site settings load failures can be retried", async () => {
   const app = await setup({ adapter: host.adapter });
   try {
     const site = await panel("サイト"); assert.ok(site.textContent.includes("サイト設定を読み込めませんでした。"));
+    assert.ok(document.querySelector("iframe").contentDocument.body.textContent.includes("海のそばで過ごす"));
+    assert.ok(document.body.textContent.includes("文書単体で編集を開始しました"));
     fail = false; await press(buttonIn(site, "再試行")); assert.equal(inputIn(site, "サイトタイトル").value, "デモサイト");
+  } finally { await app.cleanup(); }
+});
+
+test("an invalid reload keeps the current session when site settings also fail", async () => {
+  let invalid = false;
+  const app = await setup({ adapter: {
+    readDocument: async (target) => ({ document: invalid ? { ...structuredClone(fixture), siteId: target.siteId, pageId: target.pageId, body: [{ type: "element", id: "duplicate", tag: "div", children: [] }, { type: "element", id: "duplicate", tag: "div", children: [] }] } : { ...structuredClone(fixture), siteId: target.siteId, pageId: target.pageId }, version: "v1" }),
+    readSiteSettings: async () => { throw new Error("offline"); }
+  } });
+  try {
+    assert.ok(document.querySelector("iframe").contentDocument.body.textContent.includes("海のそばで過ごす"));
+    invalid = true; await click("最新の文書を再読込"); await settle();
+    assert.ok(document.body.textContent.includes("現在の編集内容は保持されています"));
+    assert.ok(document.querySelector("iframe").contentDocument.body.textContent.includes("海のそばで過ごす"));
   } finally { await app.cleanup(); }
 });
 
@@ -548,6 +565,37 @@ const png = (name, size) => new File([new Uint8Array(size)], name, { type: "imag
 const imageTypes = ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"];
 const garden = { id: "garden", name: "庭の緑.png", mimeType: "image/png", bytes: 2048, width: 600, height: 400, alt: "庭の緑", src: "/media/garden.png", thumbnailUrl: "/media/garden.png" };
 function withImage(node = { attrs: { src: "/photo.webp", alt: "古い写真" } }) { const doc = structuredClone(fixture); doc.body[0].children.push({ type: "element", id: "photo", tag: "img", children: [], ...node }); return doc; }
+
+test("layer tree keeps ID selection through sibling edits and clears only a removed target", async () => {
+  const app = await setup();
+  try {
+    await tool("レイヤー"); await clickLayer("heading");
+    await click("下へ"); assert.equal(document.querySelector('[data-node-id="heading"] button.e-layer').getAttribute("aria-selected"), "true");
+    await click("元に戻す"); assert.equal(document.querySelector('[data-node-id="heading"] button.e-layer').getAttribute("aria-selected"), "true");
+    await click("複製"); assert.equal(document.querySelector('[data-node-id="heading"] button.e-layer').getAttribute("aria-selected"), "true");
+    await click("削除"); assert.equal(document.querySelector('[data-node-id="heading"]'), null); assert.equal(document.querySelector(".e-layer-root").getAttribute("aria-pressed"), "true");
+    assert.deepEqual([...document.querySelectorAll('[role="treeitem"]')].filter((item) => item.tabIndex === 0), [document.querySelector(".e-layer-root")]);
+    await click("元に戻す"); assert.ok(document.querySelector('[data-node-id="heading"]')); assert.equal(document.querySelector(".e-layer-root").getAttribute("aria-pressed"), "true");
+  } finally { await app.cleanup(); }
+});
+
+test("layer tree collapse uses roving focus and canvas selection reopens ancestors", async () => {
+  const app = await setup();
+  try {
+    await tool("レイヤー"); await clickLayer("heading");
+    const toggle = document.querySelector('[data-node-id="hero"] .e-layer-toggle');
+    await act(async () => toggle.click()); await settle();
+    assert.equal(document.querySelector('[data-node-id="heading"]'), null);
+    assert.equal(document.querySelector('[data-node-id="hero"] button.e-layer').tabIndex, 0);
+    assert.equal([...document.querySelectorAll('[role="treeitem"]')].filter((item) => item.tabIndex === 0).length, 1);
+    await clickCanvas("heading");
+    assert.equal(document.querySelector('[data-node-id="hero"] button.e-layer').getAttribute("aria-expanded"), "true");
+    assert.equal(document.querySelector('[data-node-id="heading"] button.e-layer').getAttribute("aria-selected"), "true");
+    const heading = document.querySelector('[data-node-id="heading"] button.e-layer');
+    heading.focus(); await act(async () => heading.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }))); await settle();
+    assert.equal(document.activeElement, document.querySelector('[data-node-id="hero"] button.e-layer'));
+  } finally { await app.cleanup(); }
+});
 
 test("failed asset preview resolution can be retried", async () => {
   const library = createMemoryAssetLibrary({ siteId: "demo", seed: [garden] });
@@ -698,12 +746,13 @@ test("the site social cover is chosen from the library, saved with site settings
 test("library images can be added inside the selected element and used as its background", async () => {
   const app = await setup({ assets: createMemoryAssetLibrary({ siteId: "demo", seed: [garden] }) });
   try {
-    await click("section · hero"); await tool("素材"); await chooseAsset("庭の緑.png");
+    await clickLayer("hero"); await tool("素材"); await chooseAsset("庭の緑.png");
     await click("ページに追加");
-    assert.equal(document.querySelector('[aria-label="インスペクタ"] .e-inspector-context strong').textContent, "img · node_1");
+    assert.equal(document.querySelector('[aria-label="インスペクタ"] .e-inspector-context strong').textContent, "画像");
+    assert.ok(document.querySelector('[data-node-id="node_1"]'));
     assert.equal(canvasNode("node_1").parentElement.getAttribute("data-nw-node"), "hero");
     assert.equal(canvasNode("node_1").getAttribute("src"), "/media/garden.png"); assert.equal(canvasNode("node_1").getAttribute("width"), "600");
-    await tool("レイヤー"); await click("section · hero"); assert.equal(document.querySelector('[role="tab"][aria-selected="true"]').textContent, "ボックス"); await click("背景画像を選ぶ");
+    await tool("レイヤー"); await clickLayer("hero"); assert.equal(document.querySelector('[role="tab"][aria-selected="true"]').textContent, "ボックス"); await click("背景画像を選ぶ");
     assert.equal(assetPanel().querySelector("h2").textContent, "背景画像を選ぶ");
     await chooseAsset("庭の緑.png");
     const css = () => document.querySelector("iframe").contentDocument.querySelector("style[data-nw-style]").textContent;
@@ -1100,7 +1149,7 @@ test("autosave saves the scheduled target after the delay, waits for valid input
     assert.equal(app.calls.saves.length, 1); assert.deepEqual(app.calls.saves[0].target, homeTarget); assert.equal(app.calls.saves[0].expectedVersion, "v1"); assert.equal(app.calls.saves[0].trigger, "autosave");
     assert.equal(app.calls.saves[0].document.title, "自動で保存"); assert.match(status(), /^保存済み（\d{2}:\d{2}）$/);
     await press(toggle); assert.equal(toggle.getAttribute("aria-checked"), "false");
-    await click("a · link"); await editorTab("設定"); await change(input("リンク先 URL"), "/news"); await change(input("リンク先 URL"), "javascript:alert(1)");
+    await clickLayer("link"); await editorTab("設定"); await change(input("リンク先 URL"), "/news"); await change(input("リンク先 URL"), "javascript:alert(1)");
     assert.equal(status(), "入力を確認中");
     await press(toggle); await wait(300); assert.equal(app.calls.saves.length, 1, "no autosave while an invalid input is pending");
     await click("入力を取り消す"); await wait(300);
