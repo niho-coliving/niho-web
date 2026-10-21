@@ -848,3 +848,25 @@ for (const variant of ["outside-only", "shared-text-style", "page-override"]) te
     await click("p · outside"); assert.equal(button("部品にする")?.disabled, true, "outside locks survive the reload");
   } finally { await app.cleanup(); }
 });
+
+test("部品にする copies site-wide tokens used inside the selection and keeps a page override that equals the site-wide value", async () => {
+  // brand はページが共有と同じ値で明示的に上書きし、paper はサイト共通だけにある。選ぶ lead は両方を、選択範囲外の link は paper を使う。
+  const siteStyles = { tokens: { brand: { type: "color", value: "#336655" }, paper: { type: "color", value: "#f7f4ec" } } };
+  const doc = structuredClone(fixture); doc.tokens.brand = structuredClone(siteStyles.tokens.brand);
+  doc.body[0].children[1].style = { base: { color: { token: "brand" }, backgroundColor: { token: "paper" } } };
+  doc.body[0].children[2].style = { base: { color: { token: "paper" } } };
+  const app = await setup({ document: doc, adapter: { readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", ...siteStyles }, version: "s1" }) } });
+  try {
+    await click("p · lead"); await click("部品にする");
+    await change(input("部品名", dialog()), "リード文"); await click(button("登録する", dialog()));
+    assert.equal(dialog(), null);
+    const css = canvas().contentDocument.querySelector("style[data-nw-style]").textContent;
+    assert.ok(css.includes("--nw-paper:#f7f4ec;") && css.includes('[data-nw-node="lead"]{background-color:var(--nw-paper);color:var(--nw-brand);}'), "the instance keeps the site-wide color on the canvas");
+    await click("下書き保存");
+    const savedLibrary = parseComponentLibrary(app.calls.librarySaves[0].library), created = savedLibrary.components.find((component) => component.name === "リード文");
+    const saved = parsePageDocument(app.calls.saves[0].document, {}, { components: savedLibrary, siteStyles });
+    assert.deepEqual(saved.body[0].children.slice(1), [{ type: "instance", id: "lead", component: created.id }, doc.body[0].children[2]]);
+    assert.deepEqual(saved.tokens, doc.tokens, "the page override stays page-owned and no site-wide definition is written back");
+    assert.deepEqual([created.root.style, savedLibrary.tokens], [doc.body[0].children[1].style, siteStyles.tokens]);
+  } finally { await app.cleanup(); }
+});

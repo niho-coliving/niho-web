@@ -470,6 +470,33 @@ test("createComponentFromNode replaces an element with an instance, renumbers ma
   assert.deepEqual(componentUsage(wrapped.document, wrapped.library), { [wrapped.componentId]: 1, navbar: 1, badge: 1 });
 });
 
+test("createComponentFromNode validates with site-wide styles, copies the effective tokens of the selection and keeps the page JSON page-owned", () => {
+  // brand と文字スタイルは選択範囲の外だけ、accent は中で使う。ink は同名のページの定義がサイトの定義より優先される。
+  const siteStyles = {
+    tokens: { brand: { type: "color", value: "#336655" }, accent: { type: "color", value: "#aa5500" }, ink: { type: "color", value: "#112233" }, display: { type: "length", value: 32 } },
+    textStyles: { headline: { base: { fontSize: { token: "display" } } } }
+  };
+  const input = structuredClone(fixture);
+  input.body[0].children[0].style = { textStyle: "headline" };
+  input.body[0].children[1].style = { base: { color: { token: "brand" } } };
+  input.body[0].children[2].style = { base: { color: { token: "accent" }, borderColor: { token: "ink" } } };
+  const document = parsePageDocument(input, {}, { siteStyles }), empty = parseComponentLibrary({ ...library(), tokens: {}, components: [] });
+  rejects(() => createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }), /unknown token/);
+  const created = createComponentFromNode(document, [0, 2], empty, { name: "リンク", kind: "part" }, {}, [], siteStyles);
+  assert.deepEqual(created.document.body[0].children[2], { type: "instance", id: "link", component: "component_1" });
+  assert.deepEqual(created.document.body[0].children.slice(0, 2), document.body[0].children.slice(0, 2));
+  assert.deepEqual([created.document.tokens, Object.hasOwn(created.document, "textStyles")], [fixture.tokens, false], "site-wide definitions are not written back to the page");
+  assert.deepEqual(created.library.tokens, { accent: siteStyles.tokens.accent, ink: fixture.tokens.ink });
+  rejects(() => parsePageDocument(created.document, {}, { components: created.library }), /children\[0\]\.style\.textStyle: unknown text style/);
+  // ページではページ・サイトの定義がライブラリの写しより優先されるため、インスタンスはサイトの後の変更に追従する。
+  const changed = { ...siteStyles, tokens: { ...siteStyles.tokens, accent: { type: "color", value: "#0055aa" } } };
+  const result = resolvePageDocument(created.document, created.library, {}, changed).document;
+  assert.deepEqual([result.tokens.accent.value, result.tokens.ink.value], ["#0055aa", fixture.tokens.ink.value]);
+  assert.ok(generatePageCss(result).includes('[data-nw-node="link"]{border-color:var(--nw-ink);color:var(--nw-accent);}'));
+  // ライブラリにある同名の定義は上書きしない。
+  assert.deepEqual(createComponentFromNode(document, [0, 2], parseComponentLibrary(library()), { name: "リンク", kind: "part" }, {}, [], siteStyles).library.tokens.accent, library().tokens.accent);
+});
+
 test("master documents write back roots and tokens but keep public prop targets and reject cycles", () => {
   const components = parseComponentLibrary(library());
   const master = componentDocument(components, "navbar", "ja");
