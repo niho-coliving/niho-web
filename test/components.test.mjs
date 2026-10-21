@@ -14,6 +14,7 @@ import {
   bumpChangedComponentVersions, componentDocument, createComponentFromNode, detachInstance, duplicateComponent, removeComponent, renameComponent,
   setComponentKind, setComponentProp, withComponentDocument
 } from "../dist/component-model.js";
+import { resolveComponentStyles } from "../dist/site-styles.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../examples/page.json", import.meta.url), "utf8"));
 const navbar = () => ({
@@ -514,6 +515,21 @@ test("master documents write back roots and tokens but keep public prop targets 
   const recolored = componentDocument(components, "badge", "ja"); recolored.tokens.accent = { type: "color", value: "#123456" };
   assert.equal(withComponentDocument(components, "badge", recolored).tokens.accent.value, "#123456");
   assert.throws(() => componentDocument(components, "missing", "ja"), /部品が見つかりません/);
+});
+
+test("master documents are drawn and validated with same-named site-wide tokens over the library copy, like a page without overrides", () => {
+  // accent はサイト共通にも定義があり、gap はライブラリにだけ、ink はサイト共通にだけある。navbar の中の badge が accent を使う。
+  const components = parseComponentLibrary(library()), master = componentDocument(components, "navbar", "ja");
+  const siteStyles = { tokens: { accent: { type: "color", value: "#0055aa" }, ink: { type: "color", value: "#112233" } } };
+  const view = resolveComponentStyles(master, siteStyles);
+  assert.deepEqual(view.tokens, { gap: components.tokens.gap, accent: siteStyles.tokens.accent }, "site-only definitions are not added");
+  assert.deepEqual([master.tokens, resolveComponentStyles(master).tokens], [components.tokens, components.tokens], "the library copy stays as it is");
+  const onPage = resolvePageDocument(page([instance("nav1", "navbar")]), components, {}, siteStyles).document;
+  assert.deepEqual([resolvePageDocument(view, components).document.tokens.accent, onPage.tokens.accent], [siteStyles.tokens.accent, siteStyles.tokens.accent]);
+  // 同名のサイト共通の定義と種類が合わない部品は、ページと同じく検証で拒否する。
+  const length = { tokens: { accent: { type: "length", value: 4 } } };
+  rejects(() => parsePageDocument(resolveComponentStyles(master, length), {}, { components }), /incompatible token type/);
+  rejects(() => parsePageDocument(page([instance("nav1", "navbar")]), {}, { components, siteStyles: length }), /incompatible token type/);
 });
 
 test("library operations keep names unique, protect referenced components and manage public props", () => {

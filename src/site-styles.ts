@@ -24,6 +24,15 @@ export function resolvePageStyles(document: PageDocument, site: SiteStyles = {})
   return { ...document, ...mergeSiteStyles(document, site) };
 }
 
+/**
+ * 部品の編集用の文書（tokens はライブラリの値）の実効値。ページでの描画と同じく、同名のサイト共通の定義をライブラリの写しより優先する。
+ * ページを持たないためページの定義は重ねず、サイトにしかない定義も加えない。検証・描画・プレビュー用で、ライブラリへ書き戻す文書には使用しない。
+ */
+export function resolveComponentStyles(document: PageDocument, site: SiteStyles = {}): PageDocument {
+  const shared = parseSiteStyles(site).tokens ?? {};
+  return { ...document, tokens: Object.fromEntries(Object.entries(document.tokens).map(([name, token]) => [name, Object.hasOwn(shared, name) ? shared[name]! : token])) };
+}
+
 /** 編集用の実効値から、変更のない継承値だけを外してページの保存形式に戻す。 */
 export function retainPageStyles(document: PageDocument, original: PageDocument, site: SiteStyles): PageDocument {
   const copy = { ...document, tokens: { ...document.tokens }, ...(document.textStyles ? { textStyles: { ...document.textStyles } } : {}) };

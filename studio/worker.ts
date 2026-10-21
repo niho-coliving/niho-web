@@ -14,10 +14,16 @@ type AssetBinding = { fetch(request: Request): Promise<Response> };
 export interface Env {
   readonly DB: D1Database;
   readonly ASSETS: AssetBinding;
+  /** 同一 Cloudflare account の kamakura-site Worker。 */
+  readonly KAMAKURA_SITE: AssetBinding;
   /** Cloudflare Access application JWTのissと完全一致するHTTPS origin。 */
   readonly ACCESS_ISSUER: string;
   /** Cloudflare Access applicationのAUD tag。 */
   readonly ACCESS_AUDIENCE: string;
+  /** NIHO internal Studio bridgeと共有するbase64url HMAC key。 */
+  readonly NIHO_STUDIO_BRIDGE_SECRET?: string;
+  /** kamakura-site Studio bridgeと共有するbase64url HMAC key。 */
+  readonly KAMAKURA_STUDIO_BRIDGE_SECRET?: string;
 }
 
 type Role = "owner" | "editor";
@@ -67,6 +73,20 @@ type InvitationPreviewRow = {
 };
 
 const MAX_MUTATION_BODY_BYTES = 16 * 1024;
+const MAX_EDITOR_SAVE_BODY_BYTES = 600 * 1024;
+const MAX_EDITOR_RESPONSE_BYTES = 2 * 1024 * 1024;
+const EDITOR_UPSTREAM_ORIGIN = "https://api.niho.life";
+const EDITOR_UPSTREAM_PREFIX = "/api/internal/studio/experience";
+const EDITOR_PROJECT_ID = "project-experience";
+const EDITOR_SITE_ID = "experience";
+const EDITOR_TIMEOUT_MILLISECONDS = 12_000;
+const KAMAKURA_EDITOR_UPSTREAM_ORIGIN = "https://next-kamakura.niho.life";
+const KAMAKURA_EDITOR_UPSTREAM_PREFIX = "/internal/studio/web-content";
+const KAMAKURA_EDITOR_PROJECT_ID = "project-kamakura";
+const KAMAKURA_EDITOR_SITE_ID = "kamakura";
+const KAMAKURA_EDITOR_SITE_NAME = "鎌倉サイト（新サイト確認用）";
+const KAMAKURA_EDITOR_DOMAIN = "https://next-kamakura.niho.life";
+const COMMON_PAGE_ID = /^(?!(?:catalog|create|index)$)[a-z][a-z0-9-]{0,59}$/u;
 const MAX_PENDING_INVITATIONS = 100;
 const MAX_PROJECT_MEMBERS = 500;
 const JWKS_CACHE_MILLISECONDS = 5 * 60 * 1000;
@@ -77,6 +97,7 @@ class AuthenticationError extends Error {}
 class ConfigurationError extends Error {}
 class SigningKeysUnavailableError extends Error {}
 class InvalidInputError extends Error {}
+class BridgeUnavailableError extends Error {}
 
 function securityHeaders(contentType: string): Headers {
   return new Headers({
@@ -119,6 +140,24 @@ function decodeBase64Url(value: string, maximumLength: number): Uint8Array {
   try { decoded = atob(value.replace(/-/gu, "+").replace(/_/gu, "/") + "=".repeat(padding)); }
   catch { throw new AuthenticationError("invalid token encoding"); }
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+function encodeBase64Url(value: Uint8Array): string {
+  return btoa(String.fromCharCode(...value)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+}
+
+function bridgeSecret(encoded: string | undefined): Uint8Array {
+  if (typeof encoded !== "string" || !encoded || encoded.length > 1024 || !/^[A-Za-z0-9_-]+$/u.test(encoded)) throw new ConfigurationError("invalid Studio bridge secret");
+  let decoded: Uint8Array;
+  try { decoded = decodeBase64Url(encoded, 1024); }
+  catch { throw new ConfigurationError("invalid Studio bridge secret"); }
+  if (decoded.byteLength < 32 || encodeBase64Url(decoded) !== encoded) throw new ConfigurationError("invalid Studio bridge secret");
+  return decoded;
+}
+
+function hexadecimal(value: ArrayBuffer | Uint8Array): string {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function decodeJwtObject<T>(segment: string, maximumLength: number): T {
@@ -632,10 +671,242 @@ async function enforceMutationBoundary(request: Request): Promise<Record<string,
   return parsed;
 }
 
-function withStaticSecurity(response: Response): Response {
+type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number };
+
+function experienceEditorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
+  const fixed = new Map<string, "GET">([
+    ["/editor/sites", "GET"],
+    ["/editor/sites/experience/pages", "GET"]
+  ]);
+  const page = /^\/editor\/sites\/experience\/pages\/(home|experiences|experience-detail|booking|host|chrome)\/en(\/draft|\/release-plan|\/release)?$/u.exec(action);
+  if (page) {
+    const suffix = page[2] ?? "";
+    const expected = suffix === "/draft" ? "PUT" : suffix === "/release-plan" || suffix === "/release" ? "POST" : "GET";
+    if (method !== expected) return "method_not_allowed";
+    return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: suffix === "/draft" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES };
+  }
+  const expected = fixed.get(action);
+  if (!expected) return null;
+  if (method !== expected) return "method_not_allowed";
+  return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: MAX_MUTATION_BODY_BYTES };
+}
+
+function kamakuraEditorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
+  if (action === "/editor/catalog") {
+    if (method !== "GET") return "method_not_allowed";
+    return { upstreamPath: `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`, bodyLimit: MAX_MUTATION_BODY_BYTES };
+  }
+  const page = /^\/editor\/((?!(?:catalog|create|index)$)[a-z][a-z0-9-]{0,59})(\/draft|\/release-plan|\/release)?$/u.exec(action);
+  if (!page || !COMMON_PAGE_ID.test(page[1]!)) return null;
+  const suffix = page[2] ?? "";
+  const expected = suffix === "/draft" ? "PUT" : suffix === "/release-plan" || suffix === "/release" ? "POST" : "GET";
+  if (method !== expected) return "method_not_allowed";
+  return { upstreamPath: `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/${page[1]}${suffix}`, bodyLimit: suffix === "/draft" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES };
+}
+
+async function editorMember(env: Env, identity: AccessIdentity, projectId: string, siteId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT 1 AS allowed
+      FROM project_members AS m
+      JOIN sites AS s ON s.project_id = m.project_id
+     WHERE m.access_subject = ?1 AND m.project_id = ?2 AND s.id = ?3
+       AND m.role IN ('owner', 'editor')
+     LIMIT 1
+  `).bind(identity.subject, projectId, siteId).first<{ readonly allowed: number }>();
+  return row?.allowed === 1;
+}
+
+async function readBoundedBody(request: Request, maximumBytes: number): Promise<Uint8Array> {
+  const requestUrl = new URL(request.url);
+  if (request.headers.get("Origin") !== requestUrl.origin || request.headers.get("Sec-Fetch-Site") !== "same-origin") throw new AuthenticationError("invalid editor request origin");
+  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") throw new AuthenticationError("editor JSON required");
+  const declaredLength = request.headers.get("Content-Length");
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > maximumBytes)) throw new AuthenticationError("editor request body too large");
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > maximumBytes) { await reader.cancel("editor request body too large"); throw new AuthenticationError("editor request body too large"); }
+      chunks.push(chunk.value);
+    }
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  try {
+    const parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
+    if (!isRecord(parsed)) throw new Error("object required");
+  } catch { throw new AuthenticationError("invalid editor JSON"); }
+  return body;
+}
+
+async function readBoundedResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") throw new BridgeUnavailableError("invalid bridge response media type");
+  const declaredLength = response.headers.get("Content-Length");
+  if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > MAX_EDITOR_RESPONSE_BYTES)) throw new BridgeUnavailableError("bridge response too large");
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > MAX_EDITOR_RESPONSE_BYTES) { await reader.cancel("bridge response too large"); throw new BridgeUnavailableError("bridge response too large"); }
+      chunks.push(chunk.value);
+    }
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
+  catch { throw new BridgeUnavailableError("invalid bridge JSON"); }
+  if (!isRecord(parsed)) throw new BridgeUnavailableError("invalid bridge response");
+  return parsed;
+}
+
+async function signedEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
+  const body = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyBytes = body.slice().buffer;
+  const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
+  const message = `v1\n${timestamp}\n${request.method}\n${route.upstreamPath}\n${bodyHash}\n${EDITOR_PROJECT_ID}\n${identity.subject}`;
+  const key = await crypto.subtle.importKey("raw", bridgeSecret(env.NIHO_STUDIO_BRIDGE_SECRET).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
+  try {
+    const response = await fetch(`${EDITOR_UPSTREAM_ORIGIN}${route.upstreamPath}`, {
+      method: request.method,
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-store",
+        ...(request.method === "GET" ? {} : { "Content-Type": "application/json" }),
+        "X-NIHO-Studio-Project": EDITOR_PROJECT_ID,
+        "X-NIHO-Studio-Subject": identity.subject,
+        "X-NIHO-Studio-Timestamp": timestamp,
+        "X-NIHO-Studio-Signature": `v1=${signature}`
+      },
+      ...(request.method === "GET" ? {} : { body: bodyBytes })
+    });
+    if (response.status >= 300 && response.status < 400) throw new BridgeUnavailableError("bridge redirect rejected");
+    const value = await readBoundedResponse(response);
+    if (response.status === 409) return json({ error: "conflict" }, 409);
+    if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 429 || response.status >= 500) throw new BridgeUnavailableError("bridge service unavailable");
+    if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 422 ? 400 : 503);
+    return json(value, response.status);
+  } catch { throw new BridgeUnavailableError("bridge request failed"); }
+  finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
+}
+
+function catalogLine(value: unknown, maximum: number): string {
+  if (typeof value !== "string" || !value || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) throw new BridgeUnavailableError("invalid catalog response");
+  return value;
+}
+
+function sanitizeKamakuraCatalog(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new BridgeUnavailableError("invalid catalog response");
+  const siteValue = (candidate: unknown): { readonly id: "kamakura"; readonly name: string; readonly domains: readonly string[] } => {
+    if (!isRecord(candidate) || candidate.id !== KAMAKURA_EDITOR_SITE_ID || candidate.name !== KAMAKURA_EDITOR_SITE_NAME || !Array.isArray(candidate.domains) || candidate.domains.length !== 1 || candidate.domains[0] !== KAMAKURA_EDITOR_DOMAIN) {
+      throw new BridgeUnavailableError("invalid catalog site");
+    }
+    return { id: "kamakura", name: KAMAKURA_EDITOR_SITE_NAME, domains: [KAMAKURA_EDITOR_DOMAIN] };
+  };
+  if (!isRecord(value.project) || value.project.id !== "kamakura-site" || value.project.name !== "NIHO kamakura") throw new BridgeUnavailableError("invalid catalog project");
+  const projectSite = siteValue(value.project.site);
+  if (!Array.isArray(value.sites) || value.sites.length !== 1) throw new BridgeUnavailableError("invalid catalog sites");
+  const site = siteValue(value.sites[0]);
+  if (!Array.isArray(value.pages) || value.pages.length > 500 || !Array.isArray(value.legacy) || value.legacy.length > 5_000) throw new BridgeUnavailableError("invalid catalog entries");
+  const pages = value.pages.map((candidate) => {
+    if (!isRecord(candidate) || candidate.siteId !== KAMAKURA_EDITOR_SITE_ID || candidate.locale !== "ja" || typeof candidate.pageId !== "string" || !COMMON_PAGE_ID.test(candidate.pageId)) throw new BridgeUnavailableError("invalid catalog page");
+    return { siteId: "kamakura", pageId: candidate.pageId, locale: "ja", title: catalogLine(candidate.title, 120) };
+  });
+  if (new Set(pages.map(({ pageId }) => pageId)).size !== pages.length) throw new BridgeUnavailableError("duplicate catalog page");
+  const legacyPath = /^\/(?:[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)?$/u;
+  const legacy = value.legacy.map((candidate) => {
+    if (!isRecord(candidate)) throw new BridgeUnavailableError("invalid legacy page");
+    const name = catalogLine(candidate.name, 200);
+    const path = catalogLine(candidate.path, 2_048);
+    if (!legacyPath.test(path)) throw new BridgeUnavailableError("invalid legacy path");
+    return { name, path };
+  });
+  if (new Set(legacy.map(({ name }) => name)).size !== legacy.length || new Set(legacy.map(({ path }) => path)).size !== legacy.length) throw new BridgeUnavailableError("duplicate legacy page");
+  return { project: { id: "kamakura-site", name: "NIHO kamakura", site: projectSite }, sites: [site], pages, legacy };
+}
+
+async function signedKamakuraEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
+  if (request.method === "GET" && (request.body !== null || ![null, "0"].includes(request.headers.get("Content-Length")))) throw new AuthenticationError("GET body rejected");
+  const body = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyBytes = body.slice().buffer;
+  const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
+  const message = `v1\n${timestamp}\n${request.method}\n${route.upstreamPath}\n${bodyHash}\n${KAMAKURA_EDITOR_PROJECT_ID}\n${identity.subject}`;
+  const key = await crypto.subtle.importKey("raw", bridgeSecret(env.KAMAKURA_STUDIO_BRIDGE_SECRET).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.signal.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
+  try {
+    const upstream = new Request(`${KAMAKURA_EDITOR_UPSTREAM_ORIGIN}${route.upstreamPath}`, {
+      method: request.method,
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-store",
+        ...(request.method === "GET" ? {} : { "Content-Type": "application/json" }),
+        "X-NIHO-Studio-Project": KAMAKURA_EDITOR_PROJECT_ID,
+        "X-NIHO-Studio-Subject": identity.subject,
+        "X-NIHO-Studio-Timestamp": timestamp,
+        "X-NIHO-Studio-Signature": `v1=${signature}`
+      },
+      ...(request.method === "GET" ? {} : { body: bodyBytes })
+    });
+    const response = await env.KAMAKURA_SITE.fetch(upstream);
+    if (response.status >= 300 && response.status < 400) throw new BridgeUnavailableError("bridge redirect rejected");
+    const value = await readBoundedResponse(response);
+    if (response.status === 409) return json({ error: "conflict" }, 409);
+    if (response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500) throw new BridgeUnavailableError("bridge service unavailable");
+    if (response.status === 404) return json({ error: "not_found" }, 404);
+    if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 413 || response.status === 422 ? 400 : 503);
+    return json(route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog` ? sanitizeKamakuraCatalog(value) : value, response.status);
+  } catch { throw new BridgeUnavailableError("bridge request failed"); }
+  finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
+}
+
+async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
+  if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
+  const experience = projectId === EDITOR_PROJECT_ID && siteId === EDITOR_SITE_ID;
+  const kamakura = projectId === KAMAKURA_EDITOR_PROJECT_ID && siteId === KAMAKURA_EDITOR_SITE_ID;
+  if (!experience && !kamakura) return json({ error: "not_found" }, 404);
+  const route = experience ? experienceEditorRoute(action, request.method) : kamakuraEditorRoute(action, request.method);
+  if (route === null) return json({ error: "not_found" }, 404);
+  if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
+  if (!await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
+  try { return experience ? await signedEditorRequest(request, env, identity, route) : await signedKamakuraEditorRequest(request, env, identity, route); }
+  catch (error) {
+    if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
+    throw error;
+  }
+}
+
+function withStaticSecurity(response: Response, editor = false): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
-  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  headers.set("Content-Security-Policy", `default-src 'none'; script-src 'self'; style-src 'self'${editor ? " 'unsafe-inline'" : ""}; img-src 'self' https:; connect-src 'self'; font-src 'self';${editor ? " frame-src 'self';" : ""} frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -651,6 +922,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
+  if (action === "/editor" || action.startsWith("/editor/")) return editorApi(request, env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
@@ -693,9 +965,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
-  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname)) {
+  const isEditor = /^\/projects\/(?:project-experience\/sites\/experience|project-kamakura\/sites\/kamakura)\/editor\/?$/u.test(url.pathname);
+  if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })));
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }

@@ -15,8 +15,8 @@ export type ProjectDirectoryProps = {
   onOpenEditor: (project: Project) => void;
   /** ホストに作成機能がない場合は、実行不能であることを明示する。既定値は従来どおりenabled。 */
   createAction?: "enabled" | "disabled";
-  /** editor bridge未接続時も、ホストの説明surfaceを開ける正直なラベルにする。 */
-  editorAction?: "enabled" | "pending";
+  /** editor bridge未接続時も、ホストの説明surfaceを開ける正直なラベルにする。Projectごとの判定にも対応する。 */
+  editorAction?: "enabled" | "pending" | ((project: Project) => "enabled" | "pending");
   /** membership詳細を返さないホストでは、人数・表示名を推測表示しない。 */
   memberDetails?: "visible" | "hidden";
   /** 一覧へ戻ったとき、読込後にこのProjectの行へ一度だけfocusを戻す。 */
@@ -74,7 +74,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
             <div>{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</div>
             {memberDetails === "visible" && <p className="pv-muted">メンバー {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>}
             <dl className="pv-meta"><div><dt>最終更新</dt><dd><Timestamp value={summary.updatedAt} /></dd></div><div><dt>最終アクセス</dt><dd><Timestamp value={summary.lastAccessedAt} /></dd></div></dl>
-            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
+            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{(typeof editorAction === "function" ? editorAction(project) : editorAction) === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
           </div>
         </li>)}</ul>
         <div className="pv-directory-list" ref={list}><h2>一覧表示</h2><table><thead><tr><th scope="col">プロジェクト / サイト</th><th scope="col">公開状態・ドメイン</th><th scope="col">メンバー</th><th scope="col">最終更新 / 最終アクセス</th><th scope="col">開く</th></tr></thead><tbody>{visible.map(({ project, summary }) => <tr key={project.id}>
