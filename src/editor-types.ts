@@ -1,4 +1,5 @@
 import type { SiteStyles } from "./site-styles.js";
+import type { BuilderDefinition } from "./builder.js";
 import type { ComponentType, ReactNode } from "react";
 import type { AssetLibraryAdapter } from "./assets.js";
 import type { BlockDefinition } from "./react.js";
@@ -264,6 +265,8 @@ export type PageEditorProps = {
   /** ホストが用意する戻るなどの操作をツールバーの先頭へ表示する。 */
   toolbarStart?: ReactNode;
   blocks?: EditorBlockRegistry;
+  /** 標準の挿入・モーションカタログを同じ ID で置換、または新しい項目で拡張する。 */
+  builder?: BuilderDefinition;
   /** Canvasと同じiframe内で描画する。予約・送信などの副作用を起こさず、未指定時は従来どおり。 */
   previewComponent?: ComponentType<EditorCanvasPreviewProps>;
   /** 新規配置できる登録ブロック。省略時は全件、空配列なら既存ブロックの編集だけを許可。 */

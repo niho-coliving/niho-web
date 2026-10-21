@@ -19,6 +19,10 @@
       "types": "./dist/core.d.ts",
       "import": "./dist/core.js"
     },
+    "./builder": {
+      "types": "./dist/builder.d.ts",
+      "import": "./dist/builder.js"
+    },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"

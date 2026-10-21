@@ -52,10 +52,12 @@ async function setup(options = {}) {
 const stateButton = (name) => right().querySelector(`[role="group"][aria-label="編集する状態"] button[title="${name}"]`);
 
 test("a link's hover and focus look is created with the keyboard, forced on the canvas, saved and reproduced in published CSS", async () => {
-  const app = await setup();
+  const app = await setup({ props: { builder: { motions: [{ id: "quiet-pulse", label: "静かな強調", description: "説明的プリセット", style: { states: { focus: { scale: 1.04 } } } }] } } });
   try {
     await click(button("a · link")); await editorTab("変形");
     const transformText = right().textContent;
+    assert.equal(input("動きのプリセット", right()), undefined);
+    assert.ok(!transformText.includes("説明的プリセット"));
     assert.ok(transformText.indexOf("イージング") < transformText.indexOf("時間") && transformText.indexOf("時間") < transformText.indexOf("遅延"));
     assert.ok(group("移動") && group("拡大・縮小") && group("傾き"));
     const hover = stateButton("ホバー");
@@ -174,6 +176,24 @@ test("toggle and carousel presets are inserted from the palette and the canvas n
     const body = app.calls.saves[0].document.body;
     assert.deepEqual(body.slice(-2).map((node) => node.tag), ["details", "div"]);
     assert.equal(body.at(-2).children[0].tag, "summary");
+  } finally { await app.cleanup(); }
+});
+
+test("a host insertion catalog reaches the real palette and uses unique IDs for the whole subtree", async () => {
+  const builder = { insertions: [{ id: "feature-card", label: "特徴カード", group: "カスタム", glyph: "◇", create: ({ id }) => ({
+    type: "element", id: id(), tag: "article", children: [
+      { type: "element", id: id(), tag: "h2", children: [{ type: "text", text: "特徴" }] },
+      { type: "element", id: id(), tag: "p", children: [{ type: "text", text: "説明" }] }
+    ]
+  }) }] };
+  const app = await setup({ props: { builder } });
+  try {
+    const labels = [...document.querySelectorAll('[aria-label="要素を追加"] button')].map((node) => node.textContent);
+    assert.ok(!labels.some((label) => /横並び|グリッド|リスト/.test(label)), "追加構造はhostが明示した場合だけ表示する");
+    const preset = [...document.querySelectorAll('[aria-label="要素を追加"] button')].find((node) => node.textContent.endsWith("特徴カード"));
+    await click(preset); await click(button("下書き保存"));
+    const card = app.calls.saves[0].document.body.at(-1), ids = [card.id, ...card.children.map((child) => child.id)];
+    assert.equal(card.tag, "article"); assert.equal(new Set(ids).size, ids.length); assert.ok(ids.every((id) => /^node_\d+$/.test(id)));
   } finally { await app.cleanup(); }
 });
 

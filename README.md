@@ -28,6 +28,7 @@ Git からのインストール時は `prepare` が TypeScript をビルドし�
 | --- | --- |
 | `@niho/web` | JSON 型、`validateDocument` / `parsePageDocument`、CSS、React SSR に使える `PageRenderer` |
 | `@niho/web/core` | 検証・文書型・CSS・共通部品の検証と展開だけの入口。React の runtime import を含みません |
+| `@niho/web/builder` | 汎用の挿入カタログ、モーション定義、host拡張の型と検証。React非依存 |
 | `@niho/web/react` | `PageRenderer` とブロック registry の型 |
 | `@niho/web/server` | Astro の build / server で使える `renderPageToHtml` |
 | `@niho/web/editor` | 認証済みホストadapterへ接続する `PageEditor` と型。React / React DOM が必要 |

@@ -7,7 +7,7 @@ import { parseSiteSettings } from "./pages.js";
 import { parsePageDocument } from "./document.js";
 import { canvasCss, pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
-import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, newElement, nodeAt, parseEditorReadOnly, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
+import { acceptSavedRevision, commitHistory, editDocument, effectiveLocks, fingerprint, lockReason, nodeAt, parseEditorReadOnly, sameTarget, travelHistory, validateReleasePlan, walkNodes, type EditorHistory, type EditorOperation, type NodePath } from "./editor-model.js";
 import { editorCss, historyCss, pagesCss } from "./editor-style.js";
 import { styleEditorCss } from "./editor-style-css.js";
 import { Field } from "./editor-fields.js";
@@ -15,7 +15,7 @@ import { StyleInspector, type InspectorTab, type StyleRange } from "./editor-sty
 import { SharedStyleLibrary, sharedTokenReason } from "./editor-shared-styles.js";
 import { detachRemovedSiteStyles, parseSiteStyles, resolveComponentStyles, resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type { StyleState } from "./editor-style-motion.js";
-import { carouselPreset, togglePreset } from "./interaction-presets.js";
+import { createInsertionNode, resolveBuilderDefinition } from "./builder.js";
 import { editorTiers, hiddenAt, normalizeBreakpoints, tierForWidth, tierName } from "./style-model.js";
 import { Dialog } from "./editor-dialog.js";
 import { PageChangeDialog, PageSettings, PagePanel, ReleaseSearchSummary, SiteSettingsPanel, chooseSiteCover, coverReferences, pageChangeNotice, publicInfoMessage, useSiteSettings, type FieldOptions, type PageChangeStart } from "./editor-pages.js";
@@ -23,7 +23,7 @@ import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, LibraryReco
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicLink } from "./validation-utils.js";
 import type { ComponentUsageEntry, EditorBlockRegistry, EditorCanvasPreviewProps, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReadOnly, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorSnapshot, EditorTarget, PageEditorProps } from "./editor-types.js";
-import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
+import type { ComponentKind, ComponentLibrary, PageDocument, PageNode } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, socialImageProblem, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
@@ -304,7 +304,7 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
 }
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = emptyBlocks, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
+export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = emptyBlocks, builder, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
   const adapterRef = useRef(adapter); adapterRef.current = adapter;
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
@@ -320,6 +320,7 @@ export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = empt
   const [draft, setDraft] = useState<{ base: PageDocument; document: PageDocument } | null>(null), [range, setRange] = useState<StyleRange>("wide");
   // 編集中の状態（ホバー等）はキャンバスへ強制表示する。動きは初期は止め、選択枠がずれないようにする。
   const [styleState, setStyleState] = useState<StyleState>("normal"), [motion, setMotion] = useState(false), [replay, setReplay] = useState(0);
+  const builderDefinition = useMemo(() => resolveBuilderDefinition(builder), [builder]);
   const breakpoints = normalizeBreakpoints(hostBreakpoints);
   const [busy, setBusy] = useState(""), [pendingFields, setPendingFields] = useState<Record<string, "page" | "site">>({});
   const [navigation, setNavigation] = useState<Navigation | null>(null), [plan, setPlan] = useState<EditorReleasePlan | null>(null), [confirmed, setConfirmed] = useState(false);
@@ -999,14 +1000,6 @@ export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = empt
       if (!lib?.components.some((item) => item.id === component) || placementProblem(lib, component, insertableBlocks, masterId)) return undefined;
       return { type: "instance", id, component };
     }
-    if (type === "carousel" || type === "toggle") {
-      const next = () => { while (used.has(`${prefix}${counter}`)) counter++; used.add(`${prefix}${counter}`); return `${prefix}${counter}`; };
-      return type === "carousel" ? carouselPreset(next) : togglePreset(next);
-    }
-    if (type === "text") return newElement("p", id);
-    if (type === "richtext") return { type: "element", id, tag: "div", attrs: { role: "group", "aria-label": "リッチテキスト" }, children: [newElement("p", `edit_${crypto.randomUUID().replaceAll("-", "")}`)] };
-    if (type === "box") return { type: "element", id, tag: "div", children: [] };
-    if (type === "section") return { type: "element", id, tag: "section", children: [] };
     if (type.startsWith("block:")) {
       const block = type.slice(6), definition = blocks[block];
       if (!definition || insertableBlocks && !insertableBlocks.includes(block)) return undefined;
@@ -1014,13 +1007,21 @@ export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = empt
       for (const [name, rule] of Object.entries(definition.props)) if (rule.required && props[name] === undefined) props[name] = rule.type === "boolean" ? false : rule.type === "number" ? Math.min(rule.max ?? Infinity, Math.max(rule.min ?? -Infinity, 0)) : rule.type === "enum" ? rule.values[0] ?? "" : rule.type === "url" ? "/" : "表示テキスト";
       return { type: "component", id, block, props };
     }
-    return newElement(type as ElementTag, id);
+    const preset = builderDefinition.insertions.find((entry) => entry.id === type) ?? (type === "p" ? builderDefinition.insertions.find((entry) => entry.id === "text") : undefined);
+    if (!preset) return undefined;
+    const lib = libraryRef.current?.history.present;
+    return createInsertionNode(preset, {
+      document: current, blocks, ...(lib ? { components: lib } : {}), siteStyles: siteSettings.styles, ...(insertableBlocks ? { insertableBlocks } : {}), idPrefix: prefix,
+      canInsertInstance: (component) => !!lib?.components.some((entry) => entry.id === component) && !placementProblem(lib, component, insertableBlocks, masterId)
+    });
   }
   function add(type = addType, place?: Pick<DropPlace, "parentId" | "index">) {
     if (!document || hasInput || editBlocked) return;
-    const newNode = makeNode(type); if (!newNode) return;
-    const error = apply({ type: "add", parentId: place ? place.parentId : parentId || null, node: newNode, ...(place ? { index: place.index } : {}) });
-    if (error) setNotice(error); else if (newNode.type !== "text") selectId(newNode.id);
+    try {
+      const newNode = makeNode(type); if (!newNode) return;
+      const error = apply({ type: "add", parentId: place ? place.parentId : parentId || null, node: newNode, ...(place ? { index: place.index } : {}) });
+      if (error) setNotice(error); else if (newNode.type !== "text") selectId(newNode.id);
+    } catch (error) { setNotice(message(error)); }
   }
   function dropAt(item: DragItem, drop: Pick<DropPlace, "parentId" | "index">) {
     if (!document || hasInput || editBlocked) return;
@@ -1094,13 +1095,8 @@ export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = empt
     setLocalizationAssetUnit(null); return undefined;
   }
   const siblingCount = document && selection ? selection.length === 1 ? document.body.length : (nodeAt(document, selection.slice(0, -1)) as { children: PageNode[] }).children.length : 0;
-  const palette = [
-    { type: "section", name: "セクション", glyph: "▤", group: "構造" }, { type: "box", name: "ボックス", glyph: "□", group: "構造" },
-    { type: "text", name: "テキスト", glyph: "T", group: "文字" }, { type: "h2", name: "見出し", glyph: "H", group: "文字" },
-    { type: "richtext", name: "リッチテキスト", glyph: "¶", group: "文字" }, { type: "a", name: "リンク", glyph: "↗", group: "文字" },
-    { type: "img", name: "画像", glyph: "▧", group: "メディア" },
-    { type: "carousel", name: "カルーセル", glyph: "⇆", group: "インタラクション" }, { type: "toggle", name: "トグル（開閉）", glyph: "▾", group: "インタラクション" }
-  ];
+  const palette = builderDefinition.insertions;
+  const paletteGroups = [...new Set(palette.map((item) => item.group))];
   const availableBlocks = Object.entries(blocks).filter(([key]) => !insertableBlocks || insertableBlocks.includes(key));
   const startDrag = (event: React.DragEvent<HTMLElement>, item: DragItem) => {
     if (!document || hasInput || editBlocked || targetMode) { event.preventDefault(); return; }
@@ -1198,9 +1194,10 @@ export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = empt
       <nav className="e-tools" aria-label="編集ツール">{tools.map(([key, name]) => { const common = targetMode && ["add", "styles", "components"].includes(key); return <button key={key} type="button" aria-label={name} aria-pressed={visiblePanel === key} title={common ? "共通デザインは原文側で編集" : name} disabled={common} onClick={() => { setPicker(null); setPanel(key); }}><ToolGlyph tool={key} /><small className="e-vh">{name}</small></button>; })}</nav>
       <div className="e-panel">
         <section hidden={visiblePanel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
-          {targetMode && <p className="e-help">共通デザインは原文側で編集してください。</p>}{["構造", "文字", "メディア", "インタラクション"].map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.type} draggable={!!document && !editBlocked && !hasInput && !targetMode} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.type })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.type)} disabled={!document || editBlocked || hasInput || targetMode}><span aria-hidden="true">{item.glyph}</span>{item.name}</button>)}</div></div>)}
+          {targetMode && <p className="e-help">共通デザインは原文側で編集してください。</p>}{paletteGroups.map((group) => <div key={group}><h3>{group}</h3><div className="e-palette">{palette.filter((item) => item.group === group).map((item) => <button type="button" key={item.id} title={item.description} draggable={!!document && !editBlocked && !hasInput && !targetMode} onDragStart={(event) => startDrag(event, { kind: "palette", type: item.id })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(item.id)} disabled={!document || editBlocked || hasInput || targetMode}><span aria-hidden="true">{item.glyph ?? "+"}</span>{item.label}</button>)}</div></div>)}
           <details><summary>挿入先と詳細</summary><label className="e-field"><span>追加・移動先</span><select aria-label="追加・移動先" value={parentId} disabled={editBlocked || hasInput || targetMode} onChange={(event) => setParentId(event.target.value)}>{!masterId && <option value="">ページ直下</option>}{entries.filter(({ node }) => node.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)).map(({ node }) => node.type === "element" && <option key={node.id} value={node.id}>{node.tag} · {node.id}</option>)}</select></label>
-            <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked || targetMode}><option value="p">段落</option><option value="h2">見出し</option><option value="section">セクション</option><option value="box">ボックス</option><option value="richtext">リッチテキスト</option><option value="a">リンク</option><option value="img">画像</option><option value="text">テキスト</option>{availableBlocks.map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
+            <label className="e-field"><span>追加する要素</span><select aria-label="追加する要素" value={addType === "p" ? "text" : addType} onChange={(event) => setAddType(event.target.value)} disabled={editBlocked || targetMode}>
+              {palette.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}{availableBlocks.map(([key, block]) => <option key={key} value={`block:${key}`}>{block.label ?? key}</option>)}</select></label>
             <button onClick={() => add()} disabled={!document || editBlocked || hasInput || targetMode}>要素を追加</button></details>
         </section>
         <section hidden={visiblePanel !== "pages"} aria-label="ページ一覧">

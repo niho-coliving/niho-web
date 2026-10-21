@@ -14,6 +14,8 @@
 
 token の `label`、`textStyles`、node style の `textStyle`、文字の見た目プロパティ（`fontStyle` / `textDecorationLine`）、辺ごとの枠線幅（`borderTopWidth` / `borderRightWidth` / `borderBottomWidth` / `borderLeftWidth`）は v1 への後方互換な追加で、`schemaVersion` は 1 のままです。入力に無いキーは出力にも付けないため、既存文書の検証結果・直列化・fingerprint・CSS は変わりません。これらのキーを含む文書は、追加前のパッケージでは未知フィールドとして拒否されます。ホストは保存・公開側の検証も新しい commit SHA へ更新してから、新しい編集機能を使ってください。
 
+`@niho/web/builder` の挿入・モーション定義は編集時だけの設定で、文書wireには保存しません。挿入結果は既存の `PageNode`、モーション結果は既存の `NodeStyle.base/states/appear` です。定義名、関数、任意JS/CSS、新しい識別fieldは `PageDocument` に加わらないため、この拡張を使わない既存ホストと既存文書の直列化は変わりません。
+
 `siteId/pageId/locale/revision` の組が公開内容を一意に表します。同じ組の内容を変更すると同一 scope の CSS が競合するため、内容更新時は必ず revision を増やします。scope は各値を長さ付きで連結して生成し、他ページ・サイト・revision と衝突しない形にします。`pageScope` は検証済みの ID を持つ文書に対して使います。
 
 ## ノード

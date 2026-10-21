@@ -81,6 +81,33 @@ HTTP 409 は adapter で `{ status: 'conflict' }` へ変換します。`status: 
 
 追加パレットのセクション・ボックス・テキスト・見出し・リッチテキスト・画像はクリックで選択した親の末尾へ追加するか、キャンバス／レイヤーへドラッグして挿入位置を指定します。既存要素も選択後にキャンバスまたはレイヤーから移動でき、選択枠の右下をドラッグすると現在選んだ編集幅の幅・高さを一操作として変更します。キーボード向けには追加先の選択と上／下／末尾への移動、右インスペクタのサイズ欄を残します。不正な入れ子、循環、ロックされた変更はモデルの検証で拒否します。
 
+### 挿入カタログの拡張
+
+`PageEditor` の任意prop `builder` で、信頼済みホストが通常の `PageNode` 部分木を追加パレットへ登録できます。公開型と標準定義は `@niho/web/builder` から読み込みます。標準カタログは従来のセクション（`section`）、ボックス（`div`）、テキスト（`p`）、見出し、リッチテキスト、リンク、画像、カルーセル、トグルを維持し、リスト、横並び、グリッドも一般的な組み立て部品として提供します。追加パレットは従来の簡潔な項目を表示し、リスト、横並び、グリッドや独自構造はhostが `builder.insertions` へ明示した場合だけ表示します。同じ定義IDを指定すると標準項目を置換し、新しいIDは標準項目の後へ追加します。
+
+```tsx
+import type { BuilderDefinition } from '@niho/web/builder';
+
+const builder = {
+  insertions: [{
+    id: 'feature-card',
+    label: '特徴カード',
+    group: 'サイト部品',
+    glyph: '◇',
+    create: ({ id, target }) => ({
+      type: 'element', id: id(), tag: 'article', attrs: { lang: target.locale }, children: [
+        { type: 'element', id: id(), tag: 'h2', children: [{ type: 'text', text: '特徴' }] },
+        { type: 'element', id: id(), tag: 'p', children: [{ type: 'text', text: '説明' }] },
+      ],
+    }),
+  }],
+} satisfies BuilderDefinition;
+
+<PageEditor adapter={adapter} blocks={blocks} builder={builder} />
+```
+
+`create` は実行時だけ存在するtrusted host codeで、返す全element / component / instance IDを必ず `id()` で採番します。返した部分木は現在文書へ仮に加え、既存の `parsePageDocument` で深さとノード数、ID重複、HTML入れ子、属性、style、登録block、共通部品を全体検証してから検証済みのコピーを走査し、通常の `add` 操作へ渡します。配置先での入れ子も `add` 時に再検証します。`insertableBlocks` は部分木に直接ある業務ブロックだけでなく、配置する共通部品が内包する業務ブロックにも適用します。共通部品masterの循環・配置制約、snapshot locks、read-only、訳文側の構造編集禁止も標準項目と同じ経路で適用します。定義からscript、style element、イベント属性、任意CSSを文書へ保存することはできません。
+
 本文・見出しはキャンバスでダブルクリックして直接編集できます。リッチテキストは許可済みの段落・見出し・箇条書き・太字・斜体・リンクを文書ノードとして保存します。貼り付けはプレーンテキストに限定し、contenteditable の HTML は保存せず、許可済みノードへ変換して既存validatorを通します。Escapeで編集を取り消し、Cmd/Ctrl+Enterまたはフォーカス移動で確定します。保存対象はあくまで検証済みのPageDocumentです。
 
 インスペクタは定義済みのプロパティだけを表示します。HTML、JS、任意CSS、未知propsを直接入力する欄はありません。値は core validator を通ってから文書へ適用し、無効値は入力欄に残して理由を表示します。入力途中または無効な値が残る間は保存・公開・構造操作を止め、「入力を取り消す」で適用済みの値へ戻せます。
@@ -130,6 +157,24 @@ HTTP 409 は adapter で `{ status: 'conflict' }` へ変換します。`status: 
 - **アニメーション**: Studio の順にイージング、時間・遅延（秒）を表示します。状態の見た目が無い要素では使えず、理由を表示します。
 - **登場**: 効果（なし・ふわっと表示・下から・上から・左から・右から・拡大）、きっかけ（ページを開いたとき・画面に入ったとき）、時間・遅れ・動き方。画面に入ったときはスクロール量に合わせて動き、時間と遅れは使いません。「動きを減らす設定の利用者には動きなしで表示します」を常に表示します。
 - **表示する幅**: 段ごとのチェックで非表示を切り替え、隣り合う段は 1 つの範囲にまとめて保存します。すべての幅で非表示にはできません。レイヤー一覧では、表示中の幅で非表示の要素を薄くして「この幅で非表示」と表示します。
+
+`builder.motions` には再利用する `MotionPreset` を登録できます。保存形式は新しいwire fieldではなく、既存の `NodeStyle.base`（変形・transitionだけ）、`states`（hover / focus / active）、`appear`（enter）です。適用時は定義が宣言したpathだけを既存styleへ重ね、切替・解除時は直前の定義が所有するpathのうち現在値が一致するものだけを外します。手動で設定した状態色や回転、`responsive`、`hidden`、`textStyle`、背景や余白等の通常styleを保持し、適用・切替・解除はいずれも1操作としてundoできます。
+
+```ts
+const builder = {
+  motions: [{
+    id: 'quiet-lift',
+    label: '静かに浮かす',
+    description: 'ポインターとキーボード操作で少し上へ動かします。',
+    style: {
+      base: { transitionDuration: 220, transitionTimingFunction: 'ease-out' },
+      states: { hover: { translate: '0 -4px' }, focus: { translate: '0 -4px' } },
+    },
+  }],
+} satisfies BuilderDefinition;
+```
+
+標準定義には hover / focus / enter の例がありますが、標準 `PageEditor` は説明的なプリセット選択を自動表示しません。利用者は Studio に合わせた「通常 / ホバー / フォーカス / 押下中」、変形、イージング、時間、遅延、登場の各欄で直接設定します。hostが独自UIやcommandから定義を適用する場合も、`styleProperties`、locks、read-only、訳文制約を通り、サイト共通tokenを含む実効styleで既存validatorを適用時と所有権復元後の2回通します。runtimeでも `base` の非モーションproperty、未知のstate / field、任意のkeyframes、selector、CSS、JavaScriptを拒否します。公開CSSと `prefers-reduced-motion` の扱いは手入力した演出と同じです。
 
 キャンバス上部の「動きを再生」（aria-pressed、初期は停止）で動きを切り替えます。停止中は iframe 内の animation と transition を止め、編集中に選択枠がずれないようにします。再生にすると描画を作り直して登場をもう一度見せます。ツールバーの「プレビュー」中は常に動きを再生し、状態の強制表示はしません。
 
