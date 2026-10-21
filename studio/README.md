@@ -76,7 +76,9 @@ Editor HTML route だけ `PageEditor` の inline style と `iframe srcDoc` に�
 
 上流は Cloudflare service binding `KAMAKURA_SITE`（service `kamakura-site`）だけです。署名用 URL は `https://next-kamakura.niho.life/internal/studio/web-content/...` に固定し、任意 origin のネットワーク fetch や generic proxy にはしません。browser cookie、Cloudflare Access JWT、NIHO account 情報は転送しません。各 request は Experience と同じ HMAC message 形式で、Project header だけ `project-kamakura` を使います。secret は別の `KAMAKURA_STUDIO_BRIDGE_SECRET` とし、canonical base64url、decode 後 32 byte 以上を必須にします。
 
-上流応答は redirect 拒否、timeout、JSON media type、2 MiB 上限を適用します。409 は editor conflict として保持し、上流の 401 / 403 は Studio の Access session expiry に変換せず 503 として扱います。catalog は Project / Site metadata、`ja` の新形式 page ID、旧形式 page path、件数、重複を BFF で検証し、既知 field だけを browser へ返します。
+上流応答は redirect 拒否、timeout、JSON media type、2 MiB 上限を適用します。409 は editor conflict として保持し、上流の 401 / 403 / 429 / 5xx と catalog endpoint の 404 は Studio の Access session expiry と混同せず 503 として扱います。既存ページの 404 はそのまま保持します。catalog の契約検証・正規化は `studio/kamakura-catalog.ts` に集約し、BFF と browser が同じ parser を使います。Project / Site metadata、`ja` の新形式 page ID、旧形式 page path、件数、重複、制御文字を検証し、既知 field だけを browser へ返します。ページタイトルはコンテンツ文字列として扱い、2 MiB の応答上限で保護します。表示用の文字数制約を API 契約へ持ち込みません。
+
+catalog がこの契約に合わない場合は `502 { "error": "upstream_contract_invalid" }` を返し、通信・Binding・secret の利用不能を示す `503 service_unavailable` と分けます。画面も両者を別の案内にし、契約不一致時はサイト側と Studio 側の対応・配備状態を確認するよう示します。
 
 Kamakura の `PageEditor` が編集するのは `src/site/niho-web` の新形式ページだけです。現時点では0件のため、UI は移行待ちを明示し、catalog の旧形式一覧を読み取り専用で表示します。旧形式のデザインは `https://next-kamakura.niho.life/admin/pages`、記事・サークル・会社などの CMS は `https://next-kamakura.niho.life/admin` で引き続き編集します。Studio は CMS を変更せず、STUDIO からの全面移行を完了扱いにしません。source of truth は `studio` のままで、移行作業は kamakura-site #42 に残ります。
 

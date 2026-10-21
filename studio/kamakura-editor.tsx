@@ -1,29 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageEditor } from "../src/editor.js";
 import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
-import type { EditorAdapter, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSite, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
+import type { EditorAdapter, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
 import { projectRoutePath } from "./project-routes.mjs";
 import { kamakuraAssetLibrary } from "./kamakura-assets.js";
+import { KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, KAMAKURA_COMMON_PAGE_ID as COMMON_PAGE_ID, KAMAKURA_EDITOR_DOMAIN as DOMAIN, KAMAKURA_EDITOR_SITE_ID, KamakuraCatalogContractError, parseKamakuraCatalog } from "./kamakura-catalog.js";
+import type { KamakuraCatalog } from "./kamakura-catalog.js";
 
 const BASE = "/api/projects/project-kamakura/sites/kamakura/editor";
-const DOMAIN = "https://next-kamakura.niho.life";
-const SITE_NAME = "鎌倉サイト（新サイト確認用）";
-const COMMON_PAGE_ID = /^(?!(?:catalog|create|index)$)[a-z][a-z0-9-]{0,59}$/u;
 const CONFIRMATION_TOKEN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}){2}$/u;
 type RequestMethod = "GET" | "POST" | "PUT";
-type LegacyPage = { readonly name: string; readonly path: string };
-type Catalog = {
-  readonly project: { readonly id: "kamakura-site"; readonly name: "NIHO kamakura"; readonly site: EditorSite };
-  readonly sites: readonly EditorSite[];
-  readonly pages: readonly EditorPage[];
-  readonly legacy: readonly LegacyPage[];
-};
-type CatalogState = { readonly status: "loading" } | { readonly status: "error"; readonly code: number } | { readonly status: "ready"; readonly value: Catalog };
+type EditorApiStatus = { readonly status: number; readonly errorCode: string | null };
+type CatalogState = { readonly status: "loading" } | { readonly status: "error"; readonly code: number; readonly errorCode: string | null } | { readonly status: "ready"; readonly value: KamakuraCatalog };
 
 class EditorApiError extends Error {
-  constructor(readonly status: number) {
-    super(status === 401 ? "Cloudflare Access のセッションを確認してください。" : status === 403 ? "このプロジェクトの編集権限がありません。" : status === 404 ? "新形式のページが見つかりません。" : status === 503 ? "編集ブリッジを利用できません。" : "編集 API の要求を完了できませんでした。");
+  constructor(readonly status: number, readonly code: string | null = null) {
+    super(code === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "Kamakura catalog contract mismatch" : status === 401 ? "Cloudflare Access のセッションを確認してください。" : status === 403 ? "このプロジェクトの編集権限がありません。" : status === 404 ? "新形式のページが見つかりません。" : status === 503 ? "編集ブリッジを利用できません。" : "編集 API の要求を完了できませんでした。");
   }
 }
 
@@ -32,17 +25,12 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function line(value: unknown, maximum = 200): string {
-  if (typeof value !== "string" || !value || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error("編集 API の応答が正しくありません。");
-  return value;
-}
-
 function validVersion(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
 function validTarget(target: EditorTarget): EditorTarget {
-  if (target.siteId !== "kamakura" || target.locale !== "ja" || !COMMON_PAGE_ID.test(target.pageId)) throw new Error("新形式の編集対象ではありません。");
+  if (target.siteId !== KAMAKURA_EDITOR_SITE_ID || target.locale !== "ja" || !COMMON_PAGE_ID.test(target.pageId)) throw new Error("新形式の編集対象ではありません。");
   return { siteId: "kamakura", pageId: target.pageId, locale: "ja" };
 }
 
@@ -68,35 +56,19 @@ async function api(path: string, method: RequestMethod, body: Record<string, unk
   }
   if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) throw new EditorApiError(503);
   const value = await response.json() as unknown;
-  if (!response.ok) throw new EditorApiError(response.status);
+  if (!response.ok) {
+    const errorCode = typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).error === "string"
+      ? (value as Record<string, unknown>).error as string
+      : null;
+    throw new EditorApiError(response.status, errorCode);
+  }
   return value;
 }
 
-function parseSite(value: unknown): EditorSite {
-  const site = record(value);
-  if (site.id !== "kamakura" || site.name !== SITE_NAME || !Array.isArray(site.domains) || site.domains.length !== 1 || site.domains[0] !== DOMAIN) throw new Error("編集対象のサイト情報が一致しません。");
-  return { id: "kamakura", name: SITE_NAME, domains: [DOMAIN] };
-}
-
-function parseCatalog(value: unknown): Catalog {
-  const source = record(value), project = record(source.project);
-  if (project.id !== "kamakura-site" || project.name !== "NIHO kamakura") throw new Error("編集対象のプロジェクト情報が一致しません。");
-  const projectSite = parseSite(project.site);
-  if (!Array.isArray(source.sites) || source.sites.length !== 1 || !Array.isArray(source.pages) || source.pages.length > 500 || !Array.isArray(source.legacy) || source.legacy.length > 5_000) throw new Error("ページ一覧が正しくありません。");
-  const site = parseSite(source.sites[0]);
-  const pages = source.pages.map((entry): EditorPage => {
-    const page = record(entry);
-    if (page.siteId !== "kamakura" || page.locale !== "ja" || typeof page.pageId !== "string" || !COMMON_PAGE_ID.test(page.pageId)) throw new Error("ページ一覧に対象外のページが含まれています。");
-    return { siteId: "kamakura", pageId: page.pageId, locale: "ja", title: line(page.title, 120) };
-  });
-  const pathPattern = /^\/(?:[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)?$/u;
-  const legacy = source.legacy.map((entry): LegacyPage => {
-    const page = record(entry), name = line(page.name), path = line(page.path, 2_048);
-    if (!pathPattern.test(path)) throw new Error("旧形式ページの一覧が正しくありません。");
-    return { name, path };
-  });
-  if (new Set(pages.map(({ pageId }) => pageId)).size !== pages.length || new Set(legacy.map(({ name }) => name)).size !== legacy.length || new Set(legacy.map(({ path }) => path)).size !== legacy.length) throw new Error("ページ一覧が重複しています。");
-  return { project: { id: "kamakura-site", name: "NIHO kamakura", site: projectSite }, sites: [site], pages, legacy };
+function statusFromError(error: unknown): EditorApiStatus {
+  if (error instanceof EditorApiError) return { status: error.status, errorCode: error.code };
+  if (error instanceof KamakuraCatalogContractError) return { status: KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, errorCode: KAMAKURA_CATALOG_CONTRACT_ERROR_CODE };
+  return { status: 503, errorCode: null };
 }
 
 function parseSnapshot(value: unknown, target: EditorTarget): EditorSnapshot {
@@ -133,7 +105,7 @@ function parseReleased(value: unknown, target: EditorTarget): Extract<EditorRele
   return { status: "released", snapshot: parseSnapshot(source.snapshot, target) };
 }
 
-function createKamakuraAdapter(catalog: Catalog, onStatus: (status: number | null) => void): EditorAdapter {
+function createKamakuraAdapter(catalog: KamakuraCatalog, onStatus: (status: EditorApiStatus | null) => void): EditorAdapter {
   async function request<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
     try {
       const result = await run();
@@ -141,8 +113,8 @@ function createKamakuraAdapter(catalog: Catalog, onStatus: (status: number | nul
       onStatus(null);
       return result;
     } catch (error) {
-      if (!signal.aborted && error instanceof EditorApiError && error.status !== 409) onStatus(error.status);
-      else if (!signal.aborted && !(error instanceof EditorApiError)) onStatus(503);
+      if (!signal.aborted && error instanceof EditorApiError && error.status !== 409) onStatus(statusFromError(error));
+      else if (!signal.aborted && !(error instanceof EditorApiError)) onStatus(statusFromError(error));
       throw error;
     }
   }
@@ -174,24 +146,26 @@ function createKamakuraAdapter(catalog: Catalog, onStatus: (status: number | nul
   };
 }
 
-function EditorAlert({ status }: { readonly status: number }) {
-  return <div className={`studio-editor-alert studio-editor-alert-${status}`} role="alert">
-    <strong>{status === 401 ? "セッションの再確認が必要です" : status === 403 ? "編集権限を確認できません" : status === 404 ? "新形式ページが見つかりません" : status === 503 ? "編集ブリッジを利用できません（503）" : "編集 API の要求を完了できませんでした"}</strong>
-    <span>{status === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : status === 403 ? "D1 の Kamakura プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : status === 404 ? "ページ一覧を読み直し、新形式ページが存在することを確認してください。" : status === 503 ? "kamakura-site の内部 endpoint、service binding、両 Worker の bridge secret を管理者が確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
+function EditorAlert({ status }: { readonly status: EditorApiStatus }) {
+  const code = status.status;
+  const catalogContractMismatch = status.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE;
+  return <div className={`studio-editor-alert studio-editor-alert-${code}`} role="alert">
+    <strong>{catalogContractMismatch ? "ページ一覧の形式を確認できません" : code === 401 ? "セッションの再確認が必要です" : code === 403 ? "編集権限を確認できません" : code === 404 ? "新形式ページが見つかりません" : code === 503 ? "サイト編集サービスに接続できません" : "編集 API の要求を完了できませんでした"}</strong>
+    <span>{catalogContractMismatch ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者がサイト側とStudio側の対応状態を確認してください。" : code === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : code === 403 ? "D1 の Kamakura プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : code === 404 ? "ページ一覧を読み直し、新形式ページが存在することを確認してください。" : code === 503 ? "編集内容は変更されていません。時間をおいてから再試行してください。続く場合は管理者へ確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
   </div>;
 }
 
 export function KamakuraEditor({ project }: { readonly project: Project }) {
   const [catalog, setCatalog] = useState<CatalogState>({ status: "loading" });
-  const [status, setStatus] = useState<number | null>(null);
+  const [status, setStatus] = useState<EditorApiStatus | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     setCatalog({ status: "loading" });
     void api(`${BASE}/catalog`, "GET", undefined, controller.signal)
-      .then(parseCatalog)
+      .then(parseKamakuraCatalog)
       .then((value) => { if (!controller.signal.aborted) { setCatalog({ status: "ready", value }); setStatus(null); } })
-      .catch((error: unknown) => { if (!controller.signal.aborted) { const code = error instanceof EditorApiError ? error.status : 503; setCatalog({ status: "error", code }); setStatus(code); } });
+      .catch((error: unknown) => { if (!controller.signal.aborted) { const failure = statusFromError(error); setCatalog({ status: "error", code: failure.status, errorCode: failure.errorCode }); setStatus(failure); } });
     return () => controller.abort();
   }, [reload]);
   const ready = catalog.status === "ready" ? catalog.value : null;
@@ -203,7 +177,7 @@ export function KamakuraEditor({ project }: { readonly project: Project }) {
     </header>
     {status !== null && <EditorAlert status={status} />}
     {catalog.status === "loading" && <section className="studio-editor-note" role="status"><h2>ページ一覧を確認しています</h2><p>kamakura-site の新形式ページと旧形式ページを読み込んでいます。</p></section>}
-    {catalog.status === "error" && <section className="studio-editor-note"><h2>ページ一覧を読み込めませんでした</h2><p>編集内容は変更されていません。接続設定を確認して再試行してください。</p><button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
+    {catalog.status === "error" && <section className="studio-editor-note"><h2>ページ一覧を読み込めませんでした</h2><p>{catalog.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者へ確認してください。" : "編集内容は変更されていません。接続状態を確認して再試行してください。"}</p><button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
     {ready && <>
       <section className="studio-editor-note studio-kamakura-scope">
         <div><h2>編集範囲</h2><p>Studio が保存・公開するのは <strong>新形式ページ {ready.pages.length}件</strong>だけです。旧 STUDIO ページの移行は別作業で、記事・サークル・会社などの CMS データはここから変更しません。</p></div>
