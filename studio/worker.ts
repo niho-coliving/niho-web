@@ -22,6 +22,8 @@ export interface Env {
   readonly ACCESS_AUDIENCE: string;
   /** NIHO internal Studio bridgeと共有するbase64url HMAC key。 */
   readonly NIHO_STUDIO_BRIDGE_SECRET?: string;
+  /** NIHO API stg の internal Studio bridge と共有する別のbase64url HMAC key。 */
+  readonly NIHO_STUDIO_BRIDGE_SECRET_STG?: string;
   /** kamakura-site Studio bridgeと共有するbase64url HMAC key。 */
   readonly KAMAKURA_STUDIO_BRIDGE_SECRET?: string;
 }
@@ -76,6 +78,7 @@ const MAX_MUTATION_BODY_BYTES = 16 * 1024;
 const MAX_EDITOR_SAVE_BODY_BYTES = 600 * 1024;
 const MAX_EDITOR_RESPONSE_BYTES = 2 * 1024 * 1024;
 const EDITOR_UPSTREAM_ORIGIN = "https://api.niho.life";
+const EDITOR_STAGING_UPSTREAM_ORIGIN = "https://api-stg.niho.life";
 const EDITOR_UPSTREAM_PREFIX = "/api/internal/studio/experience";
 const EDITOR_PROJECT_ID = "project-experience";
 const EDITOR_SITE_ID = "experience";
@@ -673,22 +676,23 @@ async function enforceMutationBoundary(request: Request): Promise<Record<string,
 
 type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number };
 
-function experienceEditorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
+function experienceEditorRoute(action: string, method: string, staging = false): EditorRoute | "method_not_allowed" | null {
+  const routeAction = staging ? action.replace(/^\/editor-staging(?=\/|$)/u, "/editor") : action;
   const fixed = new Map<string, "GET">([
     ["/editor/sites", "GET"],
     ["/editor/sites/experience/pages", "GET"]
   ]);
-  const page = /^\/editor\/sites\/experience\/pages\/(home|experiences|experience-detail|booking|host|chrome)\/en(\/draft|\/release-plan|\/release)?$/u.exec(action);
+  const page = /^\/editor\/sites\/experience\/pages\/(home|experiences|experience-detail|booking|host|chrome)\/en(\/draft|\/release-plan|\/release)?$/u.exec(routeAction);
   if (page) {
     const suffix = page[2] ?? "";
     const expected = suffix === "/draft" ? "PUT" : suffix === "/release-plan" || suffix === "/release" ? "POST" : "GET";
     if (method !== expected) return "method_not_allowed";
-    return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: suffix === "/draft" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES };
+    return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${routeAction.slice("/editor".length)}`, bodyLimit: suffix === "/draft" ? MAX_EDITOR_SAVE_BODY_BYTES : MAX_MUTATION_BODY_BYTES };
   }
-  const expected = fixed.get(action);
+  const expected = fixed.get(routeAction);
   if (!expected) return null;
   if (method !== expected) return "method_not_allowed";
-  return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${action.slice("/editor".length)}`, bodyLimit: MAX_MUTATION_BODY_BYTES };
+  return { upstreamPath: `${EDITOR_UPSTREAM_PREFIX}${routeAction.slice("/editor".length)}`, bodyLimit: MAX_MUTATION_BODY_BYTES };
 }
 
 function kamakuraEditorRoute(action: string, method: string): EditorRoute | "method_not_allowed" | null {
@@ -713,6 +717,18 @@ async function editorMember(env: Env, identity: AccessIdentity, projectId: strin
        AND m.role IN ('owner', 'editor')
      LIMIT 1
   `).bind(identity.subject, projectId, siteId).first<{ readonly allowed: number }>();
+  return row?.allowed === 1;
+}
+
+async function experienceEditorOwner(env: Env, identity: AccessIdentity): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT 1 AS allowed
+      FROM project_members AS m
+      JOIN sites AS s ON s.project_id = m.project_id
+     WHERE m.access_subject = ?1 AND m.project_id = ?2 AND s.id = ?3
+       AND m.role = 'owner'
+     LIMIT 1
+  `).bind(identity.subject, EDITOR_PROJECT_ID, EDITOR_SITE_ID).first<{ readonly allowed: number }>();
   return row?.allowed === 1;
 }
 
@@ -771,20 +787,25 @@ async function readBoundedResponse(response: Response): Promise<unknown> {
   return parsed;
 }
 
-async function signedEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
+async function signedEditorRequest(
+  request: Request,
+  identity: AccessIdentity,
+  route: EditorRoute,
+  bridge: { readonly origin: string; readonly secret: string | undefined }
+): Promise<Response> {
   const body = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const bodyBytes = body.slice().buffer;
   const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
   const message = `v1\n${timestamp}\n${request.method}\n${route.upstreamPath}\n${bodyHash}\n${EDITOR_PROJECT_ID}\n${identity.subject}`;
-  const key = await crypto.subtle.importKey("raw", bridgeSecret(env.NIHO_STUDIO_BRIDGE_SECRET).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey("raw", bridgeSecret(bridge.secret).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
   const controller = new AbortController();
   const abort = () => controller.abort();
   request.signal.addEventListener("abort", abort, { once: true });
   const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
   try {
-    const response = await fetch(`${EDITOR_UPSTREAM_ORIGIN}${route.upstreamPath}`, {
+    const response = await fetch(`${bridge.origin}${route.upstreamPath}`, {
       method: request.method,
       cache: "no-store",
       redirect: "manual",
@@ -890,13 +911,20 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
 async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
   if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
   const experience = projectId === EDITOR_PROJECT_ID && siteId === EDITOR_SITE_ID;
+  const staging = experience && (action === "/editor-staging" || action.startsWith("/editor-staging/"));
   const kamakura = projectId === KAMAKURA_EDITOR_PROJECT_ID && siteId === KAMAKURA_EDITOR_SITE_ID;
   if (!experience && !kamakura) return json({ error: "not_found" }, 404);
-  const route = experience ? experienceEditorRoute(action, request.method) : kamakuraEditorRoute(action, request.method);
+  if (experience && !staging && action !== "/editor" && !action.startsWith("/editor/")) return json({ error: "not_found" }, 404);
+  const route = experience ? experienceEditorRoute(action, request.method, staging) : kamakuraEditorRoute(action, request.method);
   if (route === null) return json({ error: "not_found" }, 404);
   if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
-  if (!await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
-  try { return experience ? await signedEditorRequest(request, env, identity, route) : await signedKamakuraEditorRequest(request, env, identity, route); }
+  if (staging ? !await experienceEditorOwner(env, identity) : !await editorMember(env, identity, projectId, siteId)) return json({ error: "forbidden" }, 403);
+  try {
+    if (!experience) return await signedKamakuraEditorRequest(request, env, identity, route);
+    return staging
+      ? await signedEditorRequest(request, identity, route, { origin: EDITOR_STAGING_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET_STG })
+      : await signedEditorRequest(request, identity, route, { origin: EDITOR_UPSTREAM_ORIGIN, secret: env.NIHO_STUDIO_BRIDGE_SECRET });
+  }
   catch (error) {
     if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
     throw error;
@@ -922,7 +950,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
-  if (action === "/editor" || action.startsWith("/editor/")) return editorApi(request, env, identity, url, projectId, siteId, action);
+  if (action === "/editor" || action.startsWith("/editor/") || action === "/editor-staging" || action.startsWith("/editor-staging/")) return editorApi(request, env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
@@ -965,8 +993,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
-  const isEditor = /^\/projects\/(?:project-experience\/sites\/experience|project-kamakura\/sites\/kamakura)\/editor\/?$/u.test(url.pathname);
+  const isStagingExperienceEditor = /^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(url.pathname);
+  const isEditor = /^\/projects\/(?:project-experience\/sites\/experience|project-kamakura\/sites\/kamakura)\/editor\/?$/u.test(url.pathname) || isStagingExperienceEditor;
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor) {
+    if (isStagingExperienceEditor && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
     return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor);
   }

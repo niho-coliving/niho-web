@@ -14,7 +14,7 @@ Issue #68 / #69 / #70 の Studio host です。共有 `@niho/web` ライブラ�
 
 D1 が Project / Site / Member / Role / Invitation / Audit の正本です。NIHO account、niho-app の User / Project DB、NIHO cookie、Cloudflare dashboard membership は権限根拠にしません。Kamakura の content CMS はそのサイト側、Experience の contributor content は niho-app 側に残ります。
 
-Experience と Kamakura の Editor UI / BFF は実装されています。Experience は niho-app Backend Draft PR #19268 の反映と Studio Worker／NIHO API 両側への同一 bridge secret 設定が終わるまで「接続待ち」と表示し、直接 URL でも編集画面を開きません。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
+Experience と Kamakura の Editor UI / BFF は実装されています。Experience の本番編集は niho-app Backend Draft PR #19268 の本番反映と本番 bridge secret の設定まで有効化しません。STG検証画面は `/projects/project-experience/sites/experience/editor/staging` に限り、D1 の Experience owner のみ開けます。画面・APIの両方で owner を確認し、固定した `https://api-stg.niho.life` と別の `NIHO_STUDIO_BRIDGE_SECRET_STG` を使います。Kamakura は `kamakura-site` の内部 endpoint、service binding `KAMAKURA_SITE`、両 Worker の `KAMAKURA_STUDIO_BRIDGE_SECRET` が揃った後に利用します。この host は Dashboard の公開状態や解析値を合成せず、`unknown` / `unavailable` / `disconnected` / `null` のまま表示します。
 
 ## 認証・認可境界
 
@@ -36,7 +36,7 @@ Member 管理 mutation は従来どおり `POST` のみです。request URL と�
 
 ## Experience editor bridge
 
-ブラウザは同一 origin の `/api/projects/project-experience/sites/experience/editor` だけを呼び、NIHO API、NIHO cookie、bridge secret へ直接アクセスしません。BFF は query string、別 Project/Site、allowlist 外 page ID、未知の route/method を拒否します。対象 page ID は `home`、`experiences`、`experience-detail`、`booking`、`host`、`chrome`、locale は `en`、公開先は `https://experience.niho.life` に固定します。components / localization / assets API は production backend にないため接続しません。
+通常編集は同一 origin の `/api/projects/project-experience/sites/experience/editor`、STG検証は `/api/projects/project-experience/sites/experience/editor-staging` だけを呼びます。ブラウザは NIHO API、NIHO cookie、bridge secret へ直接アクセスしません。BFF は query string、別 Project/Site、allowlist 外 page ID、未知の route/method を拒否します。対象 page ID は `home`、`experiences`、`experience-detail`、`booking`、`host`、`chrome`、locale は `en`、公開先は `https://experience.niho.life` に固定します。components / localization / assets API は backend にないため接続しません。
 
 上流は固定 origin `https://api.niho.life`、prefix `/api/internal/studio/experience` です。各 request は browser cookie や Access JWT を転送せず、次の header だけで Studio identity を渡します。
 
@@ -54,6 +54,8 @@ v1\n${timestamp}\n${method}\n${pathname}\n${sha256hex(rawBody)}\n${project}\n${s
 ```
 
 `NIHO_STUDIO_BRIDGE_SECRET` は padding なし canonical base64url で、decode 後 32 byte 以上を必須にします。欠落・不正なら fail-closed 503 です。上流 fetch は redirect を追跡せず、timeout、`no-store`、JSON media type、2 MiB response 上限を適用します。3xx、非 JSON、上限超過、上流 401/403/404/429/5xx は Studio の Access session error と混同せず 503 にします。409 だけ editor conflict として保持します。
+
+STG検証は同じ allowlist と署名契約を使いますが、上流は固定 `https://api-stg.niho.life`、鍵は `NIHO_STUDIO_BRIDGE_SECRET_STG` です。STG UI は環境を明示します。通常の Experience editor ルートや本番用 key/origin は切り替えません。STG API が未配備、secret が無効、または owner 以外なら閉じます。公開・復元の受入操作は STG API 上でのみ行い、本番 API へは送信しません。
 
 Editor HTML route だけ `PageEditor` の inline style と `iframe srcDoc` に必要な `style-src 'unsafe-inline'` / `frame-src 'self'` を追加します。`script-src 'self'` は維持し、Directory / Dashboard など他 route の CSP は緩和しません。
 
@@ -76,16 +78,19 @@ Kamakura の editor route にも Experience と同じ範囲限定 CSP 緩和を�
 1. NIHO アカウントに作成済みの `niho-web-studio` D1 と `studio/wrangler.toml` の binding・account ID を照合する。token、credential、実メールアドレスはリポジトリへ書かない。
 2. 作成済みの専用 Cloudflare Access application `NIHO Web Studio` が `studio.niho.life` 全体を保護し、専用ポリシー `Allow NIHO Web Studio staff`（Google ログインと `@niho.life`）のみを使うことを照合する。Cloudflare dashboard membership を Studio role として使わない。Access session は 12 時間、Cookie は HttpOnly。
 3. 作成済み Access application の AUD tag と `ACCESS_AUDIENCE`、issuer `https://niho-coliving.cloudflareaccess.com` を照合する。
-4. NIHO API 側と Studio Worker 側へ Experience 用の同一 secret、`kamakura-site` と Studio Worker 側へ Kamakura 用の同一 secret を、それぞれ別の secret store から設定する。両用途で secret を共用しない。値を shell 引数、リポジトリ、ログへ残さず、対話入力で登録する。
+4. まず NIHO API STG と Studio Worker に、STG 専用 `NIHO_STUDIO_BRIDGE_SECRET_STG` を同じ値で設定する。STG用と本番用の secret は別にする。Kamakura の secret もExperienceとは共用しない。本番 Experience secret は本番受入時まで設定しない。値を shell 引数、リポジトリ、ログへ残さず、対話入力または承認済みの secret handling で設定する。
 
 ```sh
 wrangler secret put NIHO_STUDIO_BRIDGE_SECRET --config studio/wrangler.toml
+wrangler secret put NIHO_STUDIO_BRIDGE_SECRET_STG --config studio/wrangler.toml
 wrangler secret put KAMAKURA_STUDIO_BRIDGE_SECRET --config studio/wrangler.toml
 ```
 
+`NIHO_STUDIO_BRIDGE_SECRET_STG` には NIHO API STG が参照する Secret Manager の値だけを設定します。本番値との共用は禁止です。Secret Manager から Cloudflare へ移すときも対話型またはログに出ない承認済みの secret handling を使い、shell 引数・ファイル・ログ・Issue に値を残しません。
+
 5. `studio/wrangler.toml` の `KAMAKURA_SITE` が同じ Cloudflare account の service `kamakura-site` を指すことを確認する。
-6. 配備順は、(1) 両 Worker に Kamakura secret を設定、(2) `kamakura-site` の署名済み `/internal/studio/web-content/*` を先に配備、(3) Studio D1 migration `0004` を適用、(4) Studio Worker を配備、(5) catalog / save / release-plan / release / rollback を受入確認、とする。Studio を先に配備して backend 未反映を編集可能とは案内しない。
-7. Experience backend も対象環境へ反映済みであることを確認してから、build と migration を実行する。
+6. Experience STG は、(1) niho-app PR #19268 の API を STG に反映、(2) Cloud Run STG が Secret Manager の STG key を参照していることを確認、(3) Studio Worker の STG key を設定、(4) この Worker を配備、(5) owner で STG画面を開き list / read / save / release-plan / release / rollback を受入確認、の順に進める。本番用 API key や本番コンテンツはこの確認に使わない。
+7. Kamakura は、(1) 両 Worker に Kamakura secret を設定、(2) `kamakura-site` の署名済み `/internal/studio/web-content/*` を先に配備、(3) Studio D1 migration `0004` を適用、(4) Studio Worker を配備、(5) catalog / save / release-plan / release / rollback を受入確認、とする。Studio を先に配備して backend 未反映を編集可能とは案内しない。
 
 ```sh
 npm ci
@@ -141,8 +146,9 @@ Project 固有 API はすべて次の prefix 配下です。
 - `POST members/remove`: owner の member 削除
 - `POST invitations/preview`: 招待 token hash、scope、verified email が一致する本人だけ
 - `POST invitations/accept`: 本人の明示承諾。membership と token consume を atomic に実行
-- Experience: `GET editor/sites`、`GET editor/sites/experience/pages`、`GET editor/sites/experience/pages/:pageId/en`
+- Experience: `GET editor/sites`、`GET editor/sites/experience/pages`、`GET editor/sites/experience/pages/:pageId/en`（通常編集は owner/editor）
 - Experience: `PUT .../draft`、`POST .../release-plan`、`POST .../release`
+- Experience STG: 同じ route を `/editor-staging` 配下で提供し、owner のみ許可
 - Kamakura: `GET editor/catalog`、`GET editor/:pageId`
 - Kamakura: `PUT editor/:pageId/draft`、`POST editor/:pageId/release-plan`、`POST editor/:pageId/release`
 

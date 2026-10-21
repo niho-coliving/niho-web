@@ -11,7 +11,7 @@ type Role = "owner" | "editor";
 type Screen =
   | { readonly kind: "directory" }
   | { readonly kind: "dashboard"; readonly projectId: string; readonly siteId: string }
-  | { readonly kind: "editor"; readonly projectId: string; readonly siteId: string }
+  | { readonly kind: "editor"; readonly projectId: string; readonly siteId: string; readonly staging: boolean }
   | { readonly kind: "invite"; readonly projectId: string; readonly siteId: string; readonly token: string };
 type SessionState =
   | { readonly status: "loading" }
@@ -69,8 +69,11 @@ function screenFromLocation(): Screen {
     const token = new URLSearchParams(window.location.search).get("token") ?? new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
     return { kind: "invite", projectId: invite[1]!, siteId: invite[2]!, token };
   }
+  if (/^\/projects\/project-experience\/sites\/experience\/editor\/staging\/?$/u.test(window.location.pathname)) {
+    return { kind: "editor", projectId: "project-experience", siteId: "experience", staging: true };
+  }
   const editor = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/editor\/?$/u.exec(window.location.pathname);
-  if (editor) return { kind: "editor", projectId: editor[1]!, siteId: editor[2]! };
+  if (editor) return { kind: "editor", projectId: editor[1]!, siteId: editor[2]!, staging: false };
   const dashboard = /^\/projects\/([A-Za-z][A-Za-z0-9_-]{0,79})\/sites\/([A-Za-z][A-Za-z0-9_-]{0,79})\/?$/u.exec(window.location.pathname);
   return dashboard ? { kind: "dashboard", projectId: dashboard[1]!, siteId: dashboard[2]! } : { kind: "directory" };
 }
@@ -388,9 +391,11 @@ function App() {
       {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
         : selected && screen.kind === "editor"
-          ? editorEnabled(selected) && selected.id === "project-experience" && selected.site.id === "experience"
-            ? <ExperienceEditor project={selected} />
-            : selected.id === "project-kamakura" && selected.site.id === "kamakura"
+          ? screen.staging
+            ? selected.id === "project-experience" && selected.site.id === "experience"
+              ? <ExperienceEditor project={selected} environment="staging" />
+              : <Notice title="エディターを表示できません">STGエディターは NIHO Experience でのみ利用できます。</Notice>
+            : editorEnabled(selected) && selected.id === "project-kamakura" && selected.site.id === "kamakura"
               ? <KamakuraEditor project={selected} />
               : <Notice title="エディターを表示できません">このサイトのエディターはまだ接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
