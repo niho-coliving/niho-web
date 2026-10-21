@@ -1,7 +1,8 @@
-const PROJECT_ALIASES = Object.freeze([
-  Object.freeze({ slug: "kamakura-site", projectId: "project-kamakura", siteId: "kamakura" }),
-  Object.freeze({ slug: "niho-experience", projectId: "project-experience", siteId: "experience" })
-]);
+import { TRUSTED_INTEGRATIONS } from "./integration-registry.mjs";
+
+const PROJECT_ALIASES = Object.freeze(TRUSTED_INTEGRATIONS.flatMap((registration) => registration.aliases.map((slug) => Object.freeze({
+  slug, projectId: registration.projectId, siteId: registration.siteId
+}))));
 
 export function parseProjectAliasPath(pathname) {
   const match = /^\/projects\/([a-z][a-z0-9-]*)\/admin(?:\/(editor))?\/?$/u.exec(pathname);

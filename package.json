@@ -110,6 +110,7 @@
     "studio:deploy": "npm run studio:build && wrangler deploy --config studio/wrangler.toml",
     "test": "npm run build && node --test test/*.test.mjs",
     "demo": "node examples/editor-demo.mjs",
+    "demo:builder": "npm run build && node examples/builder-demo.mjs",
     "demo:projects": "node examples/projects-demo.mjs",
     "demo:analytics": "node examples/analytics-demo.mjs",
     "demo:localization": "node examples/localization-demo.mjs",

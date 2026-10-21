@@ -167,6 +167,8 @@ Project 固有 API はすべて次の prefix 配下です。
 
 unknown Project/Site と権限のない Project/Site は、外部から区別できる詳細を返しません。owner API が返す member 情報は、その owner が管理する同一 Project に限定します。
 
+編集対象の追加手順、trusted registry、client component map、worker adapter mapの境界は [ビルダー接続ガイド](../docs/builder-integration-guide.md) を正とします。登録されていないProject/Site/environmentはHTMLとAPIの両方で閉じます。
+
 ## local 確認と配置
 
 ```sh

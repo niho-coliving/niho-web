@@ -4,6 +4,7 @@ import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorPage, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSite, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
 import type { PublicPropValue } from "../src/types.js";
+import { studioBuilderDefinition } from "./integration-builder.js";
 import { projectRoutePath } from "./project-routes.mjs";
 
 const BASE = "/api/projects/project-experience/sites/experience/editor";
@@ -214,7 +215,8 @@ const nihoExperiencePreviewBlocks = {
   }
 } satisfies EditorBlockRegistry;
 
-export function ExperienceEditor({ project, environment = "production" }: { readonly project: Project; readonly environment?: "production" | "staging" }) {
+export function ExperienceEditor({ project, environment = "production" }: { readonly project: Project; readonly environment?: string }) {
+  if (environment !== "production" && environment !== "staging") throw new Error("Experience editor environment is not registered");
   const [status, setStatus] = useState<number | null>(null);
   const base = environment === "staging" ? STAGING_BASE : BASE;
   const adapter = useMemo(() => createProjectEditorAdapter(createExperienceAdapter(setStatus, base), project), [base, project]);
@@ -228,6 +230,6 @@ export function ExperienceEditor({ project, environment = "production" }: { read
       <strong>{status === 401 ? "セッションの再確認が必要です" : status === 403 ? "編集権限を確認できません" : status === 503 ? "編集ブリッジを利用できません（503）" : "編集 API の要求を完了できませんでした"}</strong>
       <span>{status === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : status === 403 ? "D1 の Experience プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : status === 503 ? "NIHO 側 editor API の反映状況と、Studio／NIHO API 両側の bridge secret 設定を管理者が確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
     </div>}
-    <PageEditor adapter={adapter} blocks={nihoExperiencePreviewBlocks} insertableBlocks={[]} />
+    <PageEditor adapter={adapter} blocks={nihoExperiencePreviewBlocks} insertableBlocks={[]} builder={studioBuilderDefinition} />
   </main>;
 }
