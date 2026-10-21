@@ -110,11 +110,31 @@ test("color, typography, dimensions, spacing, flex/grid and position CSS compile
   assert.ok(css.includes("font-size:18px;")); assert.ok(css.includes("line-height:1.5;"));
 });
 
+test("calc dimensions require CSS operator whitespace and are limited to width properties", () => {
+  const input = doc();
+  input.body[0].style.base = {
+    width: "calc(100% - 1px)", height: "calc(50% + 2px)",
+    minWidth: "calc(25% - 3px)", maxWidth: "calc(100% - 10px)"
+  };
+  const css = generatePageCss(input);
+  for (const value of ["calc(100% - 1px)", "calc(50% + 2px)", "calc(25% - 3px)", "calc(100% - 10px)"]) {
+    assert.ok(css.includes(value));
+  }
+
+  for (const declarations of [
+    { width: "calc(100%-1px)" }, { width: "calc(50%+2px)" },
+    { width: "calc(1001% - 1px)" }, { width: "calc(100% - 10001px)" },
+    { minHeight: "calc(100% - 1px)" }, { maxHeight: "calc(100% - 1px)" }, { flexBasis: "calc(100% - 1px)" }
+  ]) {
+    const invalid = doc(); invalid.body[0].style.base = declarations; reject(invalid);
+  }
+});
+
 test("raw CSS, unsafe values, properties and selector escapes are rejected", () => {
   for (const declarations of [
     { color: "red; } body {display:none" }, { color: "var(--foreign)" }, { backgroundColor: "url(https://example.com/x)" },
     { backgroundImage: "url(https://example.com/x)" }, { fontFamily: "x</style><script>alert(1)</script>" },
-    { width: "expression(alert(1))" }, { width: "calc(100% - 1px)" }, { width: "10px!important" },
+    { width: "expression(alert(1))" }, { width: "10px!important" },
     { display: "flex; color:red" }, { position: "absolute\n" }, { padding: "-1rem" }, { opacity: 2 }, { gap: Number.NaN },
     { gridTemplateColumns: "repeat(3, url(x))" }, { gridTemplateColumns: "repeat(3, minmax(0, 1fr)))" },
     { color: { token: "unknown" } }, { color: { token: "space" } }, { color: { token: "ink", css: "bad" } },

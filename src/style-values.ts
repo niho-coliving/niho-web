@@ -11,7 +11,7 @@ const length = (v: string) => {
 // 固定値の percent - px だけを dimension の calc として許可する。任意の CSS
 // 関数や変数は通さず、STUDIO の安全な幅変換で必要な式だけを保持する。
 const calculatedDimension = (v: string) => {
-  const match = /^calc\(\s*(\d+(?:\.\d+)?|\.\d+)%\s*([+-])\s*(\d+(?:\.\d+)?|\.\d+)px\s*\)$/.exec(v);
+  const match = /^calc\(\s*(\d+(?:\.\d+)?|\.\d+)%\s+([+-])\s+(\d+(?:\.\d+)?|\.\d+)px\s*\)$/.exec(v);
   return !!match && Number(match[1]) <= 1000 && Number(match[3]) <= lengthLimits.px!;
 };
 const positiveLength = (v: string) => length(v) && !v.startsWith("-");
@@ -75,7 +75,8 @@ export const origins = ["left top", "center top", "right top", "left center", "c
 
 /** unit: 数値だけの指定に付ける単位（px は px フラグ）。 */
 type PropertySpec = { kind?: TokenKind; px?: boolean; unit?: "deg" | "ms"; valid: (value: string) => boolean };
-const dimension: PropertySpec = { kind: "length", px: true, valid: (v) => positiveLength(v) || calculatedDimension(v) || ["auto", "min-content", "max-content", "fit-content", "none"].includes(v) };
+const dimension: PropertySpec = { kind: "length", px: true, valid: (v) => positiveLength(v) || ["auto", "min-content", "max-content", "fit-content", "none"].includes(v) };
+const dimensionWithCalc: PropertySpec = { ...dimension, valid: (v) => dimension.valid(v) || calculatedDimension(v) };
 const offset: PropertySpec = { kind: "length", px: true, valid: (v) => length(v) || v === "auto" };
 const nonnegative: PropertySpec = { kind: "length", px: true, valid: positiveLength };
 const margin: PropertySpec = { kind: "length", px: true, valid: (v) => shorthand(v, true, true) };
@@ -88,7 +89,7 @@ const specs: Record<StyleProperty, PropertySpec> = {
   lineHeight: { kind: "number", valid: (v) => v === "normal" || positiveLength(v) || unitNumber(v) },
   letterSpacing: { kind: "length", px: true, valid: (v) => length(v) || v === "normal" },
   fontVariantEastAsian: { valid: oneOf("normal", "proportional-width") }, textAlign: { valid: oneOf("left", "right", "center", "start", "end", "justify") },
-  width: dimension, height: dimension, minWidth: dimension, maxWidth: dimension, minHeight: dimension, maxHeight: dimension,
+  width: dimensionWithCalc, height: dimensionWithCalc, minWidth: dimensionWithCalc, maxWidth: dimensionWithCalc, minHeight: dimension, maxHeight: dimension,
   margin, marginTop: offset, marginRight: offset, marginBottom: offset, marginLeft: offset,
   padding, paddingTop: nonnegative, paddingRight: nonnegative, paddingBottom: nonnegative, paddingLeft: nonnegative,
   display: { valid: oneOf("block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "none") },
