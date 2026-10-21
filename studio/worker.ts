@@ -1,4 +1,5 @@
 import { parseProjectAliasPath } from "./project-routes.mjs";
+import { KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, KamakuraCatalogContractError, KAMAKURA_COMMON_PAGE_ID, KAMAKURA_EDITOR_SITE_ID, parseKamakuraCatalog } from "./kamakura-catalog.js";
 
 type D1Meta = { readonly changes?: number };
 type D1Result<T> = { readonly results?: readonly T[]; readonly success: boolean; readonly meta?: D1Meta };
@@ -88,10 +89,7 @@ const EDITOR_TIMEOUT_MILLISECONDS = 12_000;
 const KAMAKURA_EDITOR_UPSTREAM_ORIGIN = "https://next-kamakura.niho.life";
 const KAMAKURA_EDITOR_UPSTREAM_PREFIX = "/internal/studio/web-content";
 const KAMAKURA_EDITOR_PROJECT_ID = "project-kamakura";
-const KAMAKURA_EDITOR_SITE_ID = "kamakura";
-const KAMAKURA_EDITOR_SITE_NAME = "鎌倉サイト（新サイト確認用）";
-const KAMAKURA_EDITOR_DOMAIN = "https://next-kamakura.niho.life";
-const COMMON_PAGE_ID = /^(?!(?:catalog|create|index)$)[a-z][a-z0-9-]{0,59}$/u;
+const COMMON_PAGE_ID = KAMAKURA_COMMON_PAGE_ID;
 const MAX_PENDING_INVITATIONS = 100;
 const MAX_PROJECT_MEMBERS = 500;
 const JWKS_CACHE_MILLISECONDS = 5 * 60 * 1000;
@@ -102,7 +100,12 @@ class AuthenticationError extends Error {}
 class ConfigurationError extends Error {}
 class SigningKeysUnavailableError extends Error {}
 class InvalidInputError extends Error {}
-class BridgeUnavailableError extends Error {}
+class BridgeUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BridgeUnavailableError";
+  }
+}
 
 function securityHeaders(contentType: string): Headers {
   return new Headers({
@@ -899,41 +902,6 @@ async function signedEditorRequest(
   finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
 }
 
-function catalogLine(value: unknown, maximum: number): string {
-  if (typeof value !== "string" || !value || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) throw new BridgeUnavailableError("invalid catalog response");
-  return value;
-}
-
-function sanitizeKamakuraCatalog(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) throw new BridgeUnavailableError("invalid catalog response");
-  const siteValue = (candidate: unknown): { readonly id: "kamakura"; readonly name: string; readonly domains: readonly string[] } => {
-    if (!isRecord(candidate) || candidate.id !== KAMAKURA_EDITOR_SITE_ID || candidate.name !== KAMAKURA_EDITOR_SITE_NAME || !Array.isArray(candidate.domains) || candidate.domains.length !== 1 || candidate.domains[0] !== KAMAKURA_EDITOR_DOMAIN) {
-      throw new BridgeUnavailableError("invalid catalog site");
-    }
-    return { id: "kamakura", name: KAMAKURA_EDITOR_SITE_NAME, domains: [KAMAKURA_EDITOR_DOMAIN] };
-  };
-  if (!isRecord(value.project) || value.project.id !== "kamakura-site" || value.project.name !== "NIHO kamakura") throw new BridgeUnavailableError("invalid catalog project");
-  const projectSite = siteValue(value.project.site);
-  if (!Array.isArray(value.sites) || value.sites.length !== 1) throw new BridgeUnavailableError("invalid catalog sites");
-  const site = siteValue(value.sites[0]);
-  if (!Array.isArray(value.pages) || value.pages.length > 500 || !Array.isArray(value.legacy) || value.legacy.length > 5_000) throw new BridgeUnavailableError("invalid catalog entries");
-  const pages = value.pages.map((candidate) => {
-    if (!isRecord(candidate) || candidate.siteId !== KAMAKURA_EDITOR_SITE_ID || candidate.locale !== "ja" || typeof candidate.pageId !== "string" || !COMMON_PAGE_ID.test(candidate.pageId)) throw new BridgeUnavailableError("invalid catalog page");
-    return { siteId: "kamakura", pageId: candidate.pageId, locale: "ja", title: catalogLine(candidate.title, 120) };
-  });
-  if (new Set(pages.map(({ pageId }) => pageId)).size !== pages.length) throw new BridgeUnavailableError("duplicate catalog page");
-  const legacyPath = /^\/(?:[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)?$/u;
-  const legacy = value.legacy.map((candidate) => {
-    if (!isRecord(candidate)) throw new BridgeUnavailableError("invalid legacy page");
-    const name = catalogLine(candidate.name, 200);
-    const path = catalogLine(candidate.path, 2_048);
-    if (!legacyPath.test(path)) throw new BridgeUnavailableError("invalid legacy path");
-    return { name, path };
-  });
-  if (new Set(legacy.map(({ name }) => name)).size !== legacy.length || new Set(legacy.map(({ path }) => path)).size !== legacy.length) throw new BridgeUnavailableError("duplicate legacy page");
-  return { project: { id: "kamakura-site", name: "NIHO kamakura", site: projectSite }, sites: [site], pages, legacy };
-}
-
 async function signedKamakuraEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
   if (request.method === "GET" && (request.body !== null || ![null, "0"].includes(request.headers.get("Content-Length")))) throw new AuthenticationError("GET body rejected");
   const rawBody = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
@@ -966,14 +934,27 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
       ...(request.method === "GET" ? {} : { body: bodyBytes })
     });
     const response = await env.KAMAKURA_SITE.fetch(upstream);
+    const isCatalog = route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`;
     if (response.status >= 300 && response.status < 400) throw new BridgeUnavailableError("bridge redirect rejected");
-    const value = await readBoundedResponse(response);
-    if (response.status === 409) return json({ error: "conflict" }, 409);
+    if (response.status === 409 && !isCatalog) return json({ error: "conflict" }, 409);
     if (response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500) throw new BridgeUnavailableError("bridge service unavailable");
-    if (response.status === 404) return json({ error: "not_found" }, 404);
+    if (response.status === 404) {
+      if (isCatalog) throw new BridgeUnavailableError("bridge catalog endpoint unavailable");
+      return json({ error: "not_found" }, 404);
+    }
+    let value: unknown;
+    try { value = await readBoundedResponse(response); }
+    catch (error) {
+      if (isCatalog && error instanceof BridgeUnavailableError) throw new KamakuraCatalogContractError();
+      throw error;
+    }
+    if (isCatalog && !response.ok) throw new KamakuraCatalogContractError();
     if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 413 || response.status === 422 ? 400 : 503);
-    return json(route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog` ? sanitizeKamakuraCatalog(value) : value, response.status);
-  } catch { throw new BridgeUnavailableError("bridge request failed"); }
+    return json(isCatalog ? parseKamakuraCatalog(value) : value, response.status);
+  } catch (error) {
+    if (error instanceof KamakuraCatalogContractError) throw error;
+    throw new BridgeUnavailableError("bridge request failed");
+  }
   finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
 }
 
@@ -1151,6 +1132,7 @@ export default {
     try { return await handle(request, env); }
     catch (error) {
       console.error("NIHO Studio request failed", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof KamakuraCatalogContractError) return json({ error: KAMAKURA_CATALOG_CONTRACT_ERROR_CODE }, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS);
       return new URL(request.url).pathname.startsWith("/api/") ? json({ error: "service_unavailable" }, 503) : htmlError("一時的に利用できません。時間をおいて再度お試しください。", 503);
     }
   }
