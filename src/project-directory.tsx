@@ -37,6 +37,7 @@ export function ProjectDirectory(props: ProjectDirectoryProps) {
   return <DirectorySession key={source.generation} {...props} />;
 }
 function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEditor, createAction = "enabled", editorAction = "enabled", memberDetails = "visible", initialFocusProjectId }: ProjectDirectoryProps) {
+  const editorActionFor = (project: Project) => typeof editorAction === "function" ? editorAction(project) : editorAction;
   const reader = useCallback(async (signal: AbortSignal) => parseProjectDirectoryResult(await adapter.loadDirectory(signal), (url) => adapter.isThumbnailUrlAllowed(url)), [adapter]);
   const { state, reload } = useProjectRead(reader);
   const [query, setQuery] = useState("");
@@ -74,7 +75,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
             <div>{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</div>
             {memberDetails === "visible" && <p className="pv-muted">メンバー {project.members.length}名{project.members.length > 0 && ` · ${project.members.map((member) => member.displayName).join("、")}`}</p>}
             <dl className="pv-meta"><div><dt>最終更新</dt><dd><Timestamp value={summary.updatedAt} /></dd></div><div><dt>最終アクセス</dt><dd><Timestamp value={summary.lastAccessedAt} /></dd></div></dl>
-            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{(typeof editorAction === "function" ? editorAction(project) : editorAction) === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
+            <div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorActionFor(project) === "pending" ? "エディター接続待ち" : "エディター"}</button></div>
           </div>
         </li>)}</ul>
         <div className="pv-directory-list" ref={list}><h2>一覧表示</h2><table><thead><tr><th scope="col">プロジェクト / サイト</th><th scope="col">公開状態・ドメイン</th><th scope="col">メンバー</th><th scope="col">最終更新 / 最終アクセス</th><th scope="col">開く</th></tr></thead><tbody>{visible.map(({ project, summary }) => <tr key={project.id}>
@@ -82,7 +83,7 @@ function DirectorySession({ adapter, onCreateProject, onOpenDashboard, onOpenEdi
           <td data-label="公開状態・ドメイン"><PublicationBadge status={summary.publicationStatus} /><span className="pv-list-domains">{project.site.domains.length === 0 ? <span className="pv-muted">公開ドメイン未設定</span> : project.site.domains.map((domain) => <span className="pv-domain" key={domain}>{domain}</span>)}</span></td>
           <td data-label="メンバー">{memberDetails === "visible" ? <><span>{project.members.length}名</span>{project.members.length > 0 && <span className="pv-muted pv-list-members">{project.members.map((member) => member.displayName).join("、")}</span>}</> : <span className="pv-muted">未取得</span>}</td>
           <td data-label="日時"><span>最終更新 <Timestamp value={summary.updatedAt} /></span><span>最終アクセス <Timestamp value={summary.lastAccessedAt} /></span></td>
-          <td data-label="開く"><div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorAction === "pending" ? "エディター接続待ち" : "エディター"}</button></div></td>
+          <td data-label="開く"><div className="pv-actions"><button type="button" onClick={() => onOpenDashboard(project)}>ダッシュボード</button><button type="button" onClick={() => onOpenEditor(project)}>{editorActionFor(project) === "pending" ? "エディター接続待ち" : "エディター"}</button></div></td>
         </tr>)}</tbody></table></div></>}
       </>}
   </section>;
