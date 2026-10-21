@@ -11,8 +11,13 @@ export function pageScope(document: Pick<PageDocument, "siteId" | "pageId" | "lo
 }
 // 遷移は状態スタイルを持つノードの動きの規則だけに出す。
 const motion = new Set<string>(motionProperties);
+const sideBorderWidths = new Set<string>(["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"]);
 function declarations(values: StyleDeclarations, assets: ResolvedAssetMap): string {
-  return (Object.keys(values) as (StyleProperty | "backgroundImage")[]).filter((property) => !motion.has(property)).sort().map((property) => {
+  const properties = (Object.keys(values) as (StyleProperty | "backgroundImage")[]).filter((property) => !motion.has(property)).sort();
+  const commonWidth = properties.indexOf("borderWidth"), firstSideWidth = properties.findIndex((property) => sideBorderWidths.has(property));
+  // CSS shorthand は後にあると side-specific longhand を上書きするため、同じ rule 内で先に出す。
+  if (commonWidth > firstSideWidth && firstSideWidth >= 0) properties.splice(firstSideWidth, 0, properties.splice(commonWidth, 1)[0]!);
+  return properties.map((property) => {
     if (property !== "backgroundImage") return declarationCss(property, values[property]!);
     // src は parseResolvedAssets で引用符・空白・<> を拒否済み。解決できない宣言だけ省く。
     const resolved = resolvedAsset(assets, values.backgroundImage!.asset);
