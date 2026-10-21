@@ -608,6 +608,27 @@ test("部品を読み直す names the component the open page cannot use and suc
   } finally { await app.cleanup(); }
 });
 
+test("部品を読み直す detaches a removed component on a page that uses site-wide styles", async () => {
+  const doc = structuredClone(fixture); doc.body[0].children[1].style = { base: { color: { token: "brand" } } };
+  let conflicted = true;
+  const app = await setup({ document: doc, saveLibrary: async () => conflicted ? { status: "conflict" } : undefined,
+    adapter: { readSiteSettings: async () => ({ settings: { title: "デモ", locale: "ja", tokens: { brand: { type: "color", value: "#336655" } } }, version: "s1" }) } });
+  try {
+    await openPanel(); await click(button("配置", card("予備の帯"))); await renameCard("セクション見出し", "見出し 改");
+    // ほかの人が、保存済みの文書では使われていない予備の帯を削除して保存した。
+    app.host.saveRemotely((source) => ({ ...source, revision: source.revision + 1, components: source.components.filter((component) => component.id !== "spare") }));
+    await click("下書き保存"); await click("部品を読み直す");
+    assert.equal(dialog().querySelector('[role="alert"]'), null, "the site-wide color does not block the reload");
+    assert.deepEqual([...dialog().querySelectorAll("li")].map((item) => item.textContent), ["見出し 改変更", "予備の帯解除"]);
+    await click(button("最新の部品を読み込む（部品の変更を破棄）", dialog()));
+    assert.ok(text().includes("このページの「予備の帯」は、部品を解除して通常の要素にしました。")); assert.equal(rendered("node_1").textContent, "予備");
+    conflicted = false; await click("下書き保存");
+    const saved = app.calls.saves[0].document;
+    assert.deepEqual([saved.body.at(-1).type, saved.body.at(-1).id], ["element", "node_1"]);
+    assert.deepEqual(saved.body[0].children[1].style.base.color, { token: "brand" }, "the page keeps referring to the site-wide color");
+  } finally { await app.cleanup(); }
+});
+
 test("unsaved component changes are kept on the device per site and offered again after reopening", async () => {
   const { createBrowserRecoveryStore } = await import("@niho/web/history");
   const storage = memoryStorage(), key = "niho-web:recovery:v1:staff-a:library/demo", store = () => createBrowserRecoveryStore({ scope: "staff-a", storage });
