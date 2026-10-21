@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { parsePageDocument } from "./document.js";
 import { editDocument, sameTarget, type EditorOperation } from "./editor-model.js";
 import { Dialog } from "./editor-dialog.js";
+import type { Pending } from "./editor-fields.js";
 import { StyleLibrary, type StyleLibraryProps } from "./editor-style-library.js";
 import type { SiteSettingsState } from "./editor-pages.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorPage } from "./editor-types.js";
@@ -18,7 +19,11 @@ type Props = StyleLibraryProps & {
   editingComponent: boolean;
   siteDisabled: boolean; state: SiteSettingsState; rawDocument: PageDocument; pageDirty: boolean;
   migrate: (document: PageDocument, styles: SiteStyles) => string | undefined;
+  /** 「サイト共通」の欄の入力途中を知らせる。pageDirty（ページの未保存の変更・ページの欄の入力途中）には含めない。 */
+  sitePending: Pending;
 };
+/** ページの未保存の変更・ページの欄の入力途中が残るあいだ、「サイト共通」を編集できない理由。 */
+const pageHold = "ページの変更を保存してからサイト共通スタイルを編集してください。";
 type Impact = { key: string; affected: string[]; failed: boolean };
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 /** 部品の編集で、サイト共通に同名の定義がある値を変更できない理由。ページでの描画と同じくサイトの定義が優先され、ライブラリの写しを変えても見た目が変わらない。 */
@@ -26,7 +31,7 @@ export const sharedTokenReason = (siteEditable: boolean): string =>
   `サイト共通の値のため、部品の編集では変更できません。${siteEditable ? "ページに戻り、スタイルの「サイト共通」で変更してください。" : ""}`;
 
 /** サイトとページの所有権・変更の影響・移行の確認を共通ライブラリの上に表示する。 */
-export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, editingComponent, state, rawDocument, pageDirty, migrate, ...props }: Props) {
+export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, editingComponent, state, rawDocument, pageDirty, sitePending, migrate, ...props }: Props) {
   const [scope, setScope] = useState<"page" | "site">("page"), [promotion, setPromotion] = useState<Promotion | null>(null), [problem, setProblem] = useState("");
   const [impact, setImpact] = useState<Impact | null>(null), [impactEpoch, setImpactEpoch] = useState(0);
   const supported = !editingComponent && state.supported && state.editable && state.status === "ready";
@@ -62,7 +67,7 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
   if (!after.textStyles) delete siteDocument.textStyles;
   function applySite(operation: EditorOperation): string | undefined {
     if (siteDisabled) return "処理が完了してからサイト共通スタイルを編集してください。";
-    if (pageDirty) return "ページの変更を保存してからサイト共通スタイルを編集してください。";
+    if (pageDirty) return pageHold;
     if ((operation.type === "token" && !operation.token && Object.hasOwn(before.tokens ?? {}, operation.name) || operation.type === "textStyle" && !operation.style && Object.hasOwn(before.textStyles ?? {}, operation.name)) && !adapter.siteStyleCapabilities?.atomicReferenceDetachment) return "このホストは全ページの参照を同時に切り離せないため、サイト共通スタイルを削除できません。";
     try {
       const next = editDocument(siteDocument, operation);
@@ -98,7 +103,8 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
   return <>
     {supported && <div className="e-seg" role="group" aria-label="スタイルの保存先"><button type="button" aria-pressed={scope === "page"} onClick={() => { setScope("page"); setProblem(""); }}>このページ</button><button type="button" aria-pressed={scope === "site"} onClick={() => { setScope("site"); setProblem(""); }}>サイト共通</button></div>}
     {supported && <p className="e-help">同じ名前は「このページ」の指定を優先します。サイト共通の変更は保存後、次の公開で反映されます。</p>}
-    {supported && scope === "site" ? <StyleLibrary {...props} document={siteDocument} selection={null} apply={applySite} preview={undefined} disabled={siteDisabled || state.busy || pageDirty} scopeLabel="サイト共通" fieldKey={`${props.fieldKey}-site`} />
+    {supported && scope === "site" && pageDirty && <p className="e-help">{pageHold}</p>}
+    {supported && scope === "site" ? <StyleLibrary {...props} document={siteDocument} selection={null} apply={applySite} preview={undefined} pending={sitePending} disabled={siteDisabled || state.busy || pageDirty} scopeLabel="サイト共通" fieldKey={`${props.fieldKey}-site`} />
       : <StyleLibrary {...props} origins={supported ? origins : undefined} onPromote={supported && !state.stylesDirty ? promote : undefined} canPromote={(kind, name) => Object.hasOwn(kind === "token" ? rawDocument.tokens : rawDocument.textStyles ?? {}, name)} />}
     {problem && <p className="e-help e-problem" role="alert">{problem}</p>}
     {supported && state.stylesDirty && <section className="e-section" aria-label="サイト共通スタイルの変更確認"><h3>サイト共通スタイルの変更</h3>

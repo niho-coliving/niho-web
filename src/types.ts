@@ -16,7 +16,7 @@ export type StyleProperty =
   | "borderWidth" | "borderStyle" | "borderRadius" | "overflow" | "objectFit" | "opacity"
   | "backgroundSize" | "backgroundPosition" | "backgroundRepeat"
   | "fontStyle" | "textDecorationLine"
-  | "translate" | "rotate" | "scale" | "transformOrigin"
+  | "translate" | "rotate" | "scale" | "skew" | "transformOrigin"
   | "transitionDuration" | "transitionDelay" | "transitionTimingFunction"
   | "overflowX" | "scrollSnapType" | "scrollSnapAlign";
 /** 素材ライブラリの参照。URL はホストが描画時に解決し、文書には保存しない。 */
@@ -32,7 +32,7 @@ export type TextStyle = {
   responsive?: { minWidth: number; declarations: TextStyleDeclarations }[];
 };
 /** 状態スタイルで変えられる見た目。レイアウトを動かさないものだけ。 */
-export type StateProperty = "color" | "backgroundColor" | "borderColor" | "opacity" | "textDecorationLine" | "translate" | "rotate" | "scale";
+export type StateProperty = "color" | "backgroundColor" | "borderColor" | "opacity" | "textDecorationLine" | "translate" | "rotate" | "scale" | "skew";
 export type StateName = "hover" | "focus" | "active";
 export type StateDeclarations = Partial<Record<StateProperty, StyleValue>>;
 export type MotionEasing = "ease" | "ease-in" | "ease-out" | "ease-in-out" | "linear";

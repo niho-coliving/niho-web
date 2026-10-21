@@ -39,8 +39,21 @@ const defaultUsage = () => [
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const wait = (ms) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
 const button = (text, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent === text);
+const layerButton = (label, scope = document) => [...scope.querySelectorAll("button.e-layer")].find((node) => node.querySelector(".e-layer-label")?.textContent === label);
 const input = (text, scope = document) => [...scope.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === text)?.querySelector("input,textarea,select");
-async function click(target, scope) { const element = typeof target === "string" ? button(target, scope) : target; assert.ok(element, String(target)); await act(async () => element.click()); await flush(); }
+async function openLayers() {
+  const tab = document.querySelector('nav[aria-label="編集ツール"] button[title="レイヤー"]');
+  if (tab && tab.getAttribute("aria-pressed") !== "true") { await act(async () => tab.click()); await flush(); }
+}
+async function click(target, scope) {
+  if (typeof target === "string" && !scope && (target.includes("·") || target.startsWith("◇ "))) await openLayers();
+  if (typeof target === "string" && !scope && target === "部品にする") await editorTab("設定");
+  const element = typeof target === "string" ? target.startsWith("◇ ") ? layerButton(target.slice(2), scope) : button(target, scope) : target; assert.ok(element, String(target)); await act(async () => element.click()); await flush();
+}
+async function editorTab(name) {
+  const target = [...document.querySelectorAll('.e-inspector-tabs [role="tab"]')].find((node) => node.textContent === name);
+  if (target && target.getAttribute("aria-selected") !== "true") await click(target);
+}
 async function change(target, value) {
   assert.ok(target);
   await act(async () => {
@@ -73,7 +86,7 @@ async function openPage(title) { await click(document.querySelector('nav[aria-la
 const text = () => document.body.textContent;
 const status = () => document.querySelector(".e-status").textContent;
 const right = () => document.querySelector('[aria-label="インスペクタ"]');
-const stateButton = (name) => right().querySelector(`[role="group"][aria-label="編集する状態"] button[title="${name}"]`);
+const stateButton = (name) => [...right().querySelectorAll('[role="group"][aria-label="編集する状態"] button')].find((node) => node.textContent === name);
 const canvasExtra = () => [...canvas().contentDocument.querySelectorAll("style")].at(-1).textContent;
 
 async function setup(options = {}) {
@@ -154,7 +167,8 @@ test("the library loads before pages and the panel sorts, searches and summarize
   const app = await setup();
   try {
     assert.deepEqual(app.calls.order.slice(0, 3), ["readLibrary", "listPages", "readDocument"]); assert.deepEqual(app.calls.usage, ["demo"]);
-    assert.ok(button("◇ サイトヘッダー"), "instance layers show the component name");
+    await openLayers();
+    assert.ok(layerButton("サイトヘッダー"), "instance layers show the component name");
     assert.equal(rendered("top_nav--n2").textContent, "ホーム");
     await openPanel();
     assert.deepEqual(cardNames(), ["サイトヘッダー", "セクション見出し", "予備の帯"]);
@@ -170,6 +184,15 @@ test("the library loads before pages and the panel sorts, searches and summarize
     await change(search, "見出し"); assert.deepEqual(cardNames(), ["セクション見出し"]);
     await change(search, "ヘッダー"); assert.deepEqual(cardNames(), ["サイトヘッダー"]);
     await change(search, "存在しない"); assert.deepEqual(cardNames(), []); assert.ok(text().includes("「存在しない」に一致する部品はありません。"));
+  } finally { await app.cleanup(); }
+});
+
+test("opening an instance node chooses its inspector tab from the destination component", async () => {
+  const app = await setup();
+  try {
+    await openPage("ホーム"); await canvasEvent("top_nav--n3", "dblclick");
+    assert.ok(document.querySelector(".e-part-banner")?.textContent.includes("サイトヘッダー"));
+    assert.equal(document.querySelector('.e-inspector-tabs [role="tab"][aria-selected="true"]')?.textContent, "テキスト");
   } finally { await app.cleanup(); }
 });
 
@@ -191,7 +214,7 @@ test("配置 adds an instance to the page draft without saving the library", asy
 test("部品にする registers the selection and saves the library before the page", async () => {
   const app = await setup();
   try {
-    await click("section · hero"); assert.ok(text().includes("選んだ要素を共通部品に登録し、ほかのページでも使えるようにします。"));
+    await click("section · hero"); await editorTab("設定"); assert.ok(text().includes("選んだ要素を共通部品に登録し、ほかのページでも使えるようにします。"));
     await click("部品にする");
     assert.equal(dialog().getAttribute("aria-label"), "共通部品にする"); assert.equal(input("種類", dialog()).value, "section");
     await click(button("登録する", dialog())); assert.ok(dialog().textContent.includes("部品の名前を入力してください。"));
@@ -199,7 +222,7 @@ test("部品にする registers the selection and saves the library before the p
     assert.ok(dialog().textContent.includes("同じ名前の部品があります。"));
     await change(input("部品名", dialog()), "紹介セクション"); await click(button("登録する", dialog()));
     assert.equal(dialog(), null);
-    assert.ok(button("◇ 紹介セクション")); assert.ok(text().includes("この部品にはページごとに変えられる値がありません。「部品を編集」で設定できます。"));
+    assert.ok(layerButton("紹介セクション")); assert.ok(text().includes("この部品にはページごとに変えられる値がありません。「部品を編集」で設定できます。"));
     assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
     assert.equal(button("公開前の確認").disabled, true);
     await click("下書き保存");
@@ -242,9 +265,9 @@ test("master edits reach the page instance, history and banner, and bump the sav
     assert.equal(sent.components.at(-1).root.children[0].children[0].text, "トップ");
     assert.equal(button("下書き保存").disabled, true); assert.equal(button("公開前の確認").disabled, false); assert.deepEqual(app.calls.usage, ["demo", "demo"]);
     // ダブルクリックで、インスタンス内の対応するノードを選んだ状態で部品の編集を開く。
-    await canvasEvent("top_nav--n3", "click"); assert.ok(document.querySelector(".e-inspector-content h2").textContent.includes("サイトヘッダー"));
+    await canvasEvent("top_nav--n3", "click"); await editorTab("設定"); assert.equal(input("2つ目のリンク")?.value, "紹介");
     await canvasEvent("top_nav--n3", "dblclick"); await loadCanvas();
-    assert.ok(document.querySelector(".e-part-banner")); assert.equal(document.querySelector(".e-inspector-content h2").textContent, "a · n3");
+    assert.ok(document.querySelector(".e-part-banner")); assert.equal(document.querySelector('.e-inspector-tabs [role="tab"][aria-selected="true"]')?.textContent, "テキスト"); assert.equal(input("テキスト")?.value, "紹介");
   } finally { await app.cleanup(); }
 });
 
@@ -271,7 +294,7 @@ test("master public props and settings are edited in component mode", async () =
     await change(input("種類"), "part"); await change(input("部品名"), "小見出し");
     assert.ok(document.querySelector(".e-part-banner").textContent.includes("「小見出し」"));
     await click(document.querySelector('button[aria-label="「見出しの文字」の公開をやめる"]'));
-    await click("h2 · n1");
+    await click("h2 · n1"); await editorTab("設定");
     const checkbox = [...document.querySelectorAll("label.e-check")].find((label) => label.textContent === "ページごとに変えられるようにする（文字）").querySelector("input");
     assert.equal(checkbox.checked, false);
     await click(checkbox); assert.equal(input("値の名前（文字）").value, "文字");
@@ -310,7 +333,7 @@ test("canvas drag and drop moves an instance as one block and never drops inside
     assert.equal(rendered("top_nav").getAttribute("draggable"), "true"); assert.equal(rendered("top_nav--n2").getAttribute("draggable"), null);
     const win = canvas().contentWindow;
     await drag(rendered("top_nav--n2"), "dragstart", win); await drag(rendered("lead"), "dragover", win); await drag(rendered("lead"), "drop", win);
-    assert.ok(button("◇ サイトヘッダー").getAttribute("aria-pressed") === "true", "the moved instance stays selected");
+    await openLayers(); assert.ok(layerButton("サイトヘッダー").getAttribute("aria-pressed") === "true", "the moved instance stays selected");
     const palette = [...document.querySelectorAll('section[aria-label="要素を追加"] button')].find((node) => node.textContent.endsWith("テキスト"));
     await drag(palette, "dragstart"); await drag(rendered("top_nav--n3"), "dragover", win); await drag(rendered("top_nav--n3"), "drop", win);
     await click("下書き保存");
@@ -326,7 +349,7 @@ test("部品を解除 asks for confirmation and saves an element with the instan
     await click("◇ サイトヘッダー"); await click("部品を解除");
     assert.equal(dialog().getAttribute("aria-label"), "部品を解除");
     assert.ok(dialog().textContent.includes("この箇所は通常の要素になり、今後は部品の変更を受けません。ページごとの値と外枠の見た目はそのまま残ります。"));
-    await click(button("キャンセル", dialog())); assert.equal(dialog(), null); assert.ok(button("◇ サイトヘッダー"));
+    await click(button("キャンセル", dialog())); assert.equal(dialog(), null); assert.ok(layerButton("サイトヘッダー"));
     await click("部品を解除"); await click(button("解除する", dialog()));
     assert.ok(button("nav · top_nav")); assert.equal(rendered("top_nav").tagName, "NAV");
     await click("下書き保存");
@@ -486,11 +509,11 @@ test("version history and the 409 comparison read page documents with instances 
 test("hover styles edit an instance's outer box on the page and nodes inside a component master", async () => {
   const app = await setup();
   try {
-    await click("◇ サイトヘッダー"); await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");
+    await click("◇ サイトヘッダー"); await editorTab("変形"); await click(stateButton("ホバー")); await change(input("背景色", right()), "#eef3ef");
     assert.ok(canvasExtra().includes('[data-nw-node="top_nav"]') && canvasExtra().includes("background-color:#eef3ef"), "the hover look is forced on the instance root");
     await click(stateButton("通常"));
     await openPanel(); await click(button("編集", card("サイトヘッダー"))); await loadCanvas();
-    await click("a · n2"); await click(stateButton("ホバー")); await change(input("文字色", right()), "#ff0000");
+    await click("a · n2"); await editorTab("変形"); await click(stateButton("ホバー")); await change(input("文字色", right()), "#ff0000");
     assert.ok(canvasExtra().includes('[data-nw-node="n2"]') && canvasExtra().includes("color:#ff0000"));
     await click(stateButton("通常")); await click(button("ページに戻る", document.querySelector(".e-part-banner"))); await loadCanvas();
     await click("下書き保存");
@@ -848,6 +871,7 @@ test("部品にする is disabled before opening a dialog when a descendant has 
   const app = await setup({ locks: [{ nodeId: "lead", fields: ["children"], reason: "外部データ" }] });
   try {
     await click("section · hero");
+    await editorTab("設定");
     assert.equal(button("部品にする")?.disabled, true);
     assert.ok(text().includes("ロック: 外部データ"));
     await click("部品にする");
@@ -892,7 +916,7 @@ for (const variant of ["outside-only", "shared-text-style", "page-override"]) te
     await openPage("別ページ"); await openPage("ホーム"); await loadCanvas();
     assert.equal(rendered("outside").textContent, "選択範囲外");
     assert.equal(rendered("hero--n2").textContent, "海のそばで過ごす");
-    await click("p · outside"); assert.equal(button("部品にする")?.disabled, true, "outside locks survive the reload");
+    await click("p · outside"); await editorTab("設定"); assert.equal(button("部品にする")?.disabled, true, "outside locks survive the reload");
   } finally { await app.cleanup(); }
 });
 
