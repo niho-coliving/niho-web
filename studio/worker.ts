@@ -108,6 +108,38 @@ class BridgeUnavailableError extends Error {
   }
 }
 
+type KamakuraBridgeOperation = "catalog" | "page_read" | "draft_save" | "release_plan" | "release";
+type KamakuraBridgeFailureCategory =
+  | "bridge_secret_missing_or_invalid"
+  | "bridge_signing_failed"
+  | "service_binding_failed"
+  | "service_binding_timeout"
+  | "upstream_auth_rejected"
+  | "catalog_endpoint_missing"
+  | "upstream_rate_limited"
+  | "upstream_server_error"
+  | "upstream_redirect_rejected"
+  | "upstream_invalid_response"
+  | "upstream_contract_invalid"
+  | "bridge_processing_failed";
+
+class KamakuraBridgeFailureError extends Error {
+  readonly code: typeof KAMAKURA_CATALOG_CONTRACT_ERROR_CODE | "service_unavailable";
+  readonly httpStatus: 502 | 503;
+
+  constructor(
+    readonly supportId: string,
+    readonly operation: KamakuraBridgeOperation,
+    readonly category: KamakuraBridgeFailureCategory,
+    readonly upstreamStatus?: number
+  ) {
+    super("Kamakura editor bridge request failed");
+    this.name = "KamakuraBridgeFailureError";
+    this.code = category === "upstream_contract_invalid" ? KAMAKURA_CATALOG_CONTRACT_ERROR_CODE : "service_unavailable";
+    this.httpStatus = category === "upstream_contract_invalid" ? KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS : 503;
+  }
+}
+
 function securityHeaders(contentType: string): Headers {
   return new Headers({
     "Cache-Control": "no-store",
@@ -903,7 +935,26 @@ async function signedEditorRequest(
   finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
 }
 
+function kamakuraBridgeOperation(route: EditorRoute): KamakuraBridgeOperation {
+  if (route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`) return "catalog";
+  if (route.upstreamPath.endsWith("/draft")) return "draft_save";
+  if (route.upstreamPath.endsWith("/release-plan")) return "release_plan";
+  if (route.upstreamPath.endsWith("/release")) return "release";
+  return "page_read";
+}
+
+function kamakuraBridgeFailure(
+  supportId: string,
+  operation: KamakuraBridgeOperation,
+  category: KamakuraBridgeFailureCategory,
+  upstreamStatus?: number
+): KamakuraBridgeFailureError {
+  return new KamakuraBridgeFailureError(supportId, operation, category, upstreamStatus);
+}
+
 async function signedKamakuraEditorRequest(request: Request, env: Env, identity: AccessIdentity, route: EditorRoute): Promise<Response> {
+  const supportId = crypto.randomUUID();
+  const operation = kamakuraBridgeOperation(route);
   if (request.method === "GET" && (request.body !== null || ![null, "0"].includes(request.headers.get("Content-Length")))) throw new AuthenticationError("GET body rejected");
   const rawBody = request.method === "GET" ? new Uint8Array() : await readBoundedBody(request, route.bodyLimit);
   const body = route.assetOperation ? validateKamakuraAssetBody(rawBody, route.assetOperation) : rawBody;
@@ -911,12 +962,20 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
   const bodyBytes = body.slice().buffer;
   const bodyHash = hexadecimal(await crypto.subtle.digest("SHA-256", bodyBytes));
   const message = `v1\n${timestamp}\n${request.method}\n${route.upstreamPath}\n${bodyHash}\n${KAMAKURA_EDITOR_PROJECT_ID}\n${identity.subject}`;
-  const key = await crypto.subtle.importKey("raw", bridgeSecret(env.KAMAKURA_STUDIO_BRIDGE_SECRET).slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  let secret: Uint8Array;
+  try { secret = bridgeSecret(env.KAMAKURA_STUDIO_BRIDGE_SECRET); }
+  catch { throw kamakuraBridgeFailure(supportId, operation, "bridge_secret_missing_or_invalid"); }
+  let signature: string;
+  try {
+    const key = await crypto.subtle.importKey("raw", secret.slice().buffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    signature = hexadecimal(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+  } catch { throw kamakuraBridgeFailure(supportId, operation, "bridge_signing_failed"); }
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  request.signal.addEventListener("abort", abort, { once: true });
-  const timeout = setTimeout(abort, EDITOR_TIMEOUT_MILLISECONDS);
+  let timedOut = false;
+  const abortForRequest = () => controller.abort();
+  const abortForTimeout = () => { timedOut = true; controller.abort(); };
+  request.signal.addEventListener("abort", abortForRequest, { once: true });
+  const timeout = setTimeout(abortForTimeout, EDITOR_TIMEOUT_MILLISECONDS);
   try {
     const upstream = new Request(`${KAMAKURA_EDITOR_UPSTREAM_ORIGIN}${route.upstreamPath}`, {
       method: request.method,
@@ -929,34 +988,45 @@ async function signedKamakuraEditorRequest(request: Request, env: Env, identity:
         ...(request.method === "GET" ? {} : { "Content-Type": "application/json" }),
         "X-NIHO-Studio-Project": KAMAKURA_EDITOR_PROJECT_ID,
         "X-NIHO-Studio-Subject": identity.subject,
+        "X-NIHO-Studio-Request-ID": supportId,
         "X-NIHO-Studio-Timestamp": timestamp,
         "X-NIHO-Studio-Signature": `v1=${signature}`
       },
       ...(request.method === "GET" ? {} : { body: bodyBytes })
     });
-    const response = await env.KAMAKURA_SITE.fetch(upstream);
     const isCatalog = route.upstreamPath === `${KAMAKURA_EDITOR_UPSTREAM_PREFIX}/catalog`;
-    if (response.status >= 300 && response.status < 400) throw new BridgeUnavailableError("bridge redirect rejected");
+    let response: Response;
+    try { response = await env.KAMAKURA_SITE.fetch(upstream); }
+    catch { throw kamakuraBridgeFailure(supportId, operation, timedOut ? "service_binding_timeout" : "service_binding_failed"); }
+    if (response.status >= 300 && response.status < 400) throw kamakuraBridgeFailure(supportId, operation, "upstream_redirect_rejected", response.status);
     if (response.status === 409 && !isCatalog) return json({ error: "conflict" }, 409);
-    if (response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500) throw new BridgeUnavailableError("bridge service unavailable");
+    if (response.status === 401 || response.status === 403) throw kamakuraBridgeFailure(supportId, operation, "upstream_auth_rejected", response.status);
+    if (response.status === 429) throw kamakuraBridgeFailure(supportId, operation, "upstream_rate_limited", response.status);
+    if (response.status >= 500) throw kamakuraBridgeFailure(supportId, operation, "upstream_server_error", response.status);
     if (response.status === 404) {
-      if (isCatalog) throw new BridgeUnavailableError("bridge catalog endpoint unavailable");
+      if (isCatalog) throw kamakuraBridgeFailure(supportId, operation, "catalog_endpoint_missing", response.status);
       return json({ error: "not_found" }, 404);
     }
     let value: unknown;
     try { value = await readBoundedResponse(response); }
-    catch (error) {
-      if (isCatalog && error instanceof BridgeUnavailableError) throw new KamakuraCatalogContractError();
-      throw error;
+    catch {
+      if (isCatalog) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
+      throw kamakuraBridgeFailure(supportId, operation, "upstream_invalid_response", response.status);
     }
-    if (isCatalog && !response.ok) throw new KamakuraCatalogContractError();
+    if (isCatalog && !response.ok) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
     if (!response.ok) return json({ error: "invalid_request" }, response.status === 400 || response.status === 413 || response.status === 422 ? 400 : 503);
-    return json(isCatalog ? parseKamakuraCatalog(value) : value, response.status);
+    if (!isCatalog) return json(value, response.status);
+    try { return json(parseKamakuraCatalog(value), response.status); }
+    catch (error) {
+      if (error instanceof KamakuraCatalogContractError) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid", response.status);
+      throw kamakuraBridgeFailure(supportId, operation, "bridge_processing_failed", response.status);
+    }
   } catch (error) {
-    if (error instanceof KamakuraCatalogContractError) throw error;
-    throw new BridgeUnavailableError("bridge request failed");
+    if (error instanceof KamakuraBridgeFailureError) throw error;
+    if (error instanceof KamakuraCatalogContractError) throw kamakuraBridgeFailure(supportId, operation, "upstream_contract_invalid");
+    throw kamakuraBridgeFailure(supportId, operation, "bridge_processing_failed");
   }
-  finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abort); }
+  finally { clearTimeout(timeout); request.signal.removeEventListener("abort", abortForRequest); }
 }
 
 async function signedKamakuraAssetPreview(request: Request, env: Env, identity: AccessIdentity, assetId: string): Promise<Response> {
@@ -1160,6 +1230,15 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try { return await handle(request, env); }
     catch (error) {
+      if (error instanceof KamakuraBridgeFailureError) {
+        console.warn("NIHO Studio Kamakura bridge failure", {
+          supportId: error.supportId,
+          operation: error.operation,
+          category: error.category,
+          ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus })
+        });
+        return json({ error: error.code, supportId: error.supportId }, error.httpStatus);
+      }
       console.error("NIHO Studio request failed", error instanceof Error ? error.name : "UnknownError");
       if (error instanceof KamakuraCatalogContractError) return json({ error: KAMAKURA_CATALOG_CONTRACT_ERROR_CODE }, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS);
       return new URL(request.url).pathname.startsWith("/api/") ? json({ error: "service_unavailable" }, 503) : htmlError("一時的に利用できません。時間をおいて再度お試しください。", 503);

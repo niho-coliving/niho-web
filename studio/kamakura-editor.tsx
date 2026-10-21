@@ -13,11 +13,11 @@ import type { KamakuraCatalog } from "./kamakura-catalog.js";
 const BASE = "/api/projects/project-kamakura/sites/kamakura/editor";
 const CONFIRMATION_TOKEN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}){2}$/u;
 type RequestMethod = "GET" | "POST" | "PUT";
-type EditorApiStatus = { readonly status: number; readonly errorCode: string | null };
-type CatalogState = { readonly status: "loading" } | { readonly status: "error"; readonly code: number; readonly errorCode: string | null } | { readonly status: "ready"; readonly value: KamakuraCatalog };
+type EditorApiStatus = { readonly status: number; readonly errorCode: string | null; readonly supportId: string | null };
+type CatalogState = { readonly status: "loading" } | { readonly status: "error"; readonly code: number; readonly errorCode: string | null; readonly supportId: string | null } | { readonly status: "ready"; readonly value: KamakuraCatalog };
 
 class EditorApiError extends Error {
-  constructor(readonly status: number, readonly code: string | null = null) {
+  constructor(readonly status: number, readonly code: string | null = null, readonly supportId: string | null = null) {
     super(code === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "Kamakura catalog contract mismatch" : status === 401 ? "Cloudflare Access のセッションを確認してください。" : status === 403 ? "このプロジェクトの編集権限がありません。" : status === 404 ? "新形式のページが見つかりません。" : status === 503 ? "編集ブリッジを利用できません。" : "編集 API の要求を完了できませんでした。");
   }
 }
@@ -25,6 +25,11 @@ class EditorApiError extends Error {
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("編集 API の応答が正しくありません。");
   return value as Record<string, unknown>;
+}
+
+function readSupportId(value: unknown): string | null {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) return null;
+  return value;
 }
 
 function validVersion(value: unknown): value is string {
@@ -59,18 +64,19 @@ async function api(path: string, method: RequestMethod, body: Record<string, unk
   if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) throw new EditorApiError(503);
   const value = await response.json() as unknown;
   if (!response.ok) {
-    const errorCode = typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).error === "string"
-      ? (value as Record<string, unknown>).error as string
+    const errorObject = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const errorCode = errorObject && typeof errorObject.error === "string"
+      ? errorObject.error
       : null;
-    throw new EditorApiError(response.status, errorCode);
+    throw new EditorApiError(response.status, errorCode, readSupportId(errorObject?.supportId));
   }
   return value;
 }
 
 function statusFromError(error: unknown): EditorApiStatus {
-  if (error instanceof EditorApiError) return { status: error.status, errorCode: error.code };
-  if (error instanceof KamakuraCatalogContractError) return { status: KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, errorCode: KAMAKURA_CATALOG_CONTRACT_ERROR_CODE };
-  return { status: 503, errorCode: null };
+  if (error instanceof EditorApiError) return { status: error.status, errorCode: error.code, supportId: error.supportId };
+  if (error instanceof KamakuraCatalogContractError) return { status: KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, errorCode: KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, supportId: null };
+  return { status: 503, errorCode: null, supportId: null };
 }
 
 function parseSnapshot(value: unknown, target: EditorTarget): EditorSnapshot {
@@ -153,7 +159,7 @@ function EditorAlert({ status }: { readonly status: EditorApiStatus }) {
   const catalogContractMismatch = status.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE;
   return <div className={`studio-editor-alert studio-editor-alert-${code}`} role="alert">
     <strong>{catalogContractMismatch ? "ページ一覧の形式を確認できません" : code === 401 ? "セッションの再確認が必要です" : code === 403 ? "編集権限を確認できません" : code === 404 ? "新形式ページが見つかりません" : code === 503 ? "サイト編集サービスに接続できません" : "編集 API の要求を完了できませんでした"}</strong>
-    <span>{catalogContractMismatch ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者がサイト側とStudio側の対応状態を確認してください。" : code === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : code === 403 ? "D1 の Kamakura プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : code === 404 ? "ページ一覧を読み直し、新形式ページが存在することを確認してください。" : code === 503 ? "編集内容は変更されていません。時間をおいてから再試行してください。続く場合は管理者へ確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}</span>
+    <span>{catalogContractMismatch ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者がサイト側とStudio側の対応状態を確認してください。" : code === 401 ? "編集内容を保持したまま、別タブで Cloudflare Access に再ログインしてから再読込してください。" : code === 403 ? "D1 の Kamakura プロジェクト参加資格が削除または変更されています。Studio 管理者へ確認してください。" : code === 404 ? "ページ一覧を読み直し、新形式ページが存在することを確認してください。" : code === 503 ? "編集内容は変更されていません。時間をおいてから再試行してください。続く場合は管理者へ確認してください。" : "入力内容と接続状態を確認し、エディタ内から再試行してください。"}{status.supportId !== null && <><br />問い合わせID: <code>{status.supportId}</code></>}</span>
   </div>;
 }
 
@@ -165,10 +171,11 @@ export function KamakuraEditor({ project, environment }: { readonly project: Pro
   useEffect(() => {
     const controller = new AbortController();
     setCatalog({ status: "loading" });
+    setStatus(null);
     void api(`${BASE}/catalog`, "GET", undefined, controller.signal)
       .then(parseKamakuraCatalog)
       .then((value) => { if (!controller.signal.aborted) { setCatalog({ status: "ready", value }); setStatus(null); } })
-      .catch((error: unknown) => { if (!controller.signal.aborted) { const failure = statusFromError(error); setCatalog({ status: "error", code: failure.status, errorCode: failure.errorCode }); setStatus(failure); } });
+      .catch((error: unknown) => { if (!controller.signal.aborted) { const failure = statusFromError(error); setCatalog({ status: "error", code: failure.status, errorCode: failure.errorCode, supportId: failure.supportId }); } });
     return () => controller.abort();
   }, [reload]);
   const ready = catalog.status === "ready" ? catalog.value : null;
@@ -177,7 +184,7 @@ export function KamakuraEditor({ project, environment }: { readonly project: Pro
   return <main className="studio-editor studio-kamakura-editor">
     {status !== null && <EditorAlert status={status} />}
     {catalog.status === "loading" && <section className="studio-kamakura-state" role="status"><p>ページを読み込んでいます…</p></section>}
-    {catalog.status === "error" && <section className="studio-kamakura-state" role="alert"><h1>ページを読み込めませんでした</h1><p>{catalog.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者へ確認してください。" : "編集内容は変更されていません。接続状態を確認して再試行してください。"}</p><button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
+    {catalog.status === "error" && <section className="studio-kamakura-state" role="alert"><h1>ページを読み込めませんでした</h1><p>{catalog.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者へ確認してください。" : "編集内容は変更されていません。接続状態を確認して再試行してください。"}</p>{catalog.supportId !== null && <p>問い合わせID: <code>{catalog.supportId}</code></p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
     {ready && (ready.pages.length === 0
       ? <section className="studio-kamakura-state"><h1>編集できるページはありません</h1><p>編集対象のページがありません。ページ一覧を再読み込みしてください。</p><button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></section>
       : adapter && <PageEditor adapter={adapter} blocks={blocks} assets={kamakuraAssetLibrary} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarStart={<a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">←</a>} />)}

@@ -80,7 +80,9 @@ Editor HTML route だけ `PageEditor` の inline style と `iframe srcDoc` に�
 
 上流応答は redirect 拒否、timeout、JSON media type、2 MiB 上限を適用します。409 は editor conflict として保持し、上流の 401 / 403 / 429 / 5xx と catalog endpoint の 404 は Studio の Access session expiry と混同せず 503 として扱います。既存ページの 404 はそのまま保持します。catalog の契約検証・正規化は `studio/kamakura-catalog.ts` に集約し、BFF と browser が同じ parser を使います。Project / Site metadata、`ja` の新形式 page ID、旧形式 page path、件数、重複、制御文字を検証し、既知 field だけを browser へ返します。ページタイトルはコンテンツ文字列として扱い、2 MiB の応答上限で保護します。表示用の文字数制約を API 契約へ持ち込みません。
 
-catalog がこの契約に合わない場合は `502 { "error": "upstream_contract_invalid" }` を返し、通信・Binding・secret の利用不能を示す `503 service_unavailable` と分けます。画面も両者を別の案内にし、契約不一致時はサイト側と Studio 側の対応・配備状態を確認するよう示します。
+catalog がこの契約に合わない場合は `502 { "error": "upstream_contract_invalid", "supportId": "<UUID>" }` を返し、通信・Binding・secret の利用不能を示す `503 { "error": "service_unavailable", "supportId": "<UUID>" }` と分けます。Kamakura bridge のログには同じ問い合わせID、固定 operation、固定 failure category、存在する場合だけ上流HTTP statusを記録し、同じIDを service binding request header に渡します。secret、署名、Access subject、本文、上流応答本文、任意の例外メッセージは記録しません。
+
+失敗カテゴリは `bridge_secret_missing_or_invalid`、`bridge_signing_failed`、`service_binding_failed` / `service_binding_timeout`、`upstream_auth_rejected`、`catalog_endpoint_missing`、`upstream_rate_limited`、`upstream_server_error`、`upstream_redirect_rejected`、`upstream_invalid_response`、`upstream_contract_invalid`、`bridge_processing_failed` です。画面で問い合わせIDを受け取ったら、Studio Worker のログから同一IDの行を検索してください。HTTP status が無い `service_binding_*` はStudio側のbinding・到達性を、`upstream_auth_rejected` は両Workerのsecret設定と署名検証を、`catalog_endpoint_missing` は kamakura-site のendpoint配備を確認します。
 
 Kamakura の `PageEditor` が編集するのは `src/site/niho-web` の新形式ページだけです。現時点では0件のため、UI は移行待ちを明示し、catalog の旧形式一覧を読み取り専用で表示します。旧形式のデザインは `https://next-kamakura.niho.life/admin/pages`、記事・サークル・会社などの CMS は `https://next-kamakura.niho.life/admin` で引き続き編集します。Studio は CMS を変更せず、STUDIO からの全面移行を完了扱いにしません。source of truth は `studio` のままで、移行作業は kamakura-site #42 に残ります。
 
@@ -105,7 +107,7 @@ wrangler secret put KAMAKURA_STUDIO_BRIDGE_SECRET --config studio/wrangler.toml
 
 5. `studio/wrangler.toml` の `KAMAKURA_SITE` が同じ Cloudflare account の service `kamakura-site` を指すことを確認する。
 6. Experience STG は、(1) niho-app PR #19268 の API を STG に反映、(2) Cloud Run STG が Secret Manager の STG key を参照していることを確認、(3) Studio Worker の STG key を設定、(4) この Worker を配備、(5) owner で STG画面を開き list / read / save / release-plan / release / rollback を受入確認、の順に進める。本番用 API key や本番コンテンツはこの確認に使わない。
-7. Kamakura は、(1) 両 Worker に Kamakura secret を設定、(2) `kamakura-site` の署名済み `/internal/studio/web-content/*` を先に配備、(3) Studio D1 migration `0004` を適用、(4) Studio Worker を配備、(5) catalog / save / release-plan / release / rollback を受入確認、とする。Studio を先に配備して backend 未反映を編集可能とは案内しない。
+7. Kamakura は、(1) 両 Worker に Kamakura secret を設定、(2) `kamakura-site` の署名済み `/internal/studio/web-content/*` を先に配備し service binding 経由の catalog smoke を確認、(3) Studio D1 migration `0004` を適用、(4) Studio Worker を配備、(5) owner/editor で catalog / read / save / release-plan / release / rollback を受入確認、とする。Studio を先に配備して backend 未反映を編集可能とは案内しない。各deploy後に新しい Worker version が有効になったことを確認して次段へ進む。
 
 ```sh
 npm ci
