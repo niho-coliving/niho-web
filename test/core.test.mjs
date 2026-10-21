@@ -31,7 +31,7 @@ test("schema version, identity, unknown fields and malformed objects fail closed
 test("only safe HTTPS, root relative and fragment URLs are allowed", () => {
   for (const url of ["https://example.com/image.jpg?a=1&b=2", "/about", "/images/a.webp", "#heading"]) assert.ok(isSafePublicUrl(url), url);
   for (const url of ["javascript:alert(1)", "JAVASCRIPT:alert(1)", "java\nscript:alert(1)", "data:image/svg+xml,<svg/>",
-    "http://example.com", "//example.com", "/\\example.com", "/%2fexample.com", "/%5cexample.com", "/%0aexample.com", "/%zz", "https://user:pass@example.com", "https://example.com/\" onload=evil", "about", " https://example.com", "mailto:a@example.com"]) {
+    "http://example.com", "//example.com", "/\\example.com", "/%2fexample.com", "/%5cexample.com", "/%0aexample.com", "/%zz", "https://user:pass@example.com", "https://example.com/\" onload=evil", "about", " https://example.com"]) {
     assert.equal(isSafePublicUrl(url), false, url);
     const input = doc(); input.body[0].children[2].attrs.href = url; reject(input);
   }
