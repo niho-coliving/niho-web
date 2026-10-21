@@ -304,12 +304,13 @@ function Canvas({ document, blocks, width, breakpoint, selection, selectedNodeId
 }
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
+export function PageEditor({ adapter, toolbarLayout, toolbarStart, blocks = emptyBlocks, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
   const adapterRef = useRef(adapter); adapterRef.current = adapter;
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef(session); sessionRef.current = session;
-  const [selection, setSelection] = useState<NodePath | null>(null), [selectedLocalizationUnit, setSelectedLocalizationUnit] = useState<string | null>(null), [selectedCanvasNode, setSelectedCanvasNode] = useState<string | null>(null), [width, setWidth] = useState(1280);
+  const [selection, setSelection] = useState<NodePath | null>(null), [selectedLocalizationUnit, setSelectedLocalizationUnit] = useState<string | null>(null), [selectedCanvasNode, setSelectedCanvasNode] = useState<string | null>(null), [width, setWidth] = useState(1280), [widthField, setWidthField] = useState("1280");
+  useEffect(() => { setWidthField(String(width)); }, [width]);
   // 選んだ業務ブロックの表示領域。of は選んだときの selection で、選択・部品の編集・ページ・サイトが変わると（同じノードを選び直しても）外れる。back は「ブロック全体に戻る」で戻った領域。
   const [slotChoice, setSlotChoice] = useState<{ of: NodePath; name: string | null; back?: string } | null>(null);
 
@@ -1165,25 +1166,30 @@ export function PageEditor({ adapter, blocks = emptyBlocks, previewComponent, in
   const localizationGate = localization.supported && !localizationReady ? localization.siteState === "loading" || localization.pageState === "loading"
     ? "言語設定と翻訳状態を読み込み中です。完了するまで編集・保存・公開はできません。"
     : "言語設定または翻訳状態を確認できません。編集内容を保持したまま停止しています。再試行してください。" : "";
-  return <div className={`nw-editor${preview ? " is-preview" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss + styleEditorCss + historyCss + localizationEditorCss }} />
+  return <div className={`nw-editor${preview ? " is-preview" : ""}${toolbarLayout === "kamakura" ? " nw-editor-kamakura" : ""}`}><style dangerouslySetInnerHTML={{ __html: editorCss + pagesCss + styleEditorCss + historyCss + localizationEditorCss }} />
     {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
-    <header className="e-toolbar" ref={(element) => { if (element) element.inert = modal; }}><div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {panelPages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
+    <header className="e-toolbar" ref={(element) => { if (element) element.inert = modal; }}>{toolbarStart}{toolbarLayout === "kamakura" && <div className="e-kamakura-width" role="group" aria-label="スタイルを編集する幅">
+      <div className="e-kamakura-widths">{[1280, 991, 840, 480].map((preset) => <button key={preset} type="button" aria-pressed={width === preset} onClick={() => { setWidth(preset); setWidthField(String(preset)); setBreakpoint(tierForWidth(tiers, preset).key); }} title={`${preset}px の幅のスタイルを編集`}>{preset}</button>)}</div>
+      <label className="e-kamakura-width-number"><span className="e-vh">プレビュー幅（px）</span><input aria-label="プレビュー幅（px）" type="number" min={320} max={1920} step={1} value={widthField} onChange={(event) => { const value = event.target.value; setWidthField(value); const parsed = Number(value); if (value !== "" && Number.isInteger(parsed) && parsed >= 320 && parsed <= 1920) setWidth(parsed); }} onBlur={() => { const parsed = Number(widthField); const normalized = Number.isFinite(parsed) ? Math.max(320, Math.min(1920, Math.round(parsed))) : width; setWidth(normalized); setWidthField(String(normalized)); }} /></label>
+    </div>}<div className="e-title"><strong className="e-brand">NIHO <span>Web</span></strong><span className="e-crumb">{sites.find((site) => site.id === siteId)?.name ?? "サイト"} / {panelPages.find((page) => page.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       {localization.site && selectedLocale && <LanguageSelector config={localization.site.config} locale={selectedLocale} disabled={blocked} select={selectLocale} />}
       <SaveStatus {...status} retry={() => void save()} compare={() => setConflictView((value) => value + 1)} reload={() => void reloadLibrary()} retryDisabled={siteWorkBlocked || blocked || hasInput || historyMode || !localizationReady} compareDisabled={targetMode || !!busy || hasInput || historyMode || !localizationReady}
         reloadDisabled={!library || siteWorkBlocked || blocked || hasInput || historyMode || targetMode || !localizationReady} />
       {autosaveMs !== undefined && <AutosaveSwitch on={autosaveOn} set={setAutosaveOn} />}
-      <button onClick={() => travel("undo")} disabled={siteWorkBlocked || !activeHistory?.past.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>元に戻す</button>
-      <button onClick={() => travel("redo")} disabled={siteWorkBlocked || !activeHistory?.future.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>やり直す</button>
-      {versions.supported && <button aria-pressed={versions.open} onClick={versions.toggle} disabled={!session || preview || !!masterId || targetMode}>履歴</button>}
-      <button aria-pressed={preview} onClick={() => setPreview((value) => !value)} disabled={!document || blocked || historyMode}>{preview ? "編集に戻る" : "プレビュー"}</button>
-      <button onClick={() => void save()} disabled={siteWorkBlocked || !pendingChanges || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !libraryDirty}>下書き保存</button>
+      <button className={toolbarLayout === "kamakura" ? "e-kamakura-icon-button" : undefined} aria-label="元に戻す" title="元に戻す" onClick={() => travel("undo")} disabled={siteWorkBlocked || !activeHistory?.past.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>{toolbarLayout === "kamakura" ? "↶" : "元に戻す"}</button>
+      <button className={toolbarLayout === "kamakura" ? "e-kamakura-icon-button" : undefined} aria-label="やり直す" title="やり直す" onClick={() => travel("redo")} disabled={siteWorkBlocked || !activeHistory?.future.length || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !masterId}>{toolbarLayout === "kamakura" ? "↷" : "やり直す"}</button>
+      {versions.supported && <button className={toolbarLayout === "kamakura" ? "e-kamakura-history-button" : undefined} aria-label="履歴" title="履歴" aria-pressed={versions.open} onClick={versions.toggle} disabled={!session || preview || !!masterId || targetMode}>{toolbarLayout === "kamakura" ? "◷" : "履歴"}</button>}
+      {toolbarLayout === "kamakura" ? <div className="e-kamakura-modes" role="group" aria-label="操作"><button type="button" aria-pressed={!preview} onClick={() => setPreview(false)} disabled={!document || blocked || historyMode}>編集</button><button type="button" aria-pressed={preview} onClick={() => setPreview(true)} disabled={!document || blocked || historyMode}>プレビュー</button></div>
+        : <button aria-pressed={preview} onClick={() => setPreview((value) => !value)} disabled={!document || blocked || historyMode}>{preview ? "編集に戻る" : "プレビュー"}</button>}
+      <button className={toolbarLayout === "kamakura" ? "e-kamakura-save" : undefined} onClick={() => void save()} disabled={siteWorkBlocked || !pendingChanges || blocked || hasInput || historyMode || !localizationReady || !!session?.readOnly && !libraryDirty}>下書き保存</button>
       {targetMode ? localePublication ? <button className="e-primary" title={session?.readOnly?.reason ?? "この言語の全ページと共通内容をまとめて確認します"} onClick={() => void prepareLocaleRelease("publish")}
         disabled={siteSettings.dirty || siteSettings.busy || !localeRelease || localeReleaseLoading || !session || !!session.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>言語全体の公開確認</button>
         : <button className="e-primary" title="このサイトでは訳文の公開を利用できません。管理者に確認してください。" disabled>公開前の確認</button>
-        : <button className="e-primary" title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={siteSettings.dirty || siteSettings.busy || !session || !!session.readOnly || session.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
+        : <button className={`e-primary${toolbarLayout === "kamakura" ? " e-kamakura-publish" : ""}`} title={session?.readOnly?.reason ?? publishHold} onClick={() => void prepare("publish")} disabled={siteSettings.dirty || siteSettings.busy || !session || !!session.readOnly || session.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開前の確認</button>}
       {publishHold && !targetMode && <small className="e-hold">{publishHold}</small>}
       {targetMode && !localePublication && <small className="e-hold">このサイトでは訳文の公開を利用できません。管理者に確認してください。</small>}
     </header>
+    {toolbarLayout === "kamakura" && <div className="e-kamakura-narrow"><h1>PC で開いてください</h1>{toolbarStart}</div>}
     {notice && <div className="e-notice" role="alert">{notice}</div>}
     {session?.readOnly && <div className="e-readonly" role="status"><div><strong>{targetMode ? "この言語（読み取り専用）" : "原文（読み取り専用）"}</strong><span>{session.readOnly.reason}</span></div>{session.readOnly.editUrl && <a className="e-small" href={session.readOnly.editUrl} {...(/^https:\/\//iu.test(session.readOnly.editUrl) ? { target: "_blank", rel: "noopener noreferrer" } : {})}>{session.readOnly.editLabel ?? (targetMode ? "正本の編集画面を開く" : "原文の編集画面を開く")}</a>}</div>}
     {components && libraryFailed && <div className="e-notice" role="alert">共通部品を読み込めませんでした。部品を含むページは表示できません。</div>}

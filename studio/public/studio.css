@@ -44,5 +44,60 @@
 .studio-editor-note button{margin-top:12px}.studio-kamakura-scope{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;background:#fbfaf7}.studio-kamakura-scope nav{display:flex;flex:none;flex-wrap:wrap;gap:8px}.studio-kamakura-scope a{border:1px solid var(--niho-border);border-radius:8px;padding:9px 12px;background:#fff;color:var(--niho-text);font-size:13px;font-weight:650;text-decoration:none}
 .studio-editor-empty{border-color:#d8cba9;background:#fffaf0}.studio-legacy-pages>div{margin-bottom:12px}.studio-legacy-pages ul{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:7px;margin:0;padding:0;list-style:none}.studio-legacy-pages li{display:flex;min-width:0;align-items:baseline;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:7px;background:#f7f7f5}.studio-legacy-pages li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-legacy-pages code{flex:none;color:var(--niho-text-sub);font-size:12px}
 .studio-editor>.nw-editor{max-width:1560px;margin:0 auto;border-radius:10px}
+.studio-app.studio-kamakura-shell{position:fixed;inset:0;z-index:20;display:flex;min-width:320px;flex-direction:column;overflow:hidden;background:#f6f5f2;color:#1f1f1f}
+.studio-kamakura-shell>.studio-shell-header{display:none}
+.studio-kamakura-shell>.studio-kamakura-content{display:flex;width:100%;max-width:none;height:100%;min-height:0;flex:1;margin:0;padding:0;overflow:hidden}
+.studio-kamakura-editor{display:flex;width:100%;height:100%;min-height:0;flex:1;flex-direction:column;overflow:hidden}
+.studio-kamakura-editor>.nw-editor{max-width:none;height:100%;min-height:0;flex:1;margin:0;border-radius:0}
+.studio-kamakura-state{display:grid;align-content:center;justify-items:center;gap:10px;width:min(560px,calc(100% - 32px));margin:auto;padding:32px;background:#fff;border:1px solid #e6e3dc;color:#1f1f1f;text-align:center}
+.studio-kamakura-state h1,.studio-kamakura-state p{margin:0}
+.studio-kamakura-state h1{font-size:20px}
+.studio-kamakura-state p{color:#686868;line-height:1.6}
+.studio-kamakura-state button{margin-top:6px;border:1px solid #c9c5bd;border-radius:4px;padding:8px 14px;background:#fff;color:#1f1f1f;font:inherit;cursor:pointer}
+.studio-kamakura-editor>.studio-editor-alert{flex:none;margin:0;padding:8px 14px;border:0;border-bottom:1px solid #e6c4bd;border-radius:0}
+.nw-editor.nw-editor-kamakura{display:flex;width:100%;height:100%;min-height:0;flex:1;flex-direction:column;overflow:hidden;border:0;border-radius:0;background:#f6f5f2;color:#1f1f1f}
+.nw-editor.nw-editor-kamakura .e-toolbar{z-index:4;display:flex;height:52px;min-height:52px;flex:none;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding:0 9px;background:#fff;border-bottom:1px solid #e6e3dc;scrollbar-width:thin}
+.nw-editor.nw-editor-kamakura .e-kamakura-back{order:0;display:grid;width:32px;height:32px;flex:none;place-items:center;border:0;border-radius:3px;color:#333;text-decoration:none;font-size:28px;line-height:1}
+.nw-editor.nw-editor-kamakura .e-kamakura-back:hover{background:#f1f0ee}
+.nw-editor.nw-editor-kamakura .e-title{order:1;min-width:100px;flex:1 1 130px;gap:0;margin:0 8px 0 0}
+.nw-editor.nw-editor-kamakura .e-brand{display:none}
+.nw-editor.nw-editor-kamakura .e-crumb{max-width:260px;color:#222;font-size:13px;font-weight:600}
+.nw-editor.nw-editor-kamakura .e-kamakura-width{order:2;display:flex;flex:none;align-items:center;gap:6px}
+.nw-editor.nw-editor-kamakura .e-kamakura-widths,.nw-editor.nw-editor-kamakura .e-kamakura-modes{display:flex;align-items:center;gap:0;padding:2px;border:1px solid #d7d4cd;border-radius:4px;background:#f6f5f2}
+.nw-editor.nw-editor-kamakura .e-toolbar .e-kamakura-widths button,.nw-editor.nw-editor-kamakura .e-toolbar .e-kamakura-modes button{min-width:38px;height:28px;min-height:28px;padding:3px 7px;border:0;border-radius:2px;background:transparent;color:#555;font-size:12px;white-space:nowrap}
+.nw-editor.nw-editor-kamakura .e-toolbar .e-kamakura-widths button[aria-pressed=true],.nw-editor.nw-editor-kamakura .e-toolbar .e-kamakura-modes button[aria-pressed=true]{background:#fff;color:#222;box-shadow:0 1px 3px #0002}
+.nw-editor.nw-editor-kamakura .e-kamakura-width-number{display:block;width:54px;flex:none}
+.nw-editor.nw-editor-kamakura .e-kamakura-width-number input{width:100%;height:30px;min-height:30px;padding:4px 5px;border:1px solid #d7d4cd;border-radius:4px;background:#fff;text-align:center;font-size:12px}
+.nw-editor.nw-editor-kamakura .e-toolbar .e-status{order:3;flex:none;padding:3px 8px;border:0;border-radius:0;background:transparent;color:#555;font-size:11px}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-icon-button{order:4;width:30px;height:30px;min-width:30px;min-height:30px;padding:0;border:0;border-radius:3px;background:transparent;color:#555;font-size:21px;line-height:1}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-icon-button:hover:not(:disabled),.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-history-button:hover:not(:disabled){background:#f1f0ee}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-history-button{order:5;width:30px;height:30px;min-width:30px;min-height:30px;padding:0;border:0;border-radius:3px;background:transparent;color:#555;font-size:19px}
+.nw-editor.nw-editor-kamakura .e-kamakura-modes{order:6;flex:none}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-save{order:7;min-height:30px;padding:5px 9px;border-radius:3px;font-size:12px;white-space:nowrap}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-publish{order:8;min-height:30px;padding:5px 13px;border-color:#2c6bdc;border-radius:3px;background:#2c6bdc;color:#fff;font-size:12px;white-space:nowrap}
+.nw-editor.nw-editor-kamakura .e-toolbar>.e-kamakura-publish:hover:not(:disabled){border-color:#245dc3;background:#245dc3}
+.nw-editor.nw-editor-kamakura .e-hold{order:9;max-width:150px}
+.nw-editor.nw-editor-kamakura .e-body{height:auto;min-height:0;flex:1;grid-template-columns:296px minmax(0,1fr) 300px;overflow:hidden}
+.nw-editor.nw-editor-kamakura .e-rail{height:100%;min-height:0;max-height:none;background:#fff}
+.nw-editor.nw-editor-kamakura .e-left{border-right:1px solid #e6e3dc}
+.nw-editor.nw-editor-kamakura .e-tools{width:44px;padding:8px 2px;border-right:1px solid #e6e3dc}
+.nw-editor.nw-editor-kamakura .e-tools button{width:38px;min-width:38px;height:38px;min-height:38px;border-radius:3px}
+.nw-editor.nw-editor-kamakura .e-tools button[aria-pressed=true]{background:#eaf1fc;color:#2c6bdc}
+.nw-editor.nw-editor-kamakura .e-panel>section{padding:16px 14px}
+.nw-editor.nw-editor-kamakura .e-page-row:hover,.nw-editor.nw-editor-kamakura .e-folder:hover{background:#f5f7fa}
+.nw-editor.nw-editor-kamakura .e-page[aria-current=page]{background:#eaf1fc;color:#245dc3}
+.nw-editor.nw-editor-kamakura .e-page[aria-current=page] .e-icon{color:#2c6bdc}
+.nw-editor.nw-editor-kamakura .e-layer[aria-pressed=true]{background:#eaf1fc;color:#245dc3}
+.nw-editor.nw-editor-kamakura .e-canvas{height:100%;min-height:0;overflow:hidden;background:#f6f5f2}
+.nw-editor.nw-editor-kamakura .e-canvas-tools{height:38px;min-height:38px;flex:none;justify-content:flex-end;gap:6px;padding:3px 12px;border-bottom:0;background:#f6f5f2}
+.nw-editor.nw-editor-kamakura .e-canvas-caption,.nw-editor.nw-editor-kamakura .e-canvas-tools>label,.nw-editor.nw-editor-kamakura .e-tier-note{display:none}
+.nw-editor.nw-editor-kamakura .e-stage{min-height:0;max-height:none;flex:1;padding:20px;background:#f6f5f2}
+.nw-editor.nw-editor-kamakura iframe{border:1px solid #e6e3dc;box-shadow:0 2px 5px #00000012}
+.nw-editor.nw-editor-kamakura .e-right{height:100%;min-height:0;overflow:auto;border-left:1px solid #e6e3dc;background:#fff}
+.nw-editor.nw-editor-kamakura .e-inspector-tabs button[aria-selected=true]{border-bottom-color:#2c6bdc;color:#2c6bdc;background:#f8faff}
+.nw-editor.nw-editor-kamakura :is(button,input,select,textarea):focus-visible{outline-color:#2c6bdc}
+.nw-editor.nw-editor-kamakura .e-kamakura-narrow{display:none}
+@media(max-width:1150px){.nw-editor.nw-editor-kamakura .e-title{flex:0 1 130px}.nw-editor.nw-editor-kamakura .e-crumb{max-width:130px}.nw-editor.nw-editor-kamakura .e-body{grid-template-columns:296px minmax(320px,1fr) 300px}}
+@media(max-width:1023px){.nw-editor.nw-editor-kamakura .e-toolbar,.nw-editor.nw-editor-kamakura .e-body{display:none}.nw-editor.nw-editor-kamakura .e-kamakura-narrow{display:grid;align-content:center;justify-items:center;gap:12px;position:fixed;inset:0;z-index:90;background:#f6f5f2;text-align:center}.nw-editor.nw-editor-kamakura .e-kamakura-narrow h1{margin:0;font-size:18px}.nw-editor.nw-editor-kamakura .e-kamakura-narrow .e-kamakura-back{width:auto;height:auto;font-size:14px}.nw-editor.nw-editor-kamakura .e-kamakura-narrow .e-kamakura-back::after{content:" ダッシュボードに戻る"}}
 @media(max-width:900px){.studio-invite-form{grid-template-columns:1fr 1fr}.studio-invite-form label:first-child{grid-column:1/-1}.studio-admin-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.studio-members{margin:16px 10px;padding:20px 14px}.studio-section-heading{align-items:center}.studio-invite-form{grid-template-columns:1fr}.studio-invite-form label:first-child{grid-column:auto}.studio-copy{grid-template-columns:1fr}.studio-admin-list li{align-items:flex-start;flex-direction:column}.studio-row-actions{justify-content:flex-start}.studio-invite-accept dl div{display:block}.studio-invite-accept dd{margin-top:5px}.studio-content-editor{padding:12px 8px 28px}.studio-editor-heading{display:block;padding:0 6px}.studio-editor-heading>a{display:inline-block;margin-top:10px}.studio-editor-alert{display:grid;margin-left:2px;margin-right:2px}.studio-editor-note,.studio-legacy-pages{padding:15px 14px}.studio-kamakura-scope{display:block}.studio-kamakura-scope nav{margin-top:13px}.studio-legacy-pages ul{grid-template-columns:1fr}.studio-editor>.nw-editor{border-radius:8px}}
