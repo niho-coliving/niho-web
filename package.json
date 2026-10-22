@@ -27,6 +27,10 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
     },
+    "./presentation-runtime": {
+      "types": "./dist/presentation-runtime.d.ts",
+      "import": "./dist/presentation-runtime.js"
+    },
     "./server": {
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"

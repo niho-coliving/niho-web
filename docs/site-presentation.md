@@ -17,3 +17,11 @@ Kamakura catalog は `nativePresentationPages` で必須対象を明示する。
 CSS生成は数字で始まる単語を含むフォント名も正しく引用する。layout自身のselectorと子孫scopeを分け、composition wrapperだけを `display:contents` にする。Editorは選択outlineで装飾を表示し、空要素の実寸を変更しない。
 
 実サイトのfixtureを使うローカル検証は `KAMAKURA_SITE_FIXTURE=/absolute/path/to/kamakura-site npm run demo:kamakura`。保存先はメモリ内だけで、公開APIは呼ばない。
+
+## native overlay
+
+任意の `overlays`（最大8件）は、canonicalな別PageDocumentとid・label・triggerIds・closeIdsだけを持つ。実行コードは含めない。対象site/locale、文書IDと操作IDの重複、件数上限を検証する。共有メニューの編集は対応するoverlay slotだけを差し替え、本文へは保存しない。
+
+`initializeSitePresentation` は同じ信頼済みruntimeを公開SSRとEditorプレビューで使い、開閉・Escape・Tab循環・フォーカス復帰・スクロール固定を行う。呼び直す前に返されたcleanupを呼ぶ。スクロール固定時もgutterを維持し、表示幅を変えない。Editorのプレビューではoverlay操作とメニューを閉じる操作だけを通し、ページ遷移・フォーム送信は引き続き止める。
+
+公開ホストは `@niho/web/presentation-runtime` から初期化する。JSONからJavaScript・CSSを読み込む経路や、iframe sandbox/CSPの緩和は追加しない。overlayの公開済み文書と表示設定も依存SHA・公開commitのCAS対象に含める。

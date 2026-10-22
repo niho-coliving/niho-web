@@ -40,7 +40,7 @@ async function setup(options = {}) {
   const calls = { saves: [] }; let stored = structuredClone(options.document ?? fixture), version = "v1";
   const adapter = {
     listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }],
-    listPages: async () => [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }],
+    listPages: async () => [{ siteId: stored.siteId, pageId: stored.pageId, locale: stored.locale, title: stored.title }],
     readDocument: async () => ({ document: structuredClone(stored), version, ...(options.presentation ? { presentation: structuredClone(options.presentation) } : {}) }),
     saveDraft: async (request) => { calls.saves.push(structuredClone(request)); stored = { ...structuredClone(request.document), revision: stored.revision + 1 }; version = `v${Number(version.slice(1)) + 1}`; return { status: "saved", version, revision: stored.revision }; },
     prepareRelease: async () => { throw new Error("not used"); }, release: async () => { throw new Error("not used"); },
@@ -84,7 +84,13 @@ test("a shared color is created, applied to two elements, recolored live and sav
 
 test("native shared context renders outside the editable scope, preserves a 5px empty box and is excluded from page save", async () => {
   const shared = (pageId, id, text) => ({ schemaVersion: 1, siteId: "demo", pageId, locale: "ja-JP", revision: 1, title: pageId, tokens: {}, body: [{ type: "element", id, tag: pageId === "header" ? "header" : "footer", children: [{ type: "text", text }] }] });
-  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "presentation-v1", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header: shared("header", "shared_head", "SHARED_HEADER_MUST_NOT_SAVE"), footer: shared("footer", "shared_foot", "SHARED_FOOTER_MUST_NOT_SAVE") } };
+  const header = shared("header", "shared_head", "SHARED_HEADER_MUST_NOT_SAVE");
+  header.body.push({ type: "element", id: "shared_menu_trigger_node", tag: "a", attrs: { id: "shared-menu-trigger", href: "#shared-menu" }, children: [{ type: "text", text: "MENU" }] });
+  const menu = shared("shared-menu", "shared_menu", "SHARED_MENU_DRAFT_MUST_NOT_SAVE");
+  menu.body[0].tag = "nav";
+  menu.body[0].children.push({ type: "element", id: "shared_menu_link", tag: "a", attrs: { href: "/other" }, children: [{ type: "text", text: "OTHER" }] });
+  menu.body[0].children.push({ type: "element", id: "shared_menu_close_node", tag: "a", attrs: { id: "shared-menu-close", href: "#shared-menu" }, children: [{ type: "text", text: "CLOSE" }] });
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "presentation-v1", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header, footer: shared("footer", "shared_foot", "SHARED_FOOTER_MUST_NOT_SAVE") }, overlays: [{ id: "shared-menu", label: "共有メニュー", document: menu, triggerIds: ["shared-menu-trigger"], closeIds: ["shared-menu-close"] }] };
   const source = structuredClone(fixture);
   source.body[0].children[0].style = { base: { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word" } };
   source.body[0].style.base.alignContent = "space-between";
@@ -94,9 +100,20 @@ test("native shared context renders outside the editable scope, preserves a 5px 
     const frameDocument = frame().contentDocument;
     assert.ok(frameDocument.body.textContent.includes("SHARED_HEADER_MUST_NOT_SAVE"));
     assert.ok(frameDocument.body.textContent.includes("SHARED_FOOTER_MUST_NOT_SAVE"));
+    assert.ok(frameDocument.body.textContent.includes("SHARED_MENU_DRAFT_MUST_NOT_SAVE"));
+    assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, true);
     const css = [...frameDocument.querySelectorAll("style")].map((node) => node.textContent).join("\n");
     assert.match(css, /\[data-nw-node="bullet"\]\{background-color:#123456;height:5px;width:5px;\}/);
     assert.equal(css.includes("min-height:48px"), false);
+    await click(button("プレビュー"));
+    await canvasClick("[data-nw-overlay-open]");
+    assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, false);
+    const ordinaryLink = frameDocument.querySelector('[data-nw-node="shared_menu_link"]');
+    const blocked = new (frame().contentWindow.MouseEvent)("click", { bubbles: true, cancelable: true });
+    ordinaryLink.dispatchEvent(blocked); assert.equal(blocked.defaultPrevented, true, "preview keeps ordinary navigation blocked");
+    await canvasClick("[data-nw-overlay-close=shared-menu]:not([data-nw-overlay-backdrop])");
+    assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, true);
+    await click(button("編集に戻る"));
     await canvasClick("h1"); await editorTab("ボックス");
     assert.ok(right().textContent.includes("辺ごとの種類・色"));
     assert.ok(right().textContent.includes("長い文字の折り返し"));
@@ -105,8 +122,29 @@ test("native shared context renders outside the editable scope, preserves a 5px 
     assert.equal(app.calls.saves[0].presentationVersion, "presentation-v1");
     assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_HEADER_MUST_NOT_SAVE"), false);
     assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_FOOTER_MUST_NOT_SAVE"), false);
+    assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_MENU_DRAFT_MUST_NOT_SAVE"), false);
     assert.deepEqual(app.calls.saves[0].document.body[0].children[0].style.base, { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word", width: "99%" });
     assert.deepEqual(app.calls.saves[0].document.body[0].children.at(-1).style.base, { width: "5px", height: "5px", backgroundColor: "#123456" });
+  } finally { await app.cleanup(); }
+});
+
+test("editing the canonical overlay shows and saves only its own selectable nodes", async () => {
+  const shared = (pageId, id, tag, text) => ({ schemaVersion: 1, siteId: "demo", pageId, locale: "ja-JP", revision: 1, title: pageId, tokens: {}, body: [{ type: "element", id, tag, children: [{ type: "text", text }] }] });
+  const document = shared("shared-menu", "menu_editable", "nav", "EDITABLE_MENU_ONLY");
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "presentation-menu-v1", reset: "neutral-v1", tokens: {}, fonts: [],
+    shared: { header: shared("header", "shared_head", "header", "HEADER_NOT_SAVED"), footer: shared("footer", "shared_foot", "footer", "FOOTER_NOT_SAVED") },
+    overlays: [{ id: "site-menu", label: "メニュー", document: shared("shared-menu", "published_menu", "nav", "PUBLISHED_MENU_NOT_SHOWN"), triggerIds: ["open-menu"], closeIds: ["close-menu"] }] };
+  const app = await setup({ document, presentation });
+  try {
+    const frameDocument = frame().contentDocument;
+    assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, false);
+    assert.ok(frameDocument.body.textContent.includes("EDITABLE_MENU_ONLY"));
+    assert.equal(frameDocument.body.textContent.includes("PUBLISHED_MENU_NOT_SHOWN"), false);
+    await canvasClick('[data-nw-node="menu_editable"]'); await editorTab("ボックス"); await change(input("幅", right()), "88%");
+    await click(button("下書き保存"));
+    assert.equal(app.calls.saves[0].document.pageId, "shared-menu");
+    assert.equal(app.calls.saves[0].document.body[0].style.base.width, "88%");
+    assert.equal(JSON.stringify(app.calls.saves[0].document).includes("HEADER_NOT_SAVED"), false);
   } finally { await app.cleanup(); }
 });
 

@@ -10,6 +10,7 @@ declare const KAMAKURA_DEMO_ASSETS: ResolvedAssetMap;
 
 let stored = parsePageDocument(KAMAKURA_DEMO_DOCUMENT), version = 1;
 const presentation = parseSitePresentation(KAMAKURA_DEMO_PRESENTATION, stored);
+const menuLabel = presentation.overlays?.[0]?.label ?? "native overlay";
 const target = { siteId: stored.siteId, pageId: stored.pageId, locale: stored.locale };
 const assetAdapter: AssetLibraryAdapter = {
   listAssets: async () => ({ assets: [], folders: [] }),
@@ -39,10 +40,11 @@ function Demo() {
   const [ssrWidth, setSsrWidth] = useState(1280);
   return <main style={{ fontFamily: "sans-serif" }}>
     <aside style={{ display: "flex", gap: 8, alignItems: "center", padding: 8, background: "#eef2ee" }}>
-      <strong>同じ native context のSSR比較</strong>
+      <strong>同じ native context のSSR比較 + {menuLabel}</strong>
       {[375, 768, 1280].map((width) => <button key={width} type="button" onClick={() => setSsrWidth(width)}>{width}px</button>)}
       <a href={`/ssr?width=${ssrWidth}`} target="native-ssr">別窓</a>
       <span>保存・再読込はメモリ内のみです。</span>
+      <span>Editorは「プレビュー」後、SSRは右側のMENUから開閉できます。</span>
     </aside>
     <div style={{ display: "grid", gridTemplateColumns: "minmax(760px,1fr) minmax(320px,0.7fr)", gap: 12, alignItems: "start" }}>
       <PageEditor adapter={adapter} assets={assetAdapter} insertableBlocks={[]} />

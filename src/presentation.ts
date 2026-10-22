@@ -2,10 +2,10 @@ import { parsePageDocument } from "./document.js";
 import { cssForDocument, pageScope } from "./css.js";
 import { parseResolvedAssets, type ResolvedAssetMap } from "./assets.js";
 import { parseStyle, parseTokens } from "./style-values.js";
-import type { BlockContracts, PageDocument, SiteFontFace, SitePresentation } from "./types.js";
+import type { BlockContracts, PageDocument, SiteFontFace, SitePresentation, SitePresentationOverlay } from "./types.js";
 import { fail, identifier, isSafePublicUrl, keys, line, localeCode, record } from "./validation-utils.js";
 
-export const SITE_PRESENTATION_LIMITS = Object.freeze({ fonts: 512, sourcesPerFont: 4, versionLength: 256, unicodeRangeLength: 4096 });
+export const SITE_PRESENTATION_LIMITS = Object.freeze({ fonts: 512, sourcesPerFont: 4, versionLength: 256, unicodeRangeLength: 4096, overlays: 8, bindingsPerOverlay: 16, overlayLabelLength: 160 });
 const unicodeRange = /^(?:U\+[0-9A-F?]{1,6}(?:-[0-9A-F]{1,6})?)(?:\s*,\s*U\+[0-9A-F?]{1,6}(?:-[0-9A-F]{1,6})?)*$/iu;
 
 function fontFace(input: unknown, path: string): SiteFontFace {
@@ -37,7 +37,7 @@ function fontFace(input: unknown, path: string): SiteFontFace {
 /** 外部 snapshot の presentation を対象ページへ固定して検証する。 */
 export function parseSitePresentation(input: unknown, target: Pick<PageDocument, "siteId" | "locale">, blocks: BlockContracts = {}): SitePresentation {
   const source = record(input, "presentation");
-  keys(source, ["schemaVersion", "siteId", "locale", "version", "reset", "tokens", "layout", "fonts", "shared"], "presentation");
+  keys(source, ["schemaVersion", "siteId", "locale", "version", "reset", "tokens", "layout", "fonts", "shared", "overlays"], "presentation");
   if (source.schemaVersion !== 1) fail("presentation.schemaVersion", "unsupported schema version");
   const siteId = identifier(source.siteId, "presentation.siteId"), locale = localeCode(source.locale, "presentation.locale");
   if (siteId !== target.siteId || locale !== target.locale) fail("presentation", "target mismatch");
@@ -54,7 +54,32 @@ export function parseSitePresentation(input: unknown, target: Pick<PageDocument,
     if (document.siteId !== siteId || document.locale !== locale) fail(`presentation.shared.${name}`, "target mismatch");
   }
   if (header.pageId === footer.pageId) fail("presentation.shared", "shared page IDs must be distinct");
-  return { schemaVersion: 1, siteId, locale, version, reset: "neutral-v1", tokens, ...(layout ? { layout } : {}), fonts, shared: { header, footer } };
+  if (source.overlays !== undefined && (!Array.isArray(source.overlays) || source.overlays.length > SITE_PRESENTATION_LIMITS.overlays)) fail("presentation.overlays", "too many overlays");
+  const documentIds = new Set([header.pageId, footer.pageId]), overlayIds = new Set<string>(), bindings = new Set<string>();
+  const overlays = (source.overlays as unknown[] | undefined ?? []).map((value, index): SitePresentationOverlay => {
+    const path = `presentation.overlays[${index}]`, overlay = record(value, path);
+    keys(overlay, ["id", "label", "document", "triggerIds", "closeIds"], path);
+    const id = identifier(overlay.id, `${path}.id`), label = line(overlay.label, `${path}.label`, SITE_PRESENTATION_LIMITS.overlayLabelLength);
+    if (overlayIds.has(id) || bindings.has(id)) fail(`${path}.id`, "duplicate overlay ID or binding");
+    overlayIds.add(id);
+    const document = parsePageDocument(overlay.document, blocks);
+    if (document.siteId !== siteId || document.locale !== locale) fail(`${path}.document`, "target mismatch");
+    if (documentIds.has(document.pageId)) fail(`${path}.document.pageId`, "shared page IDs must be distinct");
+    documentIds.add(document.pageId);
+    const parseBindings = (input: unknown, name: "triggerIds" | "closeIds") => {
+      const at = `${path}.${name}`;
+      if (!Array.isArray(input) || !input.length || input.length > SITE_PRESENTATION_LIMITS.bindingsPerOverlay) fail(at, "invalid bindings");
+      return input.map((binding, bindingIndex) => {
+        const result = identifier(binding, `${at}[${bindingIndex}]`);
+        if (overlayIds.has(result) || bindings.has(result)) fail(`${at}[${bindingIndex}]`, "duplicate binding");
+        bindings.add(result);
+        return result;
+      });
+    };
+    const triggerIds = parseBindings(overlay.triggerIds, "triggerIds"), closeIds = parseBindings(overlay.closeIds, "closeIds");
+    return { id, label, document, triggerIds, closeIds };
+  });
+  return { schemaVersion: 1, siteId, locale, version, reset: "neutral-v1", tokens, ...(layout ? { layout } : {}), fonts, shared: { header, footer }, ...(overlays.length ? { overlays } : {}) };
 }
 
 /** layout を既存の閉じた NodeStyle CSS generatorへ渡すための内部文書。 */
@@ -72,7 +97,8 @@ export function cssForSitePresentation(presentationInput: unknown, target: Pick<
   const reset = `${root},${root} *{box-sizing:border-box}${root} :where(h1,h2,h3,h4,h5,h6,p,ul,ol,dl,dd,figure,blockquote){margin:0;padding:0}${root} :where(ul,ol){list-style:none}${root} :where(a){color:inherit;text-decoration:none}${root} :where(img){max-width:100%}`;
   // Only composition wrappers disappear from layout. Authored boxes keep their own display values.
   const slots = `${root} :where([data-nw-presentation-header],[data-nw-presentation-body],[data-nw-presentation-footer],div[data-nw-scope]){display:contents}`;
-  return { presentation, scope, css: [fonts, reset, slots, cssForDocument(layout, assets)].filter(Boolean).join("\n") };
+  const overlays = `${root} [data-nw-overlay][hidden]{display:none!important}${root} [data-nw-overlay]{position:fixed;inset:0;z-index:2147482000;overflow:auto}${root} [data-nw-overlay-backdrop]{position:fixed;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;background:#00000029;cursor:pointer}${root} [data-nw-overlay-content]{position:relative;z-index:1;height:100%;min-height:100%;pointer-events:none}${root} [data-nw-overlay-content] :where(a[href],button,details,summary,[tabindex="0"]){pointer-events:auto}`;
+  return { presentation, scope, css: [fonts, reset, slots, overlays, cssForDocument(layout, assets)].filter(Boolean).join("\n") };
 }
 
 /** 素材解決用。本文・共有文書を1文書へ写すだけで、保存や描画には使わない。 */
@@ -83,5 +109,6 @@ export function presentationAssetDocument(document: PageDocument, presentation?:
     ...document.body,
     ...(document.pageId === presentation.shared.header.pageId ? [] : presentation.shared.header.body),
     ...(document.pageId === presentation.shared.footer.pageId ? [] : presentation.shared.footer.body),
+    ...(presentation.overlays ?? []).flatMap((overlay) => document.pageId === overlay.document.pageId ? [] : overlay.document.body),
   ] };
 }

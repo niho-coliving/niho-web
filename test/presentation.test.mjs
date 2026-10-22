@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cssForSitePresentation, parsePageDocument, parseSitePresentation, presentationAssetDocument } from "@niho/web/core";
+import { cssForSitePresentation, initializeSitePresentation, parsePageDocument, parseSitePresentation, presentationAssetDocument } from "@niho/web/core";
 import { renderSitePageToHtml } from "@niho/web/server";
 import { JSDOM } from "jsdom";
 
@@ -15,6 +15,16 @@ const site = (siteId = "synthetic", locale = "en") => ({
     footer: page(siteId, locale, "shared-footer", [element("footer-note", "footer", "Shared footer")]),
   },
 });
+const siteWithMenu = (siteId = "synthetic", locale = "en") => {
+  const presentation = site(siteId, locale);
+  presentation.shared.header.body[0].children.push({ type: "element", id: "menu-trigger-node", tag: "a", attrs: { id: "menu-trigger", href: "#site-menu" }, children: [{ type: "text", text: "Menu" }] });
+  presentation.overlays = [{ id: "site-menu", label: "Site menu", triggerIds: ["menu-trigger"], closeIds: ["menu-close"], document:
+    page(siteId, locale, "shared-menu", [{ type: "element", id: "menu-panel", tag: "nav", children: [
+      { type: "element", id: "menu-first", tag: "a", attrs: { href: "/one" }, children: [{ type: "text", text: "First menu item" }] },
+      { type: "element", id: "menu-close-node", tag: "a", attrs: { id: "menu-close", href: "#site-menu" }, children: [{ type: "text", text: "Close" }] },
+    ] }]) }];
+  return presentation;
+};
 
 test("native presentation is generic and canvas/SSR share one reset, font and scoped composition", () => {
   const document = page("synthetic-two", "fr", "business", [element("body-copy", "p", "Body copy")]);
@@ -45,6 +55,24 @@ test("canonical shared page is substituted only in its native slot", () => {
   assert.ok(html.includes("Shared footer"));
 });
 
+test("generic second-site overlay renders hidden, substitutes its canonical document and collects it once", () => {
+  const document = page("second-site", "fr", "body", [element("body-copy", "p", "Second body")]);
+  const presentation = parseSitePresentation(siteWithMenu("second-site", "fr"), document);
+  const html = renderSitePageToHtml(document, presentation);
+  assert.match(html, /id="site-menu"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*hidden=""/);
+  assert.match(html, /id="menu-trigger"[^>]*aria-controls="site-menu"[^>]*aria-expanded="false"[^>]*data-nw-overlay-open="site-menu"/);
+  assert.match(html, /id="menu-close"[^>]*data-nw-overlay-close="site-menu"/);
+  assert.equal((html.match(/First menu item/g) ?? []).length, 1);
+  const edited = page("second-site", "fr", "shared-menu", [element("edited-menu", "nav", "Edited menu")]);
+  const editedHtml = renderSitePageToHtml(edited, presentation);
+  assert.equal((editedHtml.match(/Edited menu/g) ?? []).length, 1);
+  assert.equal(editedHtml.includes("First menu item"), false);
+  assert.match(editedHtml, /data-nw-overlay-editing=""/);
+  const assets = presentationAssetDocument(edited, presentation);
+  assert.equal(assets.body.filter((node) => node.id === "edited-menu").length, 1);
+  assert.equal(assets.body.some((node) => node.id === "menu-panel"), false);
+});
+
 test("presentation schema rejects hostile resources, mismatched targets, extras and unbounded input", () => {
   const document = page("synthetic", "en", "body", []);
   const reject = (mutate) => { const input = structuredClone(site()); mutate(input); assert.throws(() => parseSitePresentation(input, document)); };
@@ -58,6 +86,42 @@ test("presentation schema rejects hostile resources, mismatched targets, extras 
   reject((input) => { input.shared.footer.pageId = "shared-header"; });
   reject((input) => { input.siteId = "other"; });
   reject((input) => { input.fonts = Array.from({ length: 513 }, () => input.fonts[0]); });
+  reject((input) => { input.overlays = siteWithMenu().overlays; input.overlays[0].id = "bad target"; });
+  reject((input) => { input.overlays = siteWithMenu().overlays; input.overlays[0].document.siteId = "foreign"; });
+  reject((input) => { input.overlays = siteWithMenu().overlays; input.overlays[0].document.pageId = "shared-header"; });
+  reject((input) => { input.overlays = siteWithMenu().overlays; input.overlays[0].closeIds = ["menu-trigger"]; });
+  reject((input) => { input.overlays = siteWithMenu().overlays; input.overlays.push({ ...structuredClone(input.overlays[0]), id: "menu-trigger", document: { ...input.overlays[0].document, pageId: "second-menu" }, triggerIds: ["second-trigger"], closeIds: ["second-close"] }); });
+  reject((input) => { input.overlays = Array.from({ length: 9 }, (_, index) => ({ ...siteWithMenu().overlays[0], id: `menu-${index}`, document: { ...siteWithMenu().overlays[0].document, pageId: `menu-page-${index}` }, triggerIds: [`trigger-${index}`], closeIds: [`close-${index}`] })); });
+});
+
+test("trusted overlay runtime opens, traps focus, closes and fully cleans up", () => {
+  const document = page("synthetic", "en", "body", []), html = renderSitePageToHtml(document, siteWithMenu());
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: "https://example.test" });
+  const root = dom.window.document, toggle = root.getElementById("menu-trigger"), overlay = root.getElementById("site-menu"), closeControl = root.getElementById("menu-close");
+  const cleanup = initializeSitePresentation(root);
+  root.documentElement.style.overflow = "clip";
+  root.documentElement.style.scrollbarGutter = "auto";
+  overlay.querySelector("nav").insertAdjacentHTML("afterbegin", '<a href="/hidden" style="display:none">Invisible item</a>');
+  toggle.focus(); toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  toggle.click();
+  assert.equal(overlay.hidden, false); assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(root.documentElement.style.overflow, "hidden");
+  assert.equal(root.activeElement.textContent, "First menu item", "focus starts at a visible content control");
+  toggle.focus(); root.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true }));
+  assert.equal(root.activeElement.textContent, "First menu item", "focus cannot escape the dialog");
+  closeControl.focus(); closeControl.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true }));
+  assert.equal(root.activeElement.textContent, "First menu item", "Tab wraps to the first content control");
+  root.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+  assert.equal(overlay.hidden, true); assert.equal(toggle.getAttribute("aria-expanded"), "false"); assert.equal(root.activeElement, toggle); assert.equal(root.documentElement.style.overflow, "clip");
+  toggle.click(); assert.equal(overlay.hidden, false);
+  const navigation = root.querySelector('[data-nw-node="menu-panel"]').querySelector('a[href="/one"]');
+  const event = new dom.window.Event("click", { bubbles: true, cancelable: true });
+  navigation.dispatchEvent(event); assert.equal(overlay.hidden, true); assert.equal(event.defaultPrevented, false);
+  toggle.click(); assert.equal(overlay.hidden, false); cleanup();
+  assert.equal(overlay.hidden, true); assert.equal(root.documentElement.style.overflow, "clip");
+  assert.equal(root.documentElement.style.scrollbarGutter, "auto");
+  toggle.click(); assert.equal(overlay.hidden, true, "cleanup removes control listeners");
+  dom.window.close();
 });
 
 test("background asset references remain native through parse, asset collection and render", () => {
