@@ -7,16 +7,16 @@
 2. 構成・デザインは日英で共通にし、文章・画像を言語別に調整する。
 3. 原文を先に公開できる。翻訳の確認中は、その言語の前回の公開版を保つ。
 
-追跡Epic：[niho-web #40](https://github.com/niho-coliving/niho-web/issues/40)（既存の複数サイト編集Epic #1の子）。
+追跡Epic：[niho-web #40](https://github.com/niho-life/niho-web/issues/40)（既存の複数サイト編集Epic #1の子）。
 
-- 共通基盤：[niho-web #41](https://github.com/niho-coliving/niho-web/issues/41)
+- 共通基盤：[niho-web #41](https://github.com/niho-life/niho-web/issues/41)
 - 翻訳ホスト：[niho-app #19244](https://github.com/niho-coliving/niho-app/issues/19244)
-- 編集画面：[niho-web #42](https://github.com/niho-coliving/niho-web/issues/42)
-- 公開契約：[niho-web #43](https://github.com/niho-coliving/niho-web/issues/43)
+- 編集画面：[niho-web #42](https://github.com/niho-life/niho-web/issues/42)
+- 公開契約：[niho-web #43](https://github.com/niho-life/niho-web/issues/43)
 - 鎌倉接続：[niho-app #19245](https://github.com/niho-coliving/niho-app/issues/19245)
 - Experience接続：[niho-experience #59](https://github.com/niho-coliving/niho-experience/issues/59)
 - Experienceの体験紹介・予約UI文言：[niho-app #19249](https://github.com/niho-coliving/niho-app/issues/19249)
-- 実サイト編集の補完（URL画像・原稿の読み取り専用表示）：[niho-web #50](https://github.com/niho-coliving/niho-web/issues/50)
+- 実サイト編集の補完（URL画像・原稿の読み取り専用表示）：[niho-web #50](https://github.com/niho-life/niho-web/issues/50)
 
 原文言語を設定しない状態を日本語として補完しない。Experienceのサイト原稿は英語→日本語とする。業務ブロック内の商品・体験等については、その実体の原稿言語と既存の翻訳を尊重し、サイト設定で元データの言語を変更しない。
 

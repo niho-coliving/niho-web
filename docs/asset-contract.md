@@ -176,4 +176,4 @@ CMS 画像は、ホストが認可した参照（`{ provider, id }`）だけを�
 - ストック素材を取得したとき、ライセンス付きでサイトの素材へ複製すること
 本番の永続化例ではありません。
 
-実サイトでの保存・配信・権限の受け入れは、Experience は niho-coliving/niho-experience#39、鎌倉は niho-coliving/kamakura-site#42 で行います。
+実サイトでの保存・配信・権限の受け入れは、Experience は niho-life/niho-experience#39、鎌倉は niho-coliving/kamakura-site#42 で行います。
