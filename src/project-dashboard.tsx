@@ -27,7 +27,7 @@ const numberLabel = (value: number | null) => value === null ? "未取得" : val
 function Overview({ overview }: { overview: ProjectOverview }) {
   return <><PublicationBadge status={overview.publicationStatus} />
     <p>{overview.publishedUrl ? <a className="pv-domain" href={overview.publishedUrl} target="_blank" rel="noopener noreferrer">{overview.publishedUrl}</a> : overview.publicationStatus === "unpublished" ? "サイトはまだ公開されていません。" : "公開URLは未取得です。"}</p>
-    <dl className="pv-stats"><div><dt>公開ページ数</dt><dd>{numberLabel(overview.publishedPageCount)}</dd></div><div><dt>素材使用量</dt><dd>{overview.assetBytes === null ? "未取得" : `${numberLabel(overview.assetBytes)} B`}</dd></div></dl>
+    <dl className="pv-stats"><div><dt>公開ページ数</dt><dd>{numberLabel(overview.publishedPageCount)}</dd></div><div><dt>アセット使用量</dt><dd>{overview.assetBytes === null ? "未取得" : `${numberLabel(overview.assetBytes)} B`}</dd></div></dl>
     <p className="pv-muted">最終公開 {overview.lastPublishedAt === null && overview.publicationStatus === "unpublished" ? "未公開" : <Timestamp value={overview.lastPublishedAt} />}</p>
     {overview.publishedUrl && <div className="pv-actions"><a className="pv-link" href={overview.publishedUrl} target="_blank" rel="noopener noreferrer">公開サイト確認 <span aria-label="新しいタブ">↗</span></a></div>}
   </>;

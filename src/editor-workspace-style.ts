@@ -67,6 +67,7 @@ export const workspaceCss = `
 .nw-editor.is-preview .e-body{grid-template-columns:minmax(0,1fr)}.nw-editor.is-preview .e-left,.nw-editor.is-preview .e-right{display:none}.nw-editor.is-preview .e-canvas-tools{display:flex}
 @media(max-width:1050px){.nw-editor .e-body{grid-template-columns:276px minmax(0,1fr) 292px}}
 @media(max-width:820px){
+  .nw-editor .e-part-banner{margin-left:44px}
   .nw-editor .e-body,.nw-editor .e-body.is-left-closed,.nw-editor .e-body.is-right-closed,.nw-editor .e-body.is-left-closed.is-right-closed{display:grid;grid-template-columns:minmax(0,1fr)}
   .nw-editor .e-left,.nw-editor .e-right{position:absolute;z-index:20;inset-block:0;width:min(296px,calc(100vw - 44px));box-shadow:6px 0 24px #0002}.nw-editor .e-left{left:0}.nw-editor .e-right{right:0;left:auto;box-shadow:-6px 0 24px #0002}
   .nw-editor .e-body.is-left-closed .e-left{width:44px;box-shadow:none}

@@ -72,7 +72,7 @@ const kindLabels: Record<AssetKind, string> = { image: "画像", video: "動画"
 const typeLabels: Readonly<Record<string, string>> = { "image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WebP", "image/avif": "AVIF", "image/gif": "GIF", "application/pdf": "PDF", "video/mp4": "MP4" };
 const typeLabel = (type: string) => Object.hasOwn(typeLabels, type) ? typeLabels[type]! : type;
 const notPlaceable = `この種類はページに配置できません。配置できるのは ${INSERTABLE_IMAGE_TYPES.map(typeLabel).join("・")} の画像です。`;
-const waitText = "この素材は確認中です。確認が終わると配置できます。";
+const waitText = "このアセットは確認中です。確認が終わると配置できます。";
 const conflictText = "他の人が先に更新しました。一覧を再読み込みして確認してください。";
 const control = /[\u0000-\u001f\u007f]/u;
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -82,7 +82,7 @@ function formatDate(value: string): string {
 }
 function uploadMessage(reason: AssetRejectReason | ReturnType<typeof assetErrorReason>, policy: AssetUploadPolicy): string {
   switch (reason) {
-    case "permission": return "素材を追加する権限がありません。";
+    case "permission": return "アセットを追加する権限がありません。";
     case "quota": return "容量の上限を超えるためアップロードできません。";
     case "size": return `ファイルが大きすぎます（上限 ${formatBytes(policy.maxBytes)}）。`;
     case "type": return `この形式はアップロードできません。アップロードできる形式: ${policy.accept.map(typeLabel).join("・")}`;
@@ -155,15 +155,15 @@ type UploadRow = { id: number; name: string; state: "sending" | "done" | "failed
 type Message = { text: string; error: boolean };
 /** null = 中断（アンマウント・送信中）。 */
 type ApplyResult = { error: string | undefined; acquired: boolean } | null;
-const unknownSource = "出所が確認できない素材は利用できません。";
+const unknownSource = "出所が確認できないアセットは利用できません。";
 const unavailableText = "この出所は現在利用できません。";
 const acquiredText = "ライセンス情報を記録して配置しました。";
-const acquireMessages = { permission: "この素材を使う権限がありません。", license: "ライセンスを確認できないため使えません。", unavailable: "現在この素材は利用できません。" } as const;
+const acquireMessages = { permission: "このアセットを使う権限がありません。", license: "ライセンスを確認できないため使えません。", unavailable: "現在このアセットは利用できません。" } as const;
 class SourceMismatch extends Error {}
 
 /** サイト別の素材ライブラリ。library は管理と配置、pick は画像の選択だけを行う。listProviders があれば出所ごとに分ける。 */
 export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
-  const { adapter, siteId, mode, pickTitle, providerKind, panelLabel = "素材", localUsage, actions, disabledReason, onClose, onReplaceUsages, epoch = 0 } = props;
+  const { adapter, siteId, mode, pickTitle, providerKind, panelLabel = "アセット", localUsage, actions, disabledReason, onClose, onReplaceUsages, epoch = 0 } = props;
   const sourceScopeKey = `${mode}:${providerKind ?? "all"}`;
   const [folderId, setFolderId] = useState<string | null>(null), [kind, setKind] = useState<AssetKind | "all">("all");
   const [searchInput, setSearchInput] = useState(""), [search, setSearch] = useState(""), [reload, setReload] = useState(0);
@@ -274,7 +274,7 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
     if (provider?.status === "unavailable") return { error: provider.unavailableReason ?? unavailableText, acquired: false };
     if (!isInsertableImage(asset)) return { error: asset.kind === "image" && asset.status === "processing" ? waitText : notPlaceable, acquired: false };
     if (!provider?.capabilities.acquire) return { error: latest.current.onApply(asset, action), acquired: false };
-    if (!adapter.acquireAsset) return { error: "この出所の素材は利用の準備ができません。", acquired: false };
+    if (!adapter.acquireAsset) return { error: "この出所のアセットは利用の準備ができません。", acquired: false };
     if (busy.current) return null;
     const controller = work.start(); busy.current = true; setAcquiring(true);
     let ready: LibraryAsset;
@@ -353,30 +353,30 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
   const quota = visibleList.quota, showDetail = !!activeDetail, all = !!providers && source === null;
   const chips = mode === "library" ? <div className="e-asset-chips" role="group" aria-label="種類">{(["all", "image", "video", "pdf"] as const).map((value) => <button key={value} type="button" aria-pressed={kind === value} onClick={() => setKind(value)}>{value === "all" ? "全種類" : kindLabels[value]}</button>)}</div> : null;
   const description = providerKind === "stock" ? "利用条件を確認してからページに配置"
-    : providerKind === "cms" ? "接続済みCMSの素材を参照・配置"
-      : providerKind === "upload" ? "サイトへアップロードした素材を管理・配置" : "素材をページに配置";
-  return <section className="e-asset" aria-label="素材ライブラリ" onKeyDown={(event) => { if (mode === "pick" && event.key === "Escape") { event.preventDefault(); onClose(); } }}>
+    : providerKind === "cms" ? "接続済みCMSのアセットを参照・配置"
+      : providerKind === "upload" ? "サイトへアップロードしたアセットを管理・配置" : "アセットをページに配置";
+  return <section className="e-asset" aria-label="アセットライブラリ" onKeyDown={(event) => { if (mode === "pick" && event.key === "Escape") { event.preventDefault(); onClose(); } }}>
     {mode === "pick" ? <div className="e-asset-head"><h2 ref={heading} tabIndex={-1}>{pickTitle ?? "画像を選ぶ"}</h2><button type="button" className="e-small" aria-label="画像の選択を閉じる" onClick={onClose}>閉じる</button></div> : <div className="e-panel-head"><h2>{panelLabel}</h2><p>{description}</p></div>}
     {!legacy && !providers ? sources.status === "error"
-      ? <div role="alert"><p className="e-help e-problem">素材の出所を読み込めませんでした。</p><button type="button" onClick={() => setSourceReload((value) => value + 1)}>再読み込み</button></div>
+      ? <div role="alert"><p className="e-help e-problem">アセットの出所を読み込めませんでした。</p><button type="button" onClick={() => setSourceReload((value) => value + 1)}>再読み込み</button></div>
       : <p className="e-help" role="status">読み込み中…</p> : <>
     {!showDetail && <>
-    {providers && (scopedProviders?.length ?? 0) > 0 && <div className="e-asset-sources" role="group" aria-label="素材の出所">{!providerKind && <button type="button" aria-pressed={source === null} onClick={() => selectSource(null)}>すべて</button>}
+    {providers && (scopedProviders?.length ?? 0) > 0 && <div className="e-asset-sources" role="group" aria-label="アセットの出所">{!providerKind && <button type="button" aria-pressed={source === null} onClick={() => selectSource(null)}>すべて</button>}
       {scopedProviders?.map((item) => <button key={item.id} type="button" aria-pressed={source === item.id} aria-label={item.status === "unavailable" ? `${item.label}（未接続）` : undefined} onClick={() => selectSource(item.id)}>
         {item.label}{item.status === "unavailable" && <span className="e-asset-offline">未接続</span>}</button>)}</div>}
-    {providerKind && providers && scopedProviders?.length === 0 && <p className="e-help" role="status">{providerKind === "stock" ? "ストック素材はまだ接続されていません。" : providerKind === "cms" ? "接続済みのCMS素材はありません。" : "アップロード先が利用できません。"}</p>}
+    {providerKind && providers && scopedProviders?.length === 0 && <p className="e-help" role="status">{providerKind === "stock" ? "ストックアセットはまだ接続されていません。" : providerKind === "cms" ? "接続済みのCMSアセットはありません。" : "アップロード先が利用できません。"}</p>}
     {current && !offline && <small className="e-help e-asset-origin">{current.origin}</small>}
     {(showFolders || !!uploadTarget) && <div className="e-asset-tools">
       {showFolders && <select aria-label="フォルダ" value={folderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}><option value="">すべて</option>{visibleList.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select>}
       {visibleList.upload && (legacy || uploadTarget) && <><button type="button" className="e-primary" title={all && uploadTarget ? `${uploadTarget.label}へ追加` : undefined} onClick={() => fileInput.current?.click()}>アップロード</button>
         <input ref={fileInput} className="e-asset-file" type="file" multiple hidden accept={visibleList.upload.accept.join(",")} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void uploadFiles(files); }} /></>}
     </div>}
-    {visibleList.status === "ready" && !visibleList.upload && (legacy || !!uploadTarget) && <small className="e-help">このサイトに素材を追加する権限がありません。</small>}
+    {visibleList.status === "ready" && !visibleList.upload && (legacy || !!uploadTarget) && <small className="e-help">このサイトにアセットを追加する権限がありません。</small>}
     {adapter.createFolder && showFolders && (folderDraft === null ? <button type="button" className="e-small" onClick={() => setFolderDraft("")}>フォルダを追加</button>
       : <div className="e-asset-folder"><input aria-label="新しいフォルダの名前" maxLength={ASSET_LIMITS.folderNameLength} value={folderDraft} autoFocus onChange={(event) => { setFolderDraft(event.target.value); setFolderError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void createFolder(); } }} />
         <button type="button" className="e-small" onClick={() => void createFolder()}>作成</button><button type="button" className="e-small" onClick={() => { setFolderDraft(null); setFolderError(""); }}>キャンセル</button></div>)}
     {folderError && <small className="e-help e-problem" role="alert">{folderError}</small>}
-    <input type="search" aria-label="素材を検索" placeholder="名前で検索" maxLength={200} value={searchInput} onChange={(event) => setSearchInput(event.target.value)} className="e-asset-search" />
+    <input type="search" aria-label="アセットを検索" placeholder="名前で検索" maxLength={200} value={searchInput} onChange={(event) => setSearchInput(event.target.value)} className="e-asset-search" />
     {providers ? <div className="e-asset-filters">{chips}<button type="button" className="e-asset-recent" aria-pressed={recent} onClick={() => setRecent((value) => !value)}>最近使った</button></div> : chips}
     </>}
     {uploads.length > 0 && <ul className="e-asset-uploads">{uploads.map((row) => <li key={row.id} role="status" className={row.state === "failed" ? "e-problem" : undefined}><span>{row.name}: {row.message}</span>
@@ -390,8 +390,8 @@ export function AssetLibraryPanel(props: AssetLibraryPanelProps) {
       : offline && current ? <div className="e-asset-empty"><p>{current.unavailableReason ?? unavailableText}</p><p>{current.origin}</p></div>
       : <>
         {visibleList.status === "loading" && <p className="e-help" role="status">読み込み中…</p>}
-        {visibleList.status === "error" && <div role="alert"><p className="e-help e-problem">素材を読み込めませんでした。</p>{visibleList.problem && <p className="e-help e-problem">{visibleList.problem}</p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></div>}
-        {visibleList.status === "ready" && !visibleList.assets.length && <p className="e-asset-empty">{filtered ? "条件に合う素材はありません。" : "まだ素材がありません。画像をアップロードすると、ここからページに配置できます。"}</p>}
+        {visibleList.status === "error" && <div role="alert"><p className="e-help e-problem">アセットを読み込めませんでした。</p>{visibleList.problem && <p className="e-help e-problem">{visibleList.problem}</p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></div>}
+        {visibleList.status === "ready" && !visibleList.assets.length && <p className="e-asset-empty">{filtered ? "条件に合うアセットはありません。" : "まだアセットがありません。画像をアップロードすると、ここからページに配置できます。"}</p>}
         {visibleList.assets.length > 0 && <ul className="e-asset-grid">{visibleList.assets.map((asset) => {
           const key = assetKey(asset), inUse = (localUsage.get(key) ?? 0) > 0 || (asset.usageCount ?? 0) > 0, processing = asset.status === "processing", licensed = !!asset.license, origin = all ? providerOf(asset) : undefined;
           const label = `${asset.name}（${kindLabels[asset.kind]}${asset.width && asset.height ? `・${asset.width}×${asset.height}` : ""}・${formatBytes(asset.bytes)}${processing ? "・処理中" : ""}${inUse ? "・使用中" : ""}${licensed ? "・ライセンスあり" : ""}${origin ? `・出所: ${origin.label}` : ""}）`;
@@ -451,11 +451,11 @@ function AssetDetail({ adapter, siteId, asset, provider, managed, focus, notice,
       if (result.status === "saved") {
         if (assetKey(result.asset) !== assetKey(asset)) throw new Error("asset mismatch");
         onSaved(result.asset); setName(result.asset.name); setAlt(result.asset.alt); setFolder(result.asset.folderId ?? ""); setSaveMessage({ text: "保存しました。", error: false });
-      } else setSaveMessage({ text: result.status === "conflict" ? conflictText : result.reason === "permission" ? "素材を変更する権限がありません。" : "内容を保存できませんでした。名前と代替テキストを確認してください。", error: true });
+      } else setSaveMessage({ text: result.status === "conflict" ? conflictText : result.reason === "permission" ? "アセットを変更する権限がありません。" : "内容を保存できませんでした。名前と代替テキストを確認してください。", error: true });
     } catch (error) {
       if (controller.signal.aborted) return;
       const reason = assetErrorReason(error);
-      setSaveMessage({ text: reason === "conflict" ? conflictText : reason === "permission" ? "素材を変更する権限がありません。" : "変更を保存できませんでした。時間をおいて再試行してください。", error: true });
+      setSaveMessage({ text: reason === "conflict" ? conflictText : reason === "permission" ? "アセットを変更する権限がありません。" : "変更を保存できませんでした。時間をおいて再試行してください。", error: true });
     } finally { work.finish(controller); if (!controller.signal.aborted) setSaving(false); }
   }
   async function remove() {
@@ -497,7 +497,7 @@ function AssetDetail({ adapter, siteId, asset, provider, managed, focus, notice,
     <dl><dt>種類</dt><dd>{kindLabels[asset.kind]}・{asset.mimeType}</dd><dt>寸法</dt><dd>{asset.width && asset.height ? `${asset.width} × ${asset.height} px` : "—"}</dd><dt>容量</dt><dd>{formatBytes(asset.bytes)}</dd><dt>更新日</dt><dd>{formatDate(asset.updatedAt)}</dd></dl>
     {editable ? <><button type="button" className="e-primary" disabled={!changed || saving} onClick={() => void save()}>変更を保存</button>
       {saveMessage && <small className={`e-help${saveMessage.error ? " e-problem" : ""}`} role={saveMessage.error ? "alert" : "status"}>{saveMessage.text}</small>}</>
-      : <small className="e-help">この素材は「{provider?.label}」で管理しています。名前・説明・写真の差し替えは出所で行ってください。</small>}
+      : <small className="e-help">このアセットは「{provider?.label}」で管理しています。名前・説明・写真の差し替えは出所で行ってください。</small>}
     <h3>配置</h3>
     {isInsertableImage(asset) ? <>
       <div ref={placeActions} className="e-actions">{actions.replace && <button type="button" className="e-primary" disabled={placeBlocked} onClick={() => void place("replace")}>選択中の画像を置き換え</button>}
@@ -524,7 +524,7 @@ function AssetDetail({ adapter, siteId, asset, provider, managed, focus, notice,
         <div className="e-actions"><button type="button" disabled={deleting} onClick={() => setConfirming(false)}>キャンセル</button><button type="button" className="e-danger" disabled={deleting} onClick={() => void remove()}>削除する</button></div></div>}
       {deleteMessage && <small className="e-help e-problem" role="alert">{deleteMessage}</small>}</>
       : <>{localCount > 0 && <div className="e-actions"><button type="button" onClick={() => onReplaceUsages(asset)}>このページの使用箇所を置き換え</button></div>}
-        <small className="e-help">「{provider?.label}」の素材はここでは削除できません。</small></>}
+        <small className="e-help">「{provider?.label}」のアセットはここでは削除できません。</small></>}
   </div>;
 }
 
@@ -535,8 +535,8 @@ export function ImageSourceField({ node, assets, failed, lock, disabled, onPick,
   const src = node.asset ? resolvedAsset(assets, node.asset)?.src : typeof node.attrs?.src === "string" ? node.attrs.src : undefined;
   return <div className="e-asset-source">
     <div className="e-asset-preview">{src ? <img src={src} alt="" /> : <span className="e-asset-missing">画像を表示できません</span>}</div>
-    <small className="e-help">{node.asset ? "素材ライブラリの画像" : "URL で指定した画像"}</small>
-    {node.asset && !src && failed && <small className="e-help e-problem">素材の情報を取得できませんでした。</small>}
+    <small className="e-help">{node.asset ? "アセットの画像" : "URL で指定した画像"}</small>
+    {node.asset && !src && failed && <small className="e-help e-problem">アセットの情報を取得できませんでした。</small>}
     <div className="e-actions"><button type="button" disabled={disabled || !!lock} onClick={onPick}>{src ? "画像を置き換え" : "画像を選ぶ"}</button></div>
     {lock && <small className="e-help">ロック: {lock}</small>}
     <details><summary>URL で指定</summary>{children}</details>

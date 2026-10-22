@@ -343,7 +343,7 @@ test("source component editing saves through the canonical library session and t
   const app = await setupSharedComponents();
   try {
     const initialSiteReads = app.siteReads;
-    await clickTool("部品"); await click("編集"); await click("p · sharedText");
+    await clickTool("コンポーネント"); await click("コンポーネントを編集"); await click("p · sharedText");
     await change(input("テキスト"), "共有原文を更新"); await click("下書き保存");
     assert.equal(app.librarySaves.length, 1);
     assert.equal(app.siteReads, initialSiteReads + 1, "shared source saves refresh site localization once");
@@ -370,7 +370,7 @@ test("shared component units are shown once, manually edited, adopted, reviewed 
     await act(async () => expanded.click()); await flush();
     assert.equal(document.querySelectorAll('[data-unit-id="component.header.node.sharedText.text"]').length, 1);
     assert.ok(section().classList.contains("is-selected"));
-    assert.match(section().textContent, /共通部品「共通ヘッダー」/);
+    assert.match(section().textContent, /コンポーネント「共通ヘッダー」/);
     assert.match(section().querySelector("h3").textContent, /共有原文/);
     assert.doesNotMatch(section().querySelector("h3").textContent, /sharedText/);
     assert.ok(scrolled.length > 0);
@@ -401,14 +401,14 @@ test("shared component units are shown once, manually edited, adopted, reviewed 
 
     await showLocalization();
     const assetUnit = document.querySelector('[data-unit-id="component.header.node.sharedImage.asset"]'); assert.ok(assetUnit);
-    await act(async () => [...assetUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
+    await act(async () => [...assetUnit.querySelectorAll("button")].find((item) => item.textContent === "アセットを選ぶ").click()); await flush(5);
     const assetCard = document.querySelector(".e-asset-card"); assert.ok(assetCard); await act(async () => assetCard.click()); await flush(8);
     assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });
 
-    // 訳文のソーシャルカバーも素材から選べる。
+    // 訳文のソーシャルカバーもアセットから選べる。
     await showLocalization();
     const ogUnit = document.querySelector('[data-unit-id="page.meta.ogImage.src"]'); assert.ok(ogUnit);
-    await act(async () => [...ogUnit.querySelectorAll("button")].find((item) => item.textContent === "素材を選ぶ").click()); await flush(5);
+    await act(async () => [...ogUnit.querySelectorAll("button")].find((item) => item.textContent === "アセットを選ぶ").click()); await flush(5);
     const ogCard = document.querySelector(".e-asset-card"); assert.ok(ogCard); await act(async () => ogCard.click()); await flush(8);
     assert.equal(app.calls.at(-1).unitId, "page.meta.ogImage.src");
     assert.deepEqual(app.calls.at(-1).value, { kind: "asset", asset: { provider: "uploads", id: "shared-target" } });

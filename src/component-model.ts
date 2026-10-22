@@ -15,7 +15,7 @@ const nodeDeclarations = (node: Exclude<PageNode, { type: "text" }>): StyleDecla
   [...declarationSets(node.style), ...(node.type === "component" ? Object.values(node.slots ?? {}).flatMap(declarationSets) : [])];
 function componentIndex(library: ComponentLibrary, componentId: string): number {
   const index = library.components.findIndex((component) => component.id === componentId);
-  if (index < 0) throw new Error("部品が見つかりません。");
+  if (index < 0) throw new Error("コンポーネントが見つかりません。");
   return index;
 }
 function replaced(library: ComponentLibrary, index: number, definition: ComponentDefinition): ComponentLibrary {
@@ -23,8 +23,8 @@ function replaced(library: ComponentLibrary, index: number, definition: Componen
 }
 function checkedName(library: ComponentLibrary, name: string, except?: string): string {
   const trimmed = name.trim();
-  if (!trimmed) throw new Error("部品の名前を入力してください。");
-  if (library.components.some((component) => component.id !== except && component.name.trim() === trimmed)) throw new Error("同じ名前の部品があります。");
+  if (!trimmed) throw new Error("コンポーネント名を入力してください。");
+  if (library.components.some((component) => component.id !== except && component.name.trim() === trimmed)) throw new Error("同じ名前のコンポーネントがあります。");
   return trimmed;
 }
 // 新しい部品の ID は乱数で作る。連番だと、2人が同じライブラリから同時に部品を追加したときに同じ ID になる。
@@ -55,7 +55,7 @@ export function createComponentFromNode(document: PageDocument, path: NodePath, 
   if (node.type !== "element") throw new Error("要素を選択してください。");
   const subtree = walkNodes({ ...draft, body: [node] });
   // ページ固有のロックはページのノード ID に結び付くため、部品の中へ持ち込まない。
-  if (componentCreationLock(draft, path, locks)) throw new Error("データ連動値を含む要素は部品にできません。");
+  if (componentCreationLock(draft, path, locks)) throw new Error("データ連動値を含む要素はコンポーネントにできません。");
   const name = checkedName(library, input.name), componentId = nextComponentId(library), tokens = structuredClone(library.tokens);
   // ライブラリはサイト共通スタイルを持たないため、サイトの定義も実効値（同名はページが優先）で写す。ページで描画するときはページ・サイトの定義が写しより優先される。
   const available = resolvePageStyles(draft, siteStyles).tokens;
@@ -98,7 +98,7 @@ export function duplicateComponent(library: ComponentLibrary, componentId: strin
 export function removeComponent(library: ComponentLibrary, componentId: string, blocks: BlockContracts = {}): ComponentLibrary {
   const index = componentIndex(library, componentId);
   if (library.components.some((component) => component.id !== componentId && instancesOf([component.root]).some((instance) => instance.component === componentId))) {
-    throw new Error("他の部品から使われているため削除できません。");
+    throw new Error("他のコンポーネントから使われているため削除できません。");
   }
   return parseComponentLibrary({ ...library, components: library.components.filter((_, current) => current !== index) }, blocks);
 }
@@ -120,7 +120,7 @@ export function componentDocument(library: ComponentLibrary, componentId: string
 /** componentDocument で編集した文書を部品へ書き戻す。公開 props の対象は先に公開をやめないと削除・変更できない。 */
 export function withComponentDocument(library: ComponentLibrary, componentId: string, document: PageDocument, blocks: BlockContracts = {}): ComponentLibrary {
   const index = componentIndex(library, componentId), current = library.components[index]!, root = document.body[0];
-  if (document.body.length !== 1 || root?.type !== "element") throw new Error("部品には外枠の要素が1つだけ必要です。");
+  if (document.body.length !== 1 || root?.type !== "element") throw new Error("コンポーネントには外枠の要素が1つだけ必要です。");
   const elements = ownElements(root);
   if (Object.values(current.props ?? {}).some((prop) => { const target = elements.get(prop.node); return !target || !fitsPropField(target, prop.field); })) {
     throw new Error("ページごとの値に使っている要素は削除・変更できません。先にページごとの値を解除してください。");
@@ -146,9 +146,9 @@ export function bumpChangedComponentVersions(library: ComponentLibrary, saved: C
  */
 export function detachInstance(document: PageDocument, path: NodePath, library: ComponentLibrary, blocks: BlockContracts = {}): PageDocument {
   const draft = structuredClone(document), node = nodeAt(draft, path);
-  if (node.type !== "instance") throw new Error("部品のインスタンスを選択してください。");
+  if (node.type !== "instance") throw new Error("配置したコンポーネントを選択してください。");
   const definition = library.components.find((component) => component.id === node.component);
-  if (!definition) throw new Error("部品が見つかりません。");
+  if (!definition) throw new Error("コンポーネントが見つかりません。");
   const root = instantiate(node, definition), used = new Set(walkNodes(draft).flatMap(({ node }) => node.type === "text" ? [] : [node.id]));
   const inline = (current: ElementNode | ComponentNode): void => {
     for (const declarations of nodeDeclarations(current)) for (const [property, value] of Object.entries(declarations)) {

@@ -23,7 +23,7 @@ const excerpt = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 32
 /** レイヤー名は文書へ複製せず、現在のノードから人向けに投影する。raw text は親要素の内容なので行を作らない。 */
 export function layerLabel(node: Exclude<PageNode, { type: "text" }>, labels: LayerLabels = {}): string {
   if (node.type === "component") return labels.blocks?.[node.block] ?? "コンポーネント";
-  if (node.type === "instance") return labels.components?.get(node.component) ?? "共通部品";
+  if (node.type === "instance") return labels.components?.get(node.component) ?? "コンポーネント";
   if (node.tag === "img" || node.tag === "picture") return "画像";
   if (textTags.has(node.tag)) {
     const value = excerpt(plain(node));

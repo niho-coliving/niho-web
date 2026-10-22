@@ -18,7 +18,6 @@ const iconPaths = {
   home: "M2.5 7.4 8 2.8l5.5 4.6 M4 6.3v7.2h8V6.3 M6.6 13.5V10h2.8v3.5",
   folder: "M2.2 4.2h3.9l1.4 1.5h6.3v7.1H2.2z",
   template: "M2.5 2.5h11v11h-11z M2.5 6h11 M6.2 6v7.5",
-  shared: "M8 2.2 13.3 5v6L8 13.8 2.7 11V5z M2.7 5 8 7.8 13.3 5 M8 7.8v6",
   search: "M7.2 11.8a4.6 4.6 0 1 0 0-9.2 4.6 4.6 0 0 0 0 9.2z M10.6 10.6l3 3",
   plus: "M8 3.2v9.6 M3.2 8h9.6",
   more: "M3.6 8h.01 M8 8h.01 M12.4 8h.01",
@@ -37,7 +36,7 @@ export type FieldRenderer = (name: string, value: string, operation: (value: str
 const isConflict = (error: unknown) => !!error && typeof error === "object" && "status" in error && error.status === 409;
 const targetOf = (page: EditorTarget): EditorTarget => ({ siteId: page.siteId, pageId: page.pageId, locale: page.locale });
 const pageKey = (page: EditorTarget) => `${page.pageId}/${page.locale}`;
-const kindLabels: Record<string, string> = { page: "ページ", template: "テンプレート", shared: "共通枠" };
+const kindLabels: Record<string, string> = { page: "ページ", template: "テンプレート", shared: "コンポーネント" };
 const publicPath = (page: EditorPage | undefined) => page?.path !== undefined && validatePagePath(page.path) === null ? page.path : undefined;
 function metadataFor(document: PageDocument, page: EditorPage | undefined, domain: string | undefined, settings: SiteSettings | undefined, assets?: ResolvedAssetMap): PageMetadata | undefined {
   try { return resolvePageMetadata({ document, site: settings, domain, path: publicPath(page), visibility: page?.visibility, assets }); } catch { return undefined; }
@@ -100,8 +99,10 @@ export function PagePanel({ pages, localizedPages, current, disabled, operations
 }) {
   const [searching, setSearching] = useState(false), [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<readonly string[]>([]), [menu, setMenu] = useState("");
-  const tree = buildPageTree(pages, searching ? query : undefined), multiLocale = new Set(pages.map((page) => page.locale)).size > 1;
-  const normal = pages.filter((page) => (page.kind ?? "page") === "page");
+  // shared は互換 adapter 上のサイト全体コンポーネント。URL を持つページの検索・フォルダ・件数には混ぜない。
+  const visiblePages = pages.filter((page) => page.kind !== "shared");
+  const tree = buildPageTree(visiblePages, searching ? query : undefined), multiLocale = new Set(visiblePages.map((page) => page.locale)).size > 1;
+  const normal = visiblePages.filter((page) => (page.kind ?? "page") === "page");
   const published = normal.filter((page) => page.visibility !== "private" && page.published !== false).length;
   const closeSearch = () => { setSearching(false); setQuery(""); };
   function row(node: PageTreeNode): ReactNode {
@@ -121,7 +122,7 @@ export function PagePanel({ pages, localizedPages, current, disabled, operations
     return <li key={key}><div className="e-page-row">
       <button type="button" className="e-page" aria-current={current && sameTarget(page, current) ? "page" : undefined} style={{ paddingLeft: 8 + node.depth * 14 }}
         disabled={disabled} title={[page.title, secondary].filter(Boolean).join(" · ")} onClick={() => select(page)}>
-        <Icon name={kind === "template" ? "template" : kind === "shared" ? "shared" : page.path === "/" ? "home" : "page"} />
+        <Icon name={kind === "template" ? "template" : page.path === "/" ? "home" : "page"} />
         <span className="e-page-name">{page.title}</span>{secondary && <span className="e-page-path">{secondary}</span>}
         {kind !== "page" && kindLabels[kind] && <span className="e-badge">{kindLabels[kind]}</span>}
         {page.visibility === "private" && <span className="e-badge e-badge-private">非公開</span>}
@@ -392,8 +393,8 @@ function SocialCoverField({ image, src, cover, disabled, locked, empty, clear, u
   const asset = !!image && "asset" in image;
   return <div className="e-cover-field">
     <div className="e-cover e-cover-frame">{src ? <img src={src} alt="" /> : <span>{image ? "画像を表示できません" : empty}</span>}</div>
-    {image && <small className="e-help">{asset ? "素材ライブラリの画像" : "URL で指定した画像"}</small>}
-    {asset && !src && cover.failed && <small className="e-help e-problem">素材の情報を取得できませんでした。</small>}
+    {image && <small className="e-help">{asset ? "アセットの画像" : "URL で指定した画像"}</small>}
+    {asset && !src && cover.failed && <small className="e-help e-problem">アセットの情報を取得できませんでした。</small>}
     <div className="e-actions"><button type="button" disabled={disabled || !!locked} onClick={cover.pick}>{image ? "画像を置き換え" : "画像を選ぶ"}</button>
       {image && clear && <button type="button" disabled={disabled || !!locked} onClick={clear}>画像を外す</button>}</div>
     {locked && <small className="e-help">{locked}</small>}
@@ -481,7 +482,7 @@ export function PageSettings({ document, page, site, settings, field, apply, rep
         {canChange && <button type="button" role="switch" className="e-switch" aria-checked={page.visibility === "private"} disabled={changeDisabled}
           onClick={() => start({ action: "visibility", page, visibility: page.visibility === "private" ? "public" : "private" })}>
           <span className="e-switch-track" aria-hidden="true"><span className="e-switch-thumb" /></span>ページを非公開にする</button>}
-        {operations && page && kind !== "page" && <small className="e-help">テンプレートと共通枠はホストが管理します。</small>}
+        {operations && page && kind !== "page" && <small className="e-help">このテンプレートの名前とURLは変更できません。</small>}
         {canChange && unsaved && <small className="e-help">未保存の変更を保存してから操作できます。</small>}
       </section>
       <section className="e-section"><h3>公開情報</h3>

@@ -203,7 +203,7 @@ function parseLicense(input: unknown, path: string): AssetLicense {
 export function parseLibraryAsset(input: unknown, siteId: string, path = "asset"): LibraryAsset {
   const value = record(input, path);
   keys(value, assetFields, path);
-  if (value.siteId !== siteId) throw new DocumentValidationError(`${path}.siteId`, "別サイトの素材は利用できません。");
+  if (value.siteId !== siteId) throw new DocumentValidationError(`${path}.siteId`, "別サイトのアセットは利用できません。");
   const updatedAt = string(value.updatedAt, `${path}.updatedAt`, ASSET_LIMITS.updatedAtLength);
   if (Number.isNaN(Date.parse(updatedAt))) fail(`${path}.updatedAt`, "invalid date");
   return {

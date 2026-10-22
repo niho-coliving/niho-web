@@ -29,7 +29,7 @@ import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { presentationAssetDocument } from "./presentation.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
 import { bumpChangedComponentVersions, componentCreationLock, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
-import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
+import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, SiteComponentBanner, SiteComponentSettings, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
 import { BlockSlotInspector, BlockSlotList, applyToSlot, declaredSlot, previewRegistry, slotFromTarget } from "./block-slot-panel.js";
 import {
   acceptSavedLibrary, commitLibrary, componentProblem, exposeComponentProp, fitsLibrary, libraryFingerprint, librarySessionFrom, mergeRecoveredLibrary, parseUsage, placementProblem, planLibraryReload,
@@ -96,7 +96,7 @@ const elementTypeLabel: Record<ElementTag, string> = {
   blockquote: "引用", figure: "図版", figcaption: "図版説明", br: "改行", hr: "区切り", time: "日時", details: "開閉領域", summary: "開閉見出し"
 };
 const destinationLabel = (node: Exclude<PageNode, { type: "text" }>, path: readonly number[], blocks: EditorBlockRegistry, names?: ReadonlyMap<string, string>) => {
-  const depth = Math.max(0, path.length - 1), type = node.type === "element" ? elementTypeLabel[node.tag] : node.type === "component" ? "業務ブロック" : "共通部品";
+  const depth = Math.max(0, path.length - 1), type = node.type === "element" ? elementTypeLabel[node.tag] : node.type === "component" ? "業務ブロック" : "コンポーネント";
   return `${"　".repeat(depth)}${depth ? "└ " : ""}${label(node, blocks, names)}（${type}）`;
 };
 type ToolName = "add" | "pages" | "layers" | "styles" | "assets" | "upload" | "stock" | "connect" | "components";
@@ -358,16 +358,17 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   const [inspector, setInspector] = useState<Inspector>("page"), [elementTab, setElementTab] = useState<InspectorTab>("text"), [preview, setPreview] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true), [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [localizationManual, setLocalizationManual] = useState<EditorLocalizationManualBuffer | null>(null);
+  const [siteComponentReturn, setSiteComponentReturn] = useState<EditorTarget | null>(null);
   const [layerDrop, setLayerDrop] = useState<{ id: string; position: "before" | "inside" | "after" } | null>(null);
   const dragItem = useRef<DragItem | null>(null);
   const [picker, setPicker] = useState<AssetPicker | null>(null), [localizationAssetUnit, setLocalizationAssetUnit] = useState<string | null>(null), visiblePanel = picker || localizationAssetUnit ? "assets" : panel;
   const assetPanelKind = visiblePanel === "upload" ? "upload" : visiblePanel === "stock" ? "stock" : visiblePanel === "connect" ? "cms" : undefined;
-  const assetPanelLabel = visiblePanel === "upload" ? "アップロード" : visiblePanel === "stock" ? "ストック" : visiblePanel === "connect" ? "接続" : "素材";
+  const assetPanelLabel = visiblePanel === "upload" ? "アップロード" : visiblePanel === "stock" ? "ストック" : visiblePanel === "connect" ? "接続" : "アセット";
   const assetPanelVisible = visiblePanel === "assets" || visiblePanel === "upload" || visiblePanel === "stock" || visiblePanel === "connect";
   const tools: readonly (readonly [ToolName, string])[] = [
     ["add", "追加"], ["pages", "ページ"], ["layers", "レイヤー"], ["styles", "スタイル"],
-    ...(assets ? assets.listProviders ? [["upload", "アップロード"], ["stock", "ストック"], ["connect", "接続"]] as const : [["assets", "素材"]] as const : []),
-    ["components", "部品"]
+    ...(assets ? assets.listProviders ? [["upload", "アップロード"], ["stock", "ストック"], ["connect", "接続"]] as const : [["assets", "アセット"]] as const : []),
+    ["components", "コンポーネント"]
   ];
   useEffect(() => { setPicker(null); }, [selectedId]);
   // 共通部品は adapter.components があるホストだけ。usage は undefined が取得中、null が取得失敗。editing は編集中の部品。
@@ -412,7 +413,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   // 部品の保存中はライブラリの編集だけを止め、ページは保存中と同じく編集を続けられる。版の表示中はどちらも止める。
   const documentReadOnly = !masterId ? session?.readOnly : undefined;
   const historyMode = !!versions.viewing, libraryBlocked = (blocked && busy !== "保存中") || historyMode || targetMode || siteSettings.stylesDirty || siteSettings.busy || !localizationReady,
-    pageOperationalBlocked = (blocked && busy !== "保存中" && busy !== "部品を保存中") || historyMode || !localizationReady,
+    pageOperationalBlocked = (blocked && busy !== "保存中" && busy !== "コンポーネントを保存中") || historyMode || !localizationReady,
     pageBlocked = pageOperationalBlocked || !!documentReadOnly;
   const editBlocked = masterId ? libraryBlocked : pageBlocked || siteSettings.stylesDirty || siteSettings.busy;
   // ページの作業コピーは文書ごとに退避する。ページ読込時のサイトスタイルと共通部品で検証する。
@@ -503,7 +504,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     listed.then((result) => {
       if (controller.signal.aborted) return;
       if (result.some((page) => page.siteId !== siteId)) throw new Error("site mismatch");
-      setPages(result); if (result[0]) void load(result[0]); else { replace(null); setBusy(""); }
+      setPages(result); const first = result.find((page) => page.kind !== "shared") ?? result[0]; if (first) void load(first); else { replace(null); setBusy(""); }
     }).catch(() => { if (!controller.signal.aborted) { setNotice("ページ一覧を読み込めませんでした。"); setBusy(""); } });
     return () => { controller.abort(); request.current?.abort(); pageList.current?.abort(); };
   }, [adapter, siteId, load, replace, components, openLibrary, replaceLibrary]);
@@ -592,7 +593,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     if (masterId) {
       setDraft(null);
       // 部品はページのタイトル・公開情報・文字スタイルを持たない。
-      if (operations.some((next) => next.type === "title" || next.type === "meta" || next.type === "textStyle" || next.type === "restore" || next.type === "nodeTextStyle" && next.name !== undefined)) return "部品の編集中は、文字スタイルとページの設定を変更できません。ページに戻ってから操作してください。";
+      if (operations.some((next) => next.type === "title" || next.type === "meta" || next.type === "textStyle" || next.type === "restore" || next.type === "nodeTextStyle" && next.name !== undefined)) return "コンポーネント本体の編集中は、テキストスタイルとページ設定を変更できません。ページに戻ってから操作してください。";
       return updateLibrary((library) => withComponentDocument(library, masterId, editMaster(componentDocument(library, masterId, locale), operations, library), blocks));
     }
     const current = sessionRef.current; if (!current || editBlocked) return current?.readOnly?.reason ?? "処理が完了してから編集してください。";
@@ -625,7 +626,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     if (!current || libraryBlocked) return "処理が完了してから編集してください。";
     try {
       const next = change(current.history.present);
-      if (page && !fitsLibrary(page, next, blocks, activeSiteStyles)) return "編集中のページで部品を展開できなくなるため、この変更はできません。";
+      if (page && !fitsLibrary(page, next, blocks, activeSiteStyles)) return "編集中のページでコンポーネントを表示できなくなるため、この変更はできません。";
       replaceLibrary({ ...current, history: commitLibrary(current.history, next) }); setNotice(""); return undefined;
     } catch (error) { return componentProblem(error) ?? message(error); }
   }
@@ -633,7 +634,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   function travel(direction: "undo" | "redo") {
     if (blocked || siteSettings.stylesDirty || siteSettings.busy || hasInput || historyMode || !masterId && session?.readOnly) return;
     // 部品とページの履歴は別に持つため、もう一方と合わなくなる移動は止める。
-    const mismatch = "共通部品とページの内容が合わなくなるため、この操作はできません。";
+    const mismatch = "コンポーネントとページの内容が合わなくなるため、この操作はできません。";
     if (masterId) {
       const current = libraryRef.current; if (!current) return;
       const history = travelLibrary(current.history, direction), page = sessionRef.current?.history.present;
@@ -656,10 +657,10 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
    */
   async function saveComponents(current: LibrarySession, signal: AbortSignal, auto: boolean): Promise<boolean> {
     if (!components) return true;
-    const conflicted = "共通部品の保存が競合しました（409）。ほかの保存で部品が更新されています。部品とページの変更は保持しています。「部品を読み直す」で最新の部品を読み込んでください。";
-    const failure = auto ? "共通部品を自動保存できませんでした。部品とページの変更を保持しています。「再試行」で保存できます。" : "共通部品を保存できませんでした。部品とページの変更を保持しています。時間をおいて再試行してください。";
+    const conflicted = "コンポーネントの保存が競合しました（409）。ほかの保存でコンポーネントが更新されています。コンポーネントとページの変更は保持しています。「コンポーネントを読み直す」で最新の内容を読み込んでください。";
+    const failure = auto ? "コンポーネントを自動保存できませんでした。コンポーネントとページの変更を保持しています。「再試行」で保存できます。" : "コンポーネントを保存できませんでした。コンポーネントとページの変更を保持しています。時間をおいて再試行してください。";
     const failed = (next: SaveProblem, text: string) => { if (libraryRef.current?.siteId !== current.siteId) return; setProblem(next); setNotice(text); };
-    setBusy("部品を保存中");
+    setBusy("コンポーネントを保存中");
     try {
       const library = parseComponentLibrary(bumpChangedComponentVersions(current.history.present, current.savedLibrary), blocks);
       const result = await components.saveLibrary({ siteId: current.siteId, library: structuredClone(library), expectedVersion: current.version, ...(auto ? { trigger: "autosave" as const } : {}) }, signal);
@@ -690,7 +691,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     try {
       if (changed && libraryChanged) { if (!await saveComponents(changed, controller.signal, auto)) return false; librarySaved = true; current = sessionRef.current; }
       if (librarySaved && (!current || fingerprint(current.history.present) === current.saved)) {
-        setProblem(null); setSavedAt(new Date()); if (!auto) setNotice("共通部品を保存しました。"); else if (hadProblem) setNotice("");
+        setProblem(null); setSavedAt(new Date()); if (!auto) setNotice("コンポーネントを保存しました。"); else if (hadProblem) setNotice("");
         return true;
       }
       if (!current) return false;
@@ -713,7 +714,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
       }
       if (sameSession()) { setProblem(null); setSavedAt(new Date()); setConflictView(0); }
       if (localized) localization.reloadPage();
-      if (!auto) setNotice(librarySaved ? "共通部品と下書きを保存しました。" : "下書きを保存しました。"); else if (hadProblem) setNotice("");
+      if (!auto) setNotice(librarySaved ? "コンポーネントと下書きを保存しました。" : "下書きを保存しました。"); else if (hadProblem) setNotice("");
       pageSaved = true; return true;
     } catch (error) { if (!controller.signal.aborted) failed(classifySaveError(error), true); return false; }
     finally {
@@ -813,7 +814,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     if (!current || blocked && busy !== "保存中") return "処理が完了してから復元してください。";
     if (current.readOnly) return current.readOnly.reason;
     if (hasInput) return "入力を適用するか取り消してから復元してください。";
-    if (masterId) return "部品の編集を終えてから復元してください。";
+    if (masterId) return "コンポーネントの編集を終えてから復元してください。";
     try {
       if (targetMode) {
         const localized = localization.context;
@@ -839,11 +840,11 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     const offer = libraryRecovery.offer, current = libraryRef.current;
     if (!offer || !current || offer.siteId !== current.siteId || libraryBlocked || libraryDirty || hasInput || masterId) return;
     const merged = mergeRecoveredLibrary(offer, current.savedLibrary, blocks);
-    if (!merged.library) { setNotice("端末に残っていた部品の変更は、最新の共通部品と合わないため復元できません。"); return; }
+    if (!merged.library) { setNotice("端末に残っていたコンポーネントの変更は、最新の内容と合わないため復元できません。"); return; }
     const page = sessionRef.current?.history.present;
-    if (page && !fitsLibrary(page, merged.library, blocks, activeSiteStyles)) { setNotice("端末に残っていた部品の変更は、編集中のページと合わないため復元できません。"); return; }
+    if (page && !fitsLibrary(page, merged.library, blocks, activeSiteStyles)) { setNotice("端末に残っていたコンポーネントの変更は、編集中のページと合わないため復元できません。"); return; }
     replaceLibrary({ ...current, history: commitLibrary(current.history, merged.library) });
-    libraryRecovery.accepted(); setNotice("端末に残っていた部品の変更を復元しました。保存すると使用中の文書に反映されます。");
+    libraryRecovery.accepted(); setNotice("端末に残っていたコンポーネントの変更を復元しました。保存後、使用するページには各ページの次回公開時に反映されます。");
   }
   async function restoreRevision() {
     const viewing = versions.viewing; if (!viewing) return;
@@ -884,7 +885,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   async function reloadLibrary() {
     const current = libraryRef.current;
     if (!components || !current || action.current || siteWorkBlocked || blocked || hasInput || historyMode || targetMode || !localizationReady) return;
-    const controller = new AbortController(), siteId = current.siteId; action.current = controller; setBusy("部品を読込中"); setNotice("");
+    const controller = new AbortController(), siteId = current.siteId; action.current = controller; setBusy("コンポーネントを読込中"); setNotice("");
     try {
       const fresh = librarySessionFrom(await components.readLibrary(siteId, controller.signal), siteId, blocks);
       const local = libraryRef.current, page = sessionRef.current;
@@ -893,7 +894,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
         locks: page?.locks ?? [], siteStyles: siteSettingsRef.current.styles, blocks });
       const state: LibraryReload = { fresh, plan, library: libraryFingerprint(local.history.present), page: page ? fingerprint(page.history.present) : undefined };
       if (!plan.discarded.length && !plan.discardedTokens.length && !plan.detached.length && !plan.problem) applyLibraryReload(state); else setLibraryReload(state);
-    } catch { if (!controller.signal.aborted) setNotice("最新の共通部品を読み込めませんでした。編集内容は保持しています。時間をおいて再試行してください。"); }
+    } catch { if (!controller.signal.aborted) setNotice("最新のコンポーネントを読み込めませんでした。編集内容は保持しています。時間をおいて再試行してください。"); }
     finally { if (!controller.signal.aborted) setBusy(""); if (action.current === controller) action.current = null; }
   }
   /** 確認した内容で最新の部品に切り替える。確認中に部品・ページの作業コピーが変わっていれば適用しない。 */
@@ -901,7 +902,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     setLibraryReload(null);
     const current = libraryRef.current, page = sessionRef.current;
     if (!current || current.siteId !== state.fresh.siteId || libraryFingerprint(current.history.present) !== state.library || (page ? fingerprint(page.history.present) : undefined) !== state.page) {
-      setNotice("確認中に編集内容が変わりました。もう一度「部品を読み直す」を押してください。"); return;
+      setNotice("確認中に編集内容が変わりました。もう一度「コンポーネントを読み直す」を押してください。"); return;
     }
     if (state.plan.discarded.length || state.plan.discardedTokens.length) libraryRecovery.drop(current.siteId);
     replaceLibrary(state.fresh);
@@ -914,8 +915,8 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     else { setSelection(null); setSlotChoice(null); setInspector("page"); setDraft(null); setFieldEpoch((value) => value + 1); }
     if (problemRef.current === "library-conflict") setProblem(null);
     refreshUsage(current.siteId);
-    setNotice(["最新の共通部品を読み込みました。", state.plan.discarded.length && state.plan.discardedTokens.length ? "保存していなかった部品とスタイルの変更は破棄しました。" : state.plan.discarded.length ? "保存していなかった部品の変更は破棄しました。" : state.plan.discardedTokens.length ? "保存していなかったスタイルの変更は破棄しました。" : "",
-      state.plan.detached.length ? `このページの「${state.plan.detached.join("」「")}」は、部品を解除して通常の要素にしました。` : ""].join(""));
+    setNotice(["最新のコンポーネントを読み込みました。", state.plan.discarded.length && state.plan.discardedTokens.length ? "保存していなかったコンポーネントとスタイルの変更は破棄しました。" : state.plan.discarded.length ? "保存していなかったコンポーネントの変更は破棄しました。" : state.plan.discardedTokens.length ? "保存していなかったスタイルの変更は破棄しました。" : "",
+      state.plan.detached.length ? `このページの「${state.plan.detached.join("」「")}」は、コンポーネントを解除して通常の要素にしました。` : ""].join(""));
   }
   async function saveAndNavigate(next: Navigation) {
     setNavigation(null);
@@ -1033,7 +1034,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     return undefined;
   }
   const reportProblem = (problem: string | undefined) => { if (problem) setNotice(problem); };
-  const componentDialogNotice = componentDialog?.type === "create" && session && textStylePaths(session.history.present, componentDialog.path).length ? "テキストスタイルを使っている文字は、部品の中では同じ見た目の個別指定になります。" : undefined;
+  const componentDialogNotice = componentDialog?.type === "create" && session && textStylePaths(session.history.present, componentDialog.path).length ? "テキストスタイルを使っている文字は、コンポーネントの中では同じ見た目の個別指定になります。" : undefined;
   function selectId(id: string) {
     const next = currentDocument();
     const path = next && walkNodes(next).find(({ node }) => node.type !== "text" && node.id === id)?.path;
@@ -1060,7 +1061,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   const canEditCanvasNode = (id: string) => !canvasOrigins.has(id) && !!document && walkNodes(document).some(({ node }) => node.type !== "text" && node.id === id);
   const editCanvasText = (_path: NodePath, id: string, children: PageNode[]) => {
     const raw = document && walkNodes(document).find(({ node }) => node.type !== "text" && node.id === id)?.path;
-    if (!raw) return "共通部品の訳文は翻訳パネルで編集してください。";
+    if (!raw) return "コンポーネントの訳文は翻訳パネルで編集してください。";
     const problem = apply({ type: "replaceChildren", path: raw, children }); if (problem) setNotice(problem); return problem;
   };
   function makeNode(type: string): PageNode | undefined {
@@ -1213,7 +1214,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     const current = sessionRef.current, currentSite = localization.site; if (!current || !currentSite) return;
     if (locale === selectedLocale) return;
     // 訳文のCASは保存済みの原文＋部品versionに結び付く。未保存の部品を表示用sourceとして持ち込まない。
-    if (libraryDirty) { setNotice("共通部品の変更を保存してから言語を切り替えてください。"); return; }
+    if (libraryDirty) { setNotice("コンポーネントの変更を保存してから言語を切り替えてください。"); return; }
     requestNavigation({ type: "page", target: { siteId: current.target.siteId, pageId: current.target.pageId, locale: documentLocaleFor(currentSite.config, locale) } });
   };
   const panelLocale = selectedLocale ?? localization.site?.config.sourceLocale;
@@ -1221,6 +1222,9 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     ...page, locale: documentLocaleFor(localization.site!.config, panelLocale), ...(locales[panelLocale]?.published === undefined ? {} : { published: locales[panelLocale]!.published })
   })) : pages;
   const site = sites.find((site) => site.id === siteId), page = session ? panelPages.find((page) => page.pageId === session.target.pageId) ?? pages.find((page) => page.pageId === session.target.pageId) : undefined;
+  const siteComponents = panelPages.filter((page) => page.kind === "shared"), regularPages = panelPages.filter((page) => page.kind !== "shared");
+  const isSiteComponent = !masterId && page?.kind === "shared";
+  const siteComponentBack = regularPages.find((page) => !!siteComponentReturn && sameTarget(page, siteComponentReturn)) ?? regularPages[0];
   const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
   const pageOperationsDisabled = siteWorkBlocked || unsaved || blocked || !!navigation || !site || historyMode || targetMode || !!session?.readOnly;
   const startPageChange = (start: PageChangeStart) => { if (pageOperations && !pageOperationsDisabled) setPageChange(start); };
@@ -1228,7 +1232,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   const recoveryStale = !!recoveryState.offer && !!session && recoveryState.offer.baseVersion !== session.version;
   const viewed = versions.viewing?.entry, viewedRelease = viewed && (viewed.kind === "publish" || viewed.kind === "rollback") && session?.releases.some((release) => release.revision === viewed.revision) ? viewed.revision : undefined;
   const activeHistory = masterId ? library?.history : session?.history;
-  const publishHold = siteSettings.dirty || siteSettings.busy ? "サイト設定を保存してから公開を確認してください。" : libraryDirty ? "部品の変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : session?.hasSavedDraft === false ? "文字や画像を編集し、下書きを保存してから公開・復元を確認してください。" : undefined;
+  const publishHold = siteSettings.dirty || siteSettings.busy ? "サイト設定を保存してから公開を確認してください。" : libraryDirty ? "コンポーネントの変更を保存してから公開を確認してください。" : masterId ? "ページに戻ってから公開を確認してください。" : session?.hasSavedDraft === false ? "文字や画像を編集し、下書きを保存してから公開・復元を確認してください。" : undefined;
   const rawSelected = document && selection ? nodeAt(document, selection) : undefined;
   const rawSelectedOwner = document && rawSelected?.type === "text" && selection && selection.length > 1 ? nodeAt(document, selection.slice(0, -1)) : rawSelected;
   const canvasSelectedNodeId = selectedCanvasNode ?? (rawSelectedOwner && rawSelectedOwner.type !== "text" ? rawSelectedOwner.id : undefined);
@@ -1239,10 +1243,10 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   return <EditorWorkspace preview={preview} leftOpen={leftPanelOpen} rightOpen={rightPanelOpen} setBody={(element) => { if (element) element.inert = modal; }} chrome={<><style dangerouslySetInnerHTML={{ __html: workspaceCss + editorCss + pagesCss + styleEditorCss + historyCss + localizationEditorCss }} />
     {assets && <style dangerouslySetInnerHTML={{ __html: assetEditorCss }} />}
     {notice && <div className="e-notice" role="alert">{notice}</div>}
-    {session?.readOnly && <div className="e-readonly" role="status"><div><strong>{targetMode ? "この言語（読み取り専用）" : "原文（読み取り専用）"}</strong><span>{session.readOnly.reason}</span></div>{session.readOnly.editUrl && <a className="e-small" href={session.readOnly.editUrl} {...(/^https:\/\//iu.test(session.readOnly.editUrl) ? { target: "_blank", rel: "noopener noreferrer" } : {})}>{session.readOnly.editLabel ?? (targetMode ? "正本の編集画面を開く" : "原文の編集画面を開く")}</a>}</div>}
-    {components && libraryFailed && <div className="e-notice" role="alert">共通部品を読み込めませんでした。部品を含むページは表示できません。</div>}
+    {session?.readOnly && <div className="e-readonly" role="status"><div><strong>{isSiteComponent ? "コンポーネント（読み取り専用）" : targetMode ? "この言語（読み取り専用）" : "原文（読み取り専用）"}</strong><span>{session.readOnly.reason}</span></div>{session.readOnly.editUrl && <a className="e-small" href={session.readOnly.editUrl} {...(/^https:\/\//iu.test(session.readOnly.editUrl) ? { target: "_blank", rel: "noopener noreferrer" } : {})}>{session.readOnly.editLabel ?? (targetMode ? "原文の編集画面を開く" : "編集画面を開く")}</a>}</div>}
+    {components && libraryFailed && <div className="e-notice" role="alert">再利用コンポーネントを読み込めませんでした。配置済みのページは表示できない場合があります。</div>}
     {localizationGate && <div className="e-localization-gate" role={localization.siteState === "error" || localization.pageState === "error" ? "alert" : "status"}><span>{localizationGate}</span><button type="button" className="e-small" disabled={localization.siteState === "loading" || localization.pageState === "loading"} onClick={localization.reloadAll}>再試行</button></div>}</>} left={<aside className="e-rail e-left" aria-label="サイト・ページ・レイヤー" hidden={preview}>
-      <nav className="e-tools" aria-label="編集ツール"><PanelToggle side="left" open={leftPanelOpen} onClick={() => setLeftPanelOpen((value) => !value)} />{tools.map(([key, name]) => { const common = targetMode && ["add", "styles", "components"].includes(key); return <button key={key} type="button" aria-label={name} aria-pressed={visiblePanel === key && leftPanelOpen} title={common ? "共通デザインは原文側で編集" : name} disabled={common} onClick={() => { setPicker(null); setPanel(key); setLeftPanelOpen(true); }}><ToolGlyph tool={key} /><small className="e-vh">{name}</small></button>; })}</nav>
+      <nav className="e-tools" aria-label="編集ツール"><PanelToggle side="left" open={leftPanelOpen} onClick={() => setLeftPanelOpen((value) => !value)} />{tools.map(([key, name]) => { const common = targetMode && ["add", "styles"].includes(key); return <button key={key} type="button" aria-label={name} aria-pressed={visiblePanel === key && leftPanelOpen} title={common ? "共通デザインは原文側で編集" : name} disabled={common} onClick={() => { setPicker(null); setPanel(key); setLeftPanelOpen(true); }}><ToolGlyph tool={key} /><small className="e-vh">{name}</small></button>; })}</nav>
       <div className="e-left-column"><div className="e-project-context"><div className="e-toolbar-start">{toolbarStart}</div><strong className="e-crumb">{sites.find((entry) => entry.id === siteId)?.name ?? "サイト"}</strong><span>{panelPages.find((entry) => entry.pageId === session?.target.pageId)?.title ?? "ページ編集"}</span></div>
       <div className="e-panel">
         <section hidden={visiblePanel !== "add"} aria-label="要素を追加"><div className="e-panel-head"><h2>追加</h2><p>クリックで追加、ドラッグで配置</p></div>
@@ -1264,7 +1268,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
           <button className="e-small" onClick={() => requestNavigation({ type: "reload" })} disabled={!session || blocked}>最新の文書を再読込</button>
         </section>
         <section hidden={visiblePanel !== "layers"} aria-label="レイヤー一覧"><div className="e-panel-head"><h2>レイヤー</h2><p>ドラッグで並べ替え、中央にも配置できます</p></div>
-          {targetMode && <p className="e-help">構造・配置は共通です。共通デザインは原文側で編集してください。</p>}{document && <LayerTreePanel document={document} labels={layerLabels} rootLabel={masterId ? "部品全体" : "ページ全体"} selectedId={selectedId}
+          {targetMode && <p className="e-help">構造・配置は共通です。共通デザインは原文側で編集してください。</p>}{document && <LayerTreePanel document={document} labels={layerLabels} rootLabel={masterId ? "コンポーネント本体" : isSiteComponent ? "コンポーネント" : "ページ全体"} selectedId={selectedId}
             disabled={masterId ? libraryBlocked : pageOperationalBlocked} draggable={!editBlocked && !hasInput && !targetMode}
             className={(entry) => `${layerDrop?.id === entry.id ? ` drop-${layerDrop.position}` : ""}${hiddenAt(entry.node, width) ? " is-hidden-here" : ""}`}
             trailing={(entry) => hiddenAt(entry.node, width) ? <small className="e-layer-hidden">この幅で非表示</small> : null}
@@ -1278,29 +1282,30 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
             <button disabled={targetMode || !selection || editBlocked || hasInput} onClick={moveToEnd}>指定先の末尾へ</button>
           </div>
         </section>
-        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通のカラーと文字スタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <SharedStyleLibrary siteDisabled={blocked || historyMode || libraryDirty || !localizationReady} editingComponent={!!masterId} adapter={adapter} pages={pages} blocks={blocks} components={libraryPresent} state={siteSettings} pageDirty={dirty || pageInputPending || manualInputPending} sitePending={sitePending} rawDocument={rawDocument!} migrate={(next, styles) => { const current = sessionRef.current; if (!current || editBlocked) return "ページを編集できません。"; try { const parsed = editDocument(current.history.present, { type: "restore", document: next }, blocks, current.locks, libraryPresent, styles); if (JSON.stringify(styles) === JSON.stringify(parseSiteStyles(siteSettings.settings ?? {}))) { replace({ ...current, history: commitHistory(current.history, parsed) }); setStyleMigration(null); setNotice("保存済みのサイト共通定義へ移行しました。ページの下書きを保存してください。"); return undefined; } const error = siteSettings.editStyles(styles); if (error) return error; setStyleMigration({ target: current.target, source: fingerprint(current.history.present), document: next, styles }); return undefined; } catch (error) { return message(error); } }} document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
-        <section hidden={!assetPanelVisible} aria-label={assetPanelLabel}>{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} panelLabel={assetPanelLabel} {...(picker || localizationAssetUnit || !assetPanelKind ? {} : { providerKind: assetPanelKind })} pickTitle={localizationAssetUnit === "page.meta.ogImage.src" ? "ソーシャルカバーを選ぶ" : localizationAssetUnit ? "共通部品・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : picker?.purpose === "ogImage" || picker?.purpose === "siteOgImage" ? "ソーシャルカバーを選ぶ" : "画像を選ぶ"} localUsage={localUsage}
+        <section hidden={visiblePanel !== "styles"} aria-label="共通スタイル"><div className="e-panel-head"><h2>スタイル</h2><p>共通カラーとテキストスタイル</p></div>{targetMode ? <p className="e-help">共通デザインは原文側で編集してください。</p> : document ? <SharedStyleLibrary siteDisabled={blocked || historyMode || libraryDirty || !localizationReady} editingComponent={!!masterId} adapter={adapter} pages={pages} blocks={blocks} components={libraryPresent} state={siteSettings} pageDirty={dirty || pageInputPending || manualInputPending} sitePending={sitePending} rawDocument={rawDocument!} migrate={(next, styles) => { const current = sessionRef.current; if (!current || editBlocked) return "ページを編集できません。"; try { const parsed = editDocument(current.history.present, { type: "restore", document: next }, blocks, current.locks, libraryPresent, styles); if (JSON.stringify(styles) === JSON.stringify(parseSiteStyles(siteSettings.settings ?? {}))) { replace({ ...current, history: commitHistory(current.history, parsed) }); setStyleMigration(null); setNotice("保存済みのサイト共通定義へ移行しました。ページの下書きを保存してください。"); return undefined; } const error = siteSettings.editStyles(styles); if (error) return error; setStyleMigration({ target: current.target, source: fingerprint(current.history.present), document: next, styles }); return undefined; } catch (error) { return message(error); } }} document={document} selection={selection} apply={applyStyle} select={select} disabled={editBlocked} breakpoints={breakpoints} breakpoint={tier} until={until} preview={previewOperation} pending={pending} fieldKey={`${fieldEpoch}-library`} nodeLabel={(node) => label(node, blocks, names)} /> : <p className="e-help">ページを読み込むと、共通カラーとテキストスタイルを編集できます。</p>}</section>
+        <section hidden={!assetPanelVisible} aria-label={assetPanelLabel}>{assets && session ? <AssetLibraryPanel key={session.target.siteId} adapter={assets} siteId={session.target.siteId} epoch={fieldEpoch} mode={picker || localizationAssetUnit ? "pick" : "library"} panelLabel={assetPanelLabel} {...(picker || localizationAssetUnit || !assetPanelKind ? {} : { providerKind: assetPanelKind })} pickTitle={localizationAssetUnit === "page.meta.ogImage.src" ? "ソーシャルカバーを選ぶ" : localizationAssetUnit ? "コンポーネント・訳文の画像を選ぶ" : picker?.purpose === "background" ? "背景画像を選ぶ" : picker?.purpose === "replace" ? "置き換える画像を選ぶ" : picker?.purpose === "ogImage" || picker?.purpose === "siteOgImage" ? "ソーシャルカバーを選ぶ" : "画像を選ぶ"} localUsage={localUsage}
           actions={{ replace: !localizationAssetUnit && node?.type === "element" && node.tag === "img", background: !slotName && !localizationAssetUnit && !targetMode && (node?.type === "component" || node?.type === "instance" || node?.type === "element" && !["img", "source", "br", "hr"].includes(node.tag)), insert: !localizationAssetUnit && !targetMode && !!document }}
           disabledReason={editBlocked ? "処理が完了してから配置してください。" : hasInput ? "入力を確定するか取り消してから配置してください。" : undefined} onApply={(asset, action) => localizationAssetUnit ? applyLocalizationAsset(asset) : applyAsset(asset, action)} onClose={() => { setPicker(null); setLocalizationAssetUnit(null); }} onReplaceUsages={(asset) => setPicker({ purpose: "replace", from: { provider: asset.provider, id: asset.id } })} />
-          : <><div className="e-panel-head"><h2>素材</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>
-        <section hidden={visiblePanel !== "components"} aria-label="部品"><div className="e-panel-head"><h2>部品</h2><p>サイトで利用できる部品</p></div>
-          {targetMode ? <p className="e-help">共通部品の構造は原文側で編集してください。訳文は右側の「翻訳」で編集できます。</p> : components && <><ComponentPanel library={libraryPresent} failed={libraryFailed} visible={visiblePanel === "components" && !preview} siteStyles={siteStylesReady ? activeSiteStyles : undefined} blocks={canvasBlocks} editing={masterId} usage={usageSummary} usageLoading={usage === undefined}
-
-            insertableBlocks={insertableBlocks} canPlace={!!document && !editBlocked && !hasInput} disabled={libraryBlocked || hasInput} place={(id) => add(`instance:${id}`)}
+          : <><div className="e-panel-head"><h2>アセット</h2><p>画像の選択と差し替え</p></div><p className="e-help">現在は画像を追加し、右側の「画像 URL」で指定できます。</p><button type="button" onClick={() => add("img")} disabled={!document || editBlocked || hasInput}>画像を追加</button></>}</section>
+        <section hidden={visiblePanel !== "components"} aria-label="コンポーネント"><div className="e-panel-head"><h2>コンポーネント</h2><p>サイト全体と再利用</p></div>
+          {targetMode && <p className="e-help">再利用コンポーネントの構造は原文側で編集します。サイト全体のコンポーネントは、選んだ言語の権限と翻訳状態を確認して開きます。</p>}
+          <ComponentPanel library={targetMode ? undefined : libraryPresent} librarySupported={!targetMode && !!components} failed={libraryFailed} visible={visiblePanel === "components" && !preview} siteStyles={siteStylesReady ? activeSiteStyles : undefined} blocks={canvasBlocks} editing={masterId} usage={usageSummary} usageLoading={usage === undefined}
+            siteComponents={siteComponents} current={masterId ? undefined : session?.target} navigationDisabled={blocked} editSiteComponent={(selected) => { if (page?.kind !== "shared" && session) setSiteComponentReturn(session.target); if (masterId && session && sameTarget(session.target, selected)) leaveComponent(); else if (!session || !sameTarget(session.target, selected)) requestNavigation({ type: "page", target: selected }); }}
+            insertableBlocks={insertableBlocks} canPlace={!targetMode && !!document && !editBlocked && !hasInput} disabled={libraryBlocked || hasInput} place={(id) => add(`instance:${id}`)}
             drag={(event, id) => startDrag(event, { kind: "palette", type: `instance:${id}` })} dragEnd={() => { dragItem.current = null; }} edit={(id) => openComponent(id)}
             rename={(id) => setComponentDialog({ type: "rename", componentId: id })} duplicate={(id) => reportProblem(updateLibrary((library) => duplicateComponent(library, id, blocks).library))}
-            remove={(id) => setComponentDialog({ type: "remove", componentId: id })} /><h3>業務ブロック</h3></>}
-          {!targetMode && (availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">{components ? "このサイトの業務ブロックはまだ登録されていません。" : "このサイトの部品はまだ登録されていません。"}</p>)}</section>
+            remove={(id) => setComponentDialog({ type: "remove", componentId: id })} />
+          {!targetMode && <><h3>業務ブロック</h3>{availableBlocks.length ? <div className="e-palette">{availableBlocks.map(([key, block]) => <button type="button" key={key} draggable={!!document && !editBlocked && !hasInput} onDragStart={(event) => startDrag(event, { kind: "palette", type: `block:${key}` })} onDragEnd={() => { dragItem.current = null; }} onClick={() => add(`block:${key}`)} disabled={!document || editBlocked || hasInput}><span aria-hidden="true">◇</span>{block.label ?? key}</button>)}</div> : <p className="e-help">このサイトの業務ブロックはまだ登録されていません。</p>}</>}</section>
         {targetMode ? <details className="e-history"><summary>以前の言語全体版へ戻す</summary>{localePublication ? <><label className="e-field"><span>戻す言語全体版</span><select aria-label="戻す言語全体版" value={localeRollbackId} disabled={blocked || localeReleaseLoading || !!session?.readOnly} onChange={(event) => setLocaleRollbackId(event.target.value)}><option value="">版を選択</option>{localeRelease?.history.map((release) => <option key={release.releaseId} value={release.releaseId}>{release.label}（{release.pages}ページ）</option>)}</select></label>
-          <button disabled={!localeRollbackId || !!session?.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady} onClick={() => void prepareLocaleRelease("rollback")}>言語全体の復元内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "ページ単位ではなく、当時のページ・共通部品・ナビ・スタイルをまとめて復元します。現在非公開のページは復元されません。"}</small></> : <small className="e-help">このサイトでは訳文の復元を利用できません。管理者に確認してください。</small>}</details>
+          <button disabled={!localeRollbackId || !!session?.readOnly || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady} onClick={() => void prepareLocaleRelease("rollback")}>言語全体の復元内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "ページ単位ではなく、当時のページ・コンポーネント・ナビ・スタイルをまとめて復元します。現在非公開のページは復元されません。"}</small></> : <small className="e-help">このサイトでは訳文の復元を利用できません。管理者に確認してください。</small>}</details>
           : <details className="e-history"><summary>公開済みの版に戻す</summary><label className="e-field"><span>戻す版</span><select aria-label="戻す版" value={rollbackRevision} disabled={blocked || !!session?.readOnly} onChange={(event) => setRollbackRevision(event.target.value)}><option value="">版を選択</option>{session?.releases.map((release) => <option key={release.revision} value={release.revision}>{release.label}</option>)}</select></label><button disabled={siteSettings.dirty || siteSettings.busy || !rollbackRevision || !!session?.readOnly || session?.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput} onClick={() => void prepare("rollback")}>戻す内容を確認</button><small className="e-help">{session?.readOnly?.reason ?? "未保存の変更がある間は実行できません。"}</small>{publishHold && <small className="e-help">{publishHold}</small>}</details>}
       </div></div>
-    </aside>} canvas={<section className="e-canvas" aria-label="ライブプレビュー">{preview && <button className="e-preview-exit" aria-label="編集に戻る" title="編集に戻る" onClick={() => setPreview(false)}><WorkspaceIcon name="preview" /><span>編集に戻る</span></button>}{masterComponent && <ComponentBanner name={masterComponent.name} count={usageSummary?.get(masterComponent.id)?.rows.length} back={leaveComponent} />}
+    </aside>} canvas={<section className="e-canvas" aria-label="ライブプレビュー">{preview && <button className="e-preview-exit" aria-label="編集に戻る" title="編集に戻る" onClick={() => setPreview(false)}><WorkspaceIcon name="preview" /><span>編集に戻る</span></button>}{masterComponent && <ComponentBanner name={masterComponent.name} back={leaveComponent} />}{isSiteComponent && page && <SiteComponentBanner name={page.title} {...(siteComponentBack ? { back: () => requestNavigation({ type: "page", target: siteComponentBack }) } : {})} />}
       <CanvasViewportToolbar width={width} widthField={widthField} leftOpen={leftPanelOpen} rightOpen={rightPanelOpen} disabled={historyMode}
         onWidthInput={(value) => { setWidthField(value); const parsed = Number(value); if (value !== "" && Number.isInteger(parsed) && parsed >= 320 && parsed <= 1920) setWidth(parsed); }}
         onWidthCommit={() => { const parsed = Number(widthField); const normalized = Number.isFinite(parsed) ? Math.max(320, Math.min(1920, Math.round(parsed))) : width; setWidth(normalized); setWidthField(String(normalized)); }}
         toggleLeft={() => setLeftPanelOpen((value) => !value)} toggleRight={() => setRightPanelOpen((value) => !value)}>
-        {resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>素材を再読み込み</button>}
+        {resolvedAssets.failed && <button type="button" className="e-small" onClick={resolvedAssets.retry}>アセットを再読み込み</button>}
         {document && <span className="e-tier-note" title={`${tierName(shownTier)} の指定が効く幅です`}>表示中: {width}px（{shownTier.label} の段）</span>}
         {document && <button type="button" className="e-small e-motion-toggle" aria-label="アニメーションを再生" aria-pressed={motion || preview} disabled={preview} title={preview ? "プレビュー中はアニメーションを再生します" : "登場や状態の変化をアニメーションで再生します"}
           onClick={() => { setMotion((value) => !value); if (!motion) setReplay((value) => value + 1); }}>アニメーションを再生</button>}
@@ -1328,19 +1333,20 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
         : <button className="e-primary e-publish-button" aria-label="公開" title={session?.readOnly?.reason ?? publishHold ?? "公開前に対象と差分を確認"} onClick={() => void prepare("publish")} disabled={siteSettings.dirty || siteSettings.busy || !session || !!session.readOnly || session.hasSavedDraft === false || dirty || libraryDirty || !!masterId || blocked || hasInput || historyMode || !localizationReady}>公開</button>}
       {publishHold && !targetMode && <small className="e-hold">{publishHold}</small>}{targetMode && !localePublication && <small className="e-hold">このサイトでは訳文の公開を利用できません。管理者に確認してください。</small>}</div>
       <div className="e-inspector-scroll">{versions.open ? <><div className="e-inspector-context"><strong>バージョン管理</strong><PanelToggle side="right" open onClick={() => setRightPanelOpen(false)} /></div><VersionPanel history={versions} status={status.text} snapshotBlock={!session || busy ? "" : session.readOnly ? session.readOnly.reason : dirty || hasInput ? "スナップショットは保存済みの状態にだけ作成できます。" : historyMode ? "版の表示を閉じてから作成できます。" : undefined} /></> : <>
-      <div className="e-inspector-context"><strong>{inspector === "element" ? node ? label(node, blocks, names) : "要素を選択" : inspector === "site" ? site?.name ?? "サイト" : inspector === "localization" ? "翻訳" : masterComponent?.name ?? page?.title ?? (masterId ? "部品" : "ページ")}</strong>
+      <div className="e-inspector-context"><strong>{inspector === "element" ? node ? label(node, blocks, names) : "要素を選択" : inspector === "site" ? site?.name ?? "サイト" : inspector === "localization" ? "翻訳" : masterComponent?.name ?? page?.title ?? (masterId || isSiteComponent ? "コンポーネント" : "ページ")}</strong>
         {inspector === "element" && node && node.type !== "text" && <label><span className="e-vh">条件スタイル</span><select className="e-condition-select" aria-label="条件スタイル" title={`${styleState === "normal" ? "通常" : styleState === "hover" ? "ホバー中" : styleState === "focus" ? "フォーカス中" : "押下中"}の見た目を編集`} value={styleState} onChange={(event) => { setStyleState(event.target.value as StyleState); if (event.target.value !== "normal") setElementTab("transform"); }}><option value="normal">通常</option><option value="hover">ホバー</option><option value="focus">フォーカス</option><option value="active">押下中</option></select></label>}
         <label><span className="e-vh">編集する対象</span><select aria-label="編集する対象" value={inspector} onChange={(event) => requestInspector(event.target.value as Inspector)}>
-          <option value="element" disabled={!node}>要素</option><option value="page">{masterId ? "部品" : "ページ"}</option><option value="site">サイト</option>{targetMode && <option value="localization">翻訳</option>}
+          <option value="element" disabled={!node}>要素</option><option value="page">{masterId || isSiteComponent ? "コンポーネント" : "ページ"}</option><option value="site">サイト</option>{targetMode && <option value="localization">翻訳</option>}
         </select></label><PanelToggle side="right" open onClick={() => setRightPanelOpen(false)} />
       </div>
       {inspector === "element" && <InspectorTabs tabs={activeInspectorTabs} active={elementTab} disabled={!node} onChange={(value) => { setElementTab(value); if (value !== "transform") setStyleState("normal"); }} />}
       {inspector === "site" && <section className="e-inspector-content">{targetMode ? <p className="e-help">サイト共通設定とデザインは原文側で編集してください。</p> : <SiteSettingsPanel site={site} state={siteSettings} cover={assets ? { assets: resolvedAssets.map, failed: resolvedAssets.failed, pick: () => setPicker({ purpose: "siteOgImage" }) } : undefined} />}</section>}
       {inspector === "localization" && localization.context && document && <section className="e-inspector-content"><LocalizationPanel context={localization.context} document={document} disabled={blocked || !!session?.readOnly || dirty || libraryDirty || pageInputPending || !localizationReady} selectedUnit={selectedLocalizationUnit} run={runLocalizationCommand} refresh={localization.reloadAll} manualBuffer={localizationManual} setManualBuffer={setLocalizationManual} pickAsset={(unit) => { setPicker(null); setLocalizationAssetUnit(unit.unitId); }} /></section>}
-      {inspector === "page" && !masterComponent && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked} targetMode={targetMode}
+      {inspector === "page" && !masterComponent && !isSiteComponent && <section className="e-inspector-content">{document && <PageSettings document={document} page={page} site={site} settings={siteSettings} field={field} apply={apply} report={setNotice} disabled={editBlocked} targetMode={targetMode}
         cover={assets ? { assets: resolvedAssets.map, failed: resolvedAssets.failed, pick: () => setPicker({ purpose: "ogImage" }) } : undefined}
 
         operations={pageOperations} operationsDisabled={pageOperationsDisabled} unsaved={unsaved} start={startPageChange} />}</section>}
+      {inspector === "page" && isSiteComponent && page && <SiteComponentSettings name={page.title} readOnly={session?.readOnly?.reason} />}
       {inspector === "page" && masterComponent && <ComponentSettings component={masterComponent} usage={usageSummary?.get(masterComponent.id)} usageLoading={usage === undefined} field={input} disabled={libraryBlocked || hasInput}
         rename={(name) => updateLibrary((library) => renameComponent(library, masterComponent.id, name, blocks))} setKind={(kind) => reportProblem(updateLibrary((library) => setComponentKind(library, masterComponent.id, kind, blocks)))}
         unpublish={(name) => reportProblem(updateLibrary((library) => setComponentProp(library, masterComponent.id, name, undefined, blocks)))} back={leaveComponent} />}
@@ -1392,7 +1398,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
       {localeReleasePlan.action === "rollback" && <p className="e-help">現在非公開のページは復元されません。</p>}
       {localeReleasePlan.incompleteReasons.length > 0 && <div role="alert" className="e-release-incomplete"><strong>この言語はまだ公開できません。</strong><ul>{localeReleasePlan.incompleteReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></div>}
       <h3>対象ページ（{localeReleasePlan.pages.length}件）</h3><table><thead><tr><th>ページ</th><th>URL</th><th>準備状況</th></tr></thead><tbody>{localeReleasePlan.pages.map((page) => <tr key={page.pageId}><td>{page.title}</td><td>{page.path}</td><td>{page.complete ? "完了" : page.reasons.join("\n") || "未完了"}</td></tr>)}</tbody></table>
-      <h3>共通内容（{localeReleasePlan.sharedResources.length}件）</h3><table><thead><tr><th>共通内容</th><th>種類</th><th>準備状況</th></tr></thead><tbody>{localeReleasePlan.sharedResources.map((resource) => <tr key={resource.id}><td>{resource.label}</td><td>{({ component: "共通部品", navigation: "ナビ", style: "スタイル", resource: "関連データ" } as const)[resource.kind]}</td><td>{resource.complete ? "完了" : resource.reasons.join("\n") || "未完了"}</td></tr>)}</tbody></table>
+      <h3>共通内容（{localeReleasePlan.sharedResources.length}件）</h3><table><thead><tr><th>共通内容</th><th>種類</th><th>準備状況</th></tr></thead><tbody>{localeReleasePlan.sharedResources.map((resource) => <tr key={resource.id}><td>{resource.label}</td><td>{({ component: "コンポーネント", navigation: "ナビ", style: "スタイル", resource: "関連データ" } as const)[resource.kind]}</td><td>{resource.complete ? "完了" : resource.reasons.join("\n") || "未完了"}</td></tr>)}</tbody></table>
       <label className="e-check"><input type="checkbox" checked={localeReleaseConfirmed} disabled={!!busy || !localeReleasePlan.complete} onChange={(event) => setLocaleReleaseConfirmed(event.target.checked)} />このドメイン、全ページ、共通内容と公開版の切り替えに同意しました</label>
       <div className="e-actions"><button autoFocus disabled={!!busy} onClick={() => setLocaleReleasePlan(null)}>編集に戻る</button><button className="e-primary" disabled={!localeReleasePlan.complete || !localeReleaseConfirmed || !!busy} onClick={() => void applyLocaleRelease()}>{localeReleasePlan.action === "rollback" ? "この言語全体版を復元" : "この言語全体を公開"}</button></div>
     </Dialog>}
@@ -1403,7 +1409,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
       applied={(page, change) => void pageApplied(page, change)} conflicted={() => void reloadPages()} close={() => setPageChange(null)}
       reload={() => { const current = sessionRef.current?.target; setPageChange(null); void reloadPages().then(() => current && load(current)); }} />}
     {conflictView > 0 && session && pageDocument && <ConflictDialog key={conflictView} adapter={adapter} target={session.target} present={pageDocument} blocks={blocks} components={libraryPresent} siteStyles={siteSettings.settings} close={() => setConflictView(0)} discard={loadLatest} overwrite={overwriteWith} />}
-    {libraryReload && <Dialog name="共通部品を読み直す" dismiss={() => setLibraryReload(null)}><LibraryReloadDialogBody plan={libraryReload.plan} close={() => setLibraryReload(null)} apply={() => applyLibraryReload(libraryReload)} /></Dialog>}
+    {libraryReload && <Dialog name="コンポーネントを読み直す" dismiss={() => setLibraryReload(null)}><LibraryReloadDialogBody plan={libraryReload.plan} close={() => setLibraryReload(null)} apply={() => applyLibraryReload(libraryReload)} /></Dialog>}
     {recoveryCompare && recoveryState.offer && pageDocument && <RecoveryCompareDialog base={pageDocument} baseLabel={dirty ? "現在の編集内容" : "保存済みの内容"} recovered={recoveryState.offer} stale={recoveryStale} close={() => setRecoveryCompare(false)} apply={restoreRecovered} />}
     <HistoryDialogs history={versions} present={pageDocument} />
   </>} />;

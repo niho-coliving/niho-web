@@ -192,7 +192,7 @@ test("diffDocuments covers component instances, image assets, block slots and te
   next.textStyles.lead.base.fontSize = 20; next.body[0].component = "header2"; next.body[0].props.title = "NIHO Web";
   next.body[1].asset = { provider: "uploads", id: "wave" }; next.body[2].slots.card.base.padding = 12; delete next.body[3].style.textStyle;
   const changes = diffDocuments(base, next);
-  assert.deepEqual(paths(changes), ["文字スタイル リード", "部品 header2#nav の部品", "部品 header2#nav の title", "img#photo の素材", "Cards#cards の領域 card の見た目（共通）: padding", "p#lead の文字スタイル"]);
-  assert.deepEqual(changes[3], { path: "img#photo の素材", before: '{"provider":"uploads","id":"sea"}', after: '{"provider":"uploads","id":"wave"}' });
-  assert.deepEqual(paths(diffDocuments(base, { ...base, body: [] })), ["部品 header#nav を削除", "img#photo を削除", "Cards#cards を削除", "p#lead を削除"]);
+  assert.deepEqual(paths(changes), ["テキストスタイル リード", "コンポーネント header2#nav のコンポーネント", "コンポーネント header2#nav の title", "img#photo のアセット", "Cards#cards の領域 card の見た目（共通）: padding", "p#lead のテキストスタイル"]);
+  assert.deepEqual(changes[3], { path: "img#photo のアセット", before: '{"provider":"uploads","id":"sea"}', after: '{"provider":"uploads","id":"wave"}' });
+  assert.deepEqual(paths(diffDocuments(base, { ...base, body: [] })), ["コンポーネント header#nav を削除", "img#photo を削除", "Cards#cards を削除", "p#lead を削除"]);
 });

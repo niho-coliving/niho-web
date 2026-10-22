@@ -61,7 +61,7 @@ test("custom presets cannot bypass insertable blocks or component placement poli
   const library = parseComponentLibrary({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [{
     id: "card", name: "カード", kind: "part", version: 1, root: { type: "element", id: "root", tag: "div", children: [] }
   }] });
-  const instance = { id: "instance", label: "部品", group: "部品", create: ({ id }) => ({ type: "instance", id: id(), component: "card" }) };
+  const instance = { id: "instance", label: "コンポーネント", group: "コンポーネント", create: ({ id }) => ({ type: "instance", id: id(), component: "card" }) };
   assert.throws(() => createInsertionNode(instance, { document: doc(), components: library, canInsertInstance: () => false }), /配置できません/);
 
   const libraryWithBlock = parseComponentLibrary({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [{
@@ -69,10 +69,10 @@ test("custom presets cannot bypass insertable blocks or component placement poli
       { type: "component", id: "notice", block: "Notice", props: { heading: "案内" } }
     ] }
   }] }, blocks);
-  const wrappedBlock = { id: "wrapped-block", label: "部品内ブロック", group: "部品", create: ({ id }) => ({ type: "instance", id: id(), component: "notice-card" }) };
+  const wrappedBlock = { id: "wrapped-block", label: "コンポーネント内ブロック", group: "コンポーネント", create: ({ id }) => ({ type: "instance", id: id(), component: "notice-card" }) };
   assert.throws(
     () => createInsertionNode(wrappedBlock, { document: doc(), blocks, components: libraryWithBlock, insertableBlocks: [] }),
-    /許可されていないブロック/
+    /追加が許可されていない/
   );
 
   const unlocked = createInsertionNode({ id: "child", label: "子", group: "検査", create: ({ id }) => ({ type: "element", id: id(), tag: "div", children: [] }) }, { document: doc() });

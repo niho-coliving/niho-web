@@ -15,7 +15,7 @@ export type LibrarySession = { siteId: string; history: LibraryHistory; version:
 export const libraryFingerprint = (library: ComponentLibrary): string => JSON.stringify(library);
 export function librarySessionFrom(snapshot: ComponentLibrarySnapshot, siteId: string, blocks: EditorBlockRegistry): LibrarySession {
   const library = parseComponentLibrary(snapshot.library, blocks);
-  if (library.siteId !== siteId || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("部品ライブラリの対象が一致しません。");
+  if (library.siteId !== siteId || typeof snapshot.version !== "string" || !snapshot.version) throw new Error("コンポーネントライブラリの対象が一致しません。");
   return { siteId, history: { past: [], present: library, future: [] }, version: snapshot.version, saved: libraryFingerprint(library), savedLibrary: library };
 }
 export function commitLibrary(history: LibraryHistory, library: ComponentLibrary): LibraryHistory {
@@ -46,8 +46,8 @@ export function fitsLibrary(document: PageDocument, library: ComponentLibrary, b
 /** 部品の検証で返る理由のうち、スタッフ向けの文言があるもの。 */
 export function componentProblem(error: unknown): string | undefined {
   if (!(error instanceof DocumentValidationError)) return undefined;
-  if (error.reason === "circular component reference") return "部品の中に同じ部品を置くことはできません。";
-  if (error.reason === "component nesting too deep") return "部品の入れ子は4段までです。";
+  if (error.reason === "circular component reference") return "コンポーネントの中に同じコンポーネントを置くことはできません。";
+  if (error.reason === "component nesting too deep") return "コンポーネントの入れ子は4段までです。";
   return undefined;
 }
 
@@ -95,7 +95,7 @@ export function planLibraryReload(input: { local: ComponentLibrary; saved: Compo
   const own = byId(local), other = byId(latest), base = byId(saved), changed = new Set(discarded.map((change) => change.id));
   const differs = (id: string) => { const mine = own.get(id), theirs = other.get(id); return !mine || !theirs || contentOf(mine) !== contentOf(theirs); };
   const phase1 = (id: string) => !other.has(id) || !base.has(id) && differs(id), phase2 = (id: string) => phase1(id) || changed.has(id) && differs(id);
-  const nameOf = (id: string) => own.get(id)?.name ?? other.get(id)?.name ?? "共通部品";
+  const nameOf = (id: string) => own.get(id)?.name ?? other.get(id)?.name ?? "コンポーネント";
   // 解除で現れた入れ子のインスタンスも次の走査で拾う。200 回解除しても残る、または解除できなければ失敗。
   const detachWhere = (pick: (id: string) => boolean): { document: PageDocument; names: string[] } | null => {
     const next = (document: PageDocument) => walkNodes(document).find(({ node }) => node.type === "instance" && pick(node.component));
@@ -113,10 +113,10 @@ export function planLibraryReload(input: { local: ComponentLibrary; saved: Compo
   let chosen = detachWhere(phase1);
   if (!chosen || !fitsLibrary(chosen.document, latest, blocks, siteStyles)) { chosen = detachWhere(phase2); if (chosen && !fitsLibrary(chosen.document, latest, blocks, siteStyles)) chosen = null; }
   if (chosen && !chosen.names.length) return { discarded, discardedTokens, detached: [] };
-  if (!editable) return { discarded, discardedTokens, detached: [], problem: "このページは読み取り専用のため、最新の共通部品に合わせて部品を解除できません。別のページを開いてから、もう一度読み直してください。" };
+  if (!editable) return { discarded, discardedTokens, detached: [], problem: "このページは読み取り専用のため、最新のコンポーネントに合わせて配置を解除できません。別のページを開いてから、もう一度読み直してください。" };
   if (chosen) return { discarded, discardedTokens, detached: chosen.names, page: chosen.document };
   const suspects = [...new Set(walkNodes(page).flatMap(({ node }) => node.type === "instance" && differs(node.component) ? [nameOf(node.component)] : []))];
-  return { discarded, discardedTokens, detached: [], problem: `最新の共通部品では、編集中のページを表示できないため読み直せません。${suspects.length ? `ページの「${suspects.join("」「")}」を` : "ページの共通部品を"}「部品を解除」で通常の要素にするか削除してから、もう一度読み直してください。` };
+  return { discarded, discardedTokens, detached: [], problem: `最新のコンポーネントでは、編集中のページを表示できないため読み直せません。${suspects.length ? `ページの「${suspects.join("」「")}」を` : "ページのコンポーネントを"}「コンポーネントを解除」で通常の要素にするか削除してから、もう一度読み直してください。` };
 }
 /**
  * 部品を読み直した後のページの履歴。最新に無い部品と、手元で追加した ID が最新では別の部品になっている部品を参照する版へは
@@ -208,9 +208,9 @@ export function componentPreview(library: ComponentLibrary, componentId: string,
 }
 
 export const componentKinds: readonly (readonly [ComponentKind, string])[] = [["header", "ヘッダー"], ["navigation", "ナビゲーション"], ["section", "セクション"], ["part", "パーツ"], ["footer", "フッター"]];
-export const kindLabel = (kind: ComponentKind): string => componentKinds.find(([value]) => value === kind)?.[1] ?? "部品";
+export const kindLabel = (kind: ComponentKind): string => componentKinds.find(([value]) => value === kind)?.[1] ?? "コンポーネント";
 export const fieldCaptions: Readonly<Record<ComponentPropField, string>> = { text: "文字", href: "リンク先", src: "画像", alt: "画像の説明" };
-export const roleLabels: Readonly<Record<PageKind, string>> = { page: "ページ", template: "テンプレート", shared: "共通枠" };
+export const roleLabels: Readonly<Record<PageKind, string>> = { page: "ページ", template: "テンプレート", shared: "サイト全体" };
 /** 種類の順（ヘッダー・ナビゲーション・セクション・パーツ・フッター）、同じ種類は名前順。名前の部分一致で絞り込む。 */
 export function sortedComponents(library: ComponentLibrary, query: string): ComponentDefinition[] {
   const order = new Map(componentKinds.map(([kind], index) => [kind, index] as const)), needle = query.trim().toLowerCase();
@@ -234,7 +234,7 @@ export function componentDependencies(library: ComponentLibrary, componentId: st
 /** 配置できない理由。編集中の部品の中への循環と、追加を許可していない業務ブロック。 */
 export function placementProblem(library: ComponentLibrary, componentId: string, insertableBlocks: readonly string[] | undefined, editing: string | null): string | undefined {
   const dependencies = componentDependencies(library, componentId);
-  if (editing && (componentId === editing || dependencies.components.has(editing))) return "編集中の部品の中には配置できません";
+  if (editing && (componentId === editing || dependencies.components.has(editing))) return "編集中のコンポーネントの中には配置できません";
   if (insertableBlocks && [...dependencies.blocks].some((block) => !insertableBlocks.includes(block))) return "追加が許可されていない業務ブロックを含むため配置できません";
   return undefined;
 }
@@ -269,7 +269,7 @@ export function summarizeUsage(entries: readonly ComponentUsageEntry[] | null | 
 }
 export function usageText(summary: ComponentUsageSummary | undefined, loading: boolean): string {
   if (!summary) return loading ? "使用状況を確認中" : "使用状況を取得できません";
-  return summary.rows.length ? `${summary.rows.length}文書で使用${summary.rows.some((row) => row.role === "shared") ? "・共通枠" : ""}` : "未使用";
+  return summary.rows.length ? `${summary.rows.length}件で使用` : "未使用";
 }
 /** 公開確認の「影響する共通部品」。ホストが返した影響範囲に、このページが使う部品（入れ子を含む）を同じ名前が無ければ加える。 */
 export function releaseAffected(hosted: readonly EditorReleaseAffected[] | undefined, document: PageDocument | undefined, library: ComponentLibrary | undefined): readonly EditorReleaseAffected[] | undefined {
@@ -299,7 +299,7 @@ export function masterValue(definition: ComponentDefinition, name: string): stri
 /** 部品の element の field を公開する・やめる。名前は <ノードID>_<field>、表示名は field の名前（重複時は末尾に 2, 3…）。 */
 export function exposeComponentProp(library: ComponentLibrary, componentId: string, nodeId: string, field: ComponentPropField, exposed: boolean, blocks: EditorBlockRegistry): ComponentLibrary {
   const definition = library.components.find((component) => component.id === componentId);
-  if (!definition) throw new Error("部品が見つかりません。");
+  if (!definition) throw new Error("コンポーネントが見つかりません。");
   const props = definition.props ?? {}, existing = Object.entries(props).find(([, prop]) => prop.node === nodeId && prop.field === field)?.[0];
   if (!exposed) return existing ? setComponentProp(library, componentId, existing, undefined, blocks) : library;
   if (existing) return library;

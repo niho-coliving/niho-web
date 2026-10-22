@@ -126,7 +126,7 @@ test("page changes are checked for title, path, conflicts, host-owned kinds and 
   assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: " ", path: "/x" }, pages, site), /ページ名/);
   assert.match(checkPageChange({ action: "create", siteId: "demo", locale: "ja-JP", title: "a".repeat(121), path: "/x" }, pages, site), /120文字/);
   for (const change of [{ action: "duplicate", source: target("detail"), title: "複製", path: "/copy" }, { action: "update", target: target("header"), title: "ヘッダー", path: "/header" },
-    { action: "visibility", target: target("detail"), visibility: "private" }]) assert.equal(checkPageChange(change, pages, site), "テンプレートと共通枠はホストが管理します。");
+    { action: "visibility", target: target("detail"), visibility: "private" }]) assert.equal(checkPageChange(change, pages, site), `${change.action === "update" ? "コンポーネント" : "テンプレート"}はページの操作で変更できません。`);
   assert.match(checkPageChange({ action: "create", siteId: "other", locale: "ja-JP", title: "別", path: "/x" }, pages, site), /別のサイト/);
   assert.match(checkPageChange({ action: "update", target: { ...target("about"), siteId: "other" }, title: "別", path: "/x" }, pages, site), /別のサイト/);
   assert.match(checkPageChange({ action: "update", target: target("missing"), title: "無い", path: "/x" }, pages, site), /見つかりません/);
@@ -206,7 +206,7 @@ test("replaceAsset swaps every image and background reference to the same asset"
   const next = editDocument(original, { type: "replaceAsset", from: sea, to: { provider: "cms", id: "new" } });
   assert.deepEqual(nodeAt(next, [0, 3]).asset, { provider: "cms", id: "new" }); assert.deepEqual(nodeAt(next, [0]).style.base.backgroundImage, { asset: { provider: "cms", id: "new" } });
   assert.deepEqual(nodeAt(next, [0]).style.responsive[0].declarations.backgroundImage, { asset: wave });
-  assert.throws(() => editDocument(next, { type: "replaceAsset", from: sea, to: wave }), /置き換える素材/);
+  assert.throws(() => editDocument(next, { type: "replaceAsset", from: sea, to: wave }), /置き換えるアセット/);
   assert.throws(() => editDocument(original, { type: "replaceAsset", from: sea, to: wave }, {}, [{ nodeId: "photo", fields: ["asset"], reason: "連動画像" }]), /連動画像/);
 });
 test("the social cover can be an asset, follows replaceAsset and switches back to a URL", () => {

@@ -65,7 +65,7 @@ test("editor opens the page tree in a full-width quiet workspace", async () => {
     assert.equal(document.querySelector('.e-tools button[title="ページ"]').getAttribute("aria-pressed"), "true");
     assert.equal(document.querySelector('[aria-label="ページ一覧"]').hidden, false);
     assert.equal(document.querySelector('[aria-label="要素を追加"]').hidden, true);
-    assert.equal(document.querySelector('.e-tools button[title="素材"]'), null);
+    assert.equal(document.querySelector('.e-tools button[title="アセット"]'), null);
     assert.ok(pageRow("ホーム")); assert.ok(document.querySelector('.e-canvas-tools input[aria-label="表示幅"]'));
     const css = document.querySelector(".nw-editor style").textContent;
     assert.ok(css.includes("--e-blue:#2878ff")); assert.ok(css.includes("grid-template-columns:296px minmax(0,1fr) 300px"));
@@ -317,10 +317,10 @@ test("page panel shows the path tree, kinds, states and counts, and selecting a 
   const host = pageHost(), app = await setup({ adapter: host.adapter });
   try {
     assert.equal(document.querySelector('[aria-label="ページ"]')?.getAttribute("aria-pressed"), "true");
-    assert.deepEqual(treeShape(), ["ホーム", "私たちについて", { circles: ["バドミントン", "囲碁"] }, { experiences: ["体験詳細"] }, "ヘッダー"]);
+    assert.deepEqual(treeShape(), ["ホーム", "私たちについて", { circles: ["バドミントン", "囲碁"] }, { experiences: ["体験詳細"] }]);
     assert.equal(pageRow("ホーム").getAttribute("aria-current"), "page"); assert.ok(pageRow("ホーム").textContent.includes("/"));
     assert.ok(pageRow("囲碁").textContent.includes("/circles/kamakura-go")); assert.ok(pageRow("囲碁").textContent.includes("非公開"));
-    assert.ok(pageRow("体験詳細").textContent.includes("テンプレート")); assert.ok(pageRow("ヘッダー").textContent.includes("共通枠"));
+    assert.ok(pageRow("体験詳細").textContent.includes("テンプレート")); assert.equal(pageRow("ヘッダー"), undefined);
     assert.ok(document.body.textContent.includes("公開中 3 / 4 ページ"));
     assert.equal(document.querySelector('[aria-label="体験詳細 の操作"]'), null); assert.equal(document.querySelector('[aria-label="ヘッダー の操作"]'), null);
     assert.ok(document.querySelector('[aria-label="私たちについて の操作"]'));
@@ -335,7 +335,7 @@ test("page panel shows the path tree, kinds, states and counts, and selecting a 
     await change(document.querySelector('input[aria-label="ページを検索"]'), "存在しない");
     assert.ok(document.body.textContent.includes("一致するページはありません"));
     await press(document.querySelector('[aria-label="検索"]')); assert.equal(document.querySelector('input[aria-label="ページを検索"]'), null);
-    assert.equal(treeShape().length, 5);
+    assert.equal(treeShape().length, 4);
   } finally { await app.cleanup(); }
 });
 
@@ -557,8 +557,8 @@ test("release confirmation shows the public URL and the search result informatio
   } finally { await app.cleanup(); }
 });
 
-const assetPanel = () => document.querySelector('[aria-label="素材ライブラリ"]');
-async function tool(name) { const label = name === "素材" && !document.querySelector('.e-tools button[title="素材"]') ? "アップロード" : name; const target = document.querySelector(`.e-tools button[title="${label}"]`); assert.ok(target, label); await act(async () => target.click()); await flush(); }
+const assetPanel = () => document.querySelector('[aria-label="アセットライブラリ"]');
+async function tool(name) { const label = name === "アセット" && !document.querySelector('.e-tools button[title="アセット"]') ? "アップロード" : name; const target = document.querySelector(`.e-tools button[title="${label}"]`); assert.ok(target, label); await act(async () => target.click()); await flush(); }
 const assetCard = (name) => [...(assetPanel()?.querySelectorAll(".e-asset-card") ?? [])].find((node) => node.getAttribute("aria-label").startsWith(`${name}（`));
 const settle = async () => { await flush(); await flush(); };
 async function chooseAsset(name) { const target = assetCard(name); assert.ok(target, name); await act(async () => target.click()); await settle(); }
@@ -626,11 +626,11 @@ test("failed asset preview resolution can be retried", async () => {
   try {
     await settle();
     assert.equal(attempts, 1);
-    assert.ok(button("素材を再読み込み"));
-    await click("素材を再読み込み");
+    assert.ok(button("アセットを再読み込み"));
+    await click("アセットを再読み込み");
     await settle();
     assert.equal(attempts, 2);
-    assert.equal(button("素材を再読み込み"), undefined);
+    assert.equal(button("アセットを再読み込み"), undefined);
     assert.ok(canvasNode("photo")?.getAttribute("src")?.includes("/media/garden.png"));
     await clickCanvas("photo"); await editorTab("画像"); assert.equal(input("レスポンシブ画像 URL"), undefined);
   } finally { await app.cleanup(); }
@@ -660,7 +660,7 @@ test("staff upload an image, set its alt, replace a page image, save the draft a
   app = await setup({ document: withImage(), assets: library });
   try {
     assert.equal(assetPanel().closest("[hidden]") !== null, true);
-    await tool("素材"); assert.equal(assetPanel().closest("[hidden]"), null);
+    await tool("アセット"); assert.equal(assetPanel().closest("[hidden]"), null);
     assert.ok(assetCard("庭の緑.png").getAttribute("aria-label").startsWith("庭の緑.png（画像・600×400・2 KB"));
     assert.ok(assetCard("利用案内.pdf").getAttribute("aria-label").startsWith("利用案内.pdf（PDF・4 KB"));
     assert.ok(assetPanel().textContent.includes("ストレージ使用量 6 KB / 10 MB"));
@@ -709,7 +709,7 @@ test("staff choose the page social cover from the library, save it as an asset r
     assert.equal(assetPanel().closest("[hidden]") !== null, true);
     page = await panel("ページ");
     assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/garden.png");
-    assert.ok(page.textContent.includes("素材ライブラリの画像")); assert.equal(inputIn(page, "画像の説明").value, "庭の緑");
+    assert.ok(page.textContent.includes("アセットの画像")); assert.equal(inputIn(page, "画像の説明").value, "庭の緑");
     assert.equal(inputIn(page, "画像 URL").value, ""); assert.equal(inputIn(page, "画像 URL").closest("details").open, false);
     await change(inputIn(page, "画像の説明"), "庭に面したリビング");
     await click("下書き保存");
@@ -717,16 +717,16 @@ test("staff choose the page social cover from the library, save it as an asset r
     await click("最新の文書を再読込");
     page = await panel("ページ");
     assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/garden.png"); assert.equal(inputIn(page, "画像の説明").value, "庭に面したリビング");
-    // ソーシャルカバーで使っている素材は削除できず、使用箇所の置き換えでカバーも差し替わる（SNS で表示できない形式は拒否）。
-    await tool("素材"); await chooseAsset("庭の緑.png");
+    // ソーシャルカバーで使っているアセットは削除できず、使用箇所の置き換えでカバーも差し替わる（SNS で表示できない形式は拒否）。
+    await tool("アセット"); await chooseAsset("庭の緑.png");
     assert.equal(button("削除…").disabled, true); assert.ok(assetPanel().textContent.includes("このページで使用中です。"));
     await click("このページの使用箇所を置き換え"); await chooseAsset("夜の海.avif");
     assert.equal(assetPanel().querySelector('[role="alert"]').textContent, "この画像はソーシャルカバーにも使われています。ソーシャルカバーに使えるのは JPEG・PNG・WebP・GIF の画像です。");
     await chooseAsset("テラス.jpg"); assert.ok(document.body.textContent.includes("このページの使用箇所を置き換えました。"));
     page = await panel("ページ");
     assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/terrace.jpg"); assert.equal(inputIn(page, "画像の説明").value, "庭に面したリビング");
-    // URL を空で確定しても素材の画像は外れない。URL を入れると URL の画像へ切り替わる。
-    await change(inputIn(page, "画像 URL"), ""); assert.ok(page.textContent.includes("素材ライブラリの画像")); assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/terrace.jpg");
+    // URL を空で確定してもアセットの画像は外れない。URL を入れると URL の画像へ切り替わる。
+    await change(inputIn(page, "画像 URL"), ""); assert.ok(page.textContent.includes("アセットの画像")); assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "/media/terrace.jpg");
     await change(inputIn(page, "画像 URL"), "/cover.jpg");
     assert.ok(page.textContent.includes("URL で指定した画像")); assert.equal(coverFrame(page).querySelector("img").getAttribute("src"), "https://example.test/cover.jpg");
     await press(buttonIn(page, "画像を外す")); assert.equal(coverFrame(page).textContent, "画像は未設定です");
@@ -753,7 +753,7 @@ test("the site social cover is chosen from the library, saved with site settings
   try {
     const site = await panel("サイト");
     assert.equal(coverFrame(site).querySelector("img").getAttribute("src"), "/media/garden.png");
-    assert.ok(site.textContent.includes("素材ライブラリの画像"));
+    assert.ok(site.textContent.includes("アセットの画像"));
     await press(buttonIn(site, "画像を外す")); assert.equal(inputIn(site, "画像の説明").value, "");
     await press(buttonIn(site, "サイト設定を保存"));
     assert.deepEqual(host.calls.settingsSaves[1].settings, { title: "デモサイト", description: "サイトの説明", locale: "ja" });
@@ -763,7 +763,7 @@ test("the site social cover is chosen from the library, saved with site settings
 test("library images can be added inside the selected element and used as its background", async () => {
   const app = await setup({ assets: createMemoryAssetLibrary({ siteId: "demo", seed: [garden] }) });
   try {
-    await clickLayer("hero"); await tool("素材"); await chooseAsset("庭の緑.png");
+    await clickLayer("hero"); await tool("アセット"); await chooseAsset("庭の緑.png");
     await click("ページに追加");
     assert.equal(document.querySelector('[aria-label="インスペクタ"] .e-inspector-context strong').textContent, "画像");
     assert.ok(document.querySelector('[data-node-id="node_1"]'));
@@ -793,27 +793,27 @@ test("uploads explain rejected formats, sizes, quota, scans and permissions, and
   } };
   const app = await setup({ assets: guarded });
   try {
-    await tool("素材");
+    await tool("アセット");
     await uploadFiles([new File(["%PDF"], "案内.pdf", { type: "application/pdf" }), png("大きい.png", 2000), png("中くらい.png", 600)]);
     const text = () => assetPanel().querySelector(".e-asset-uploads").textContent;
     assert.ok(text().includes("案内.pdf: この形式はアップロードできません。アップロードできる形式: PNG"));
     assert.ok(text().includes("大きい.png: ファイルが大きすぎます（上限 1000 B）。"));
     assert.ok(text().includes("中くらい.png: 容量の上限を超えるためアップロードできません。"));
     mode = "scan"; await uploadFiles([png("検査.png", 10)]); assert.ok(text().includes("検査.png: 安全性の確認で受け付けられませんでした。"));
-    mode = "forbidden"; await uploadFiles([png("権限.png", 10)]); assert.ok(text().includes("権限.png: 素材を追加する権限がありません。"));
+    mode = "forbidden"; await uploadFiles([png("権限.png", 10)]); assert.ok(text().includes("権限.png: アセットを追加する権限がありません。"));
     assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 1);
     await act(async () => assetPanel().querySelector('[aria-label="案内.pdf の通知を閉じる"]').click()); assert.ok(!text().includes("案内.pdf"));
   } finally { await app.cleanup(); }
   const foreign = { ...library, listAssets: async (query, signal) => { const result = await library.listAssets(query, signal); return { ...result, assets: [...result.assets, { ...result.assets[0], id: "foreign", siteId: "other" }] }; } };
   const crossSite = await setup({ assets: foreign });
   try {
-    await tool("素材");
-    assert.ok(assetPanel().textContent.includes("素材を読み込めませんでした。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
+    await tool("アセット");
+    assert.ok(assetPanel().textContent.includes("アセットを読み込めませんでした。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
   } finally { await crossSite.cleanup(); }
   const readOnly = await setup({ assets: createMemoryAssetLibrary({ siteId: "demo", seed: [garden] }) });
   try {
-    await tool("素材");
-    assert.equal(button("アップロード"), undefined); assert.ok(assetPanel().textContent.includes("このサイトに素材を追加する権限がありません。"));
+    await tool("アセット");
+    assert.equal(button("アップロード"), undefined); assert.ok(assetPanel().textContent.includes("このサイトにアセットを追加する権限がありません。"));
   } finally { await readOnly.cleanup(); }
 });
 
@@ -826,7 +826,7 @@ test("assets used on this page or other pages cannot be deleted; unused assets a
   const app = await setup({ document: withImage({ asset: { provider: "uploads", id: "here" }, attrs: { alt: "ここ" } }), assets: { ...library, listAssetUsages: async (request, signal) => hideUsages ? [] : library.listAssetUsages(request, signal) } });
   try {
     assert.equal(canvasNode("photo").getAttribute("src"), "/media/here.png");
-    await tool("素材");
+    await tool("アセット");
     assert.ok(assetCard("使用中.png").getAttribute("aria-label").endsWith("・使用中）")); assert.ok(assetCard("他ページ.png").getAttribute("aria-label").endsWith("・使用中）"));
     await chooseAsset("使用中.png");
     assert.equal(button("削除…").disabled, true);
@@ -852,7 +852,7 @@ test("assets used on this page or other pages cannot be deleted; unused assets a
 test("without an asset adapter the editor keeps the URL image fields and shows no library", async () => {
   const app = await setup({ document: withImage() });
   try {
-    assert.equal(document.querySelector('.e-tools button[aria-label="素材"]'), null); assert.equal(assetPanel(), null);
+    assert.equal(document.querySelector('.e-tools button[aria-label="アセット"]'), null); assert.equal(assetPanel(), null);
     await clickCanvas("photo"); await editorTab("画像");
     assert.equal(input("画像 URL").value, "/photo.webp"); assert.equal(button("画像を置き換え"), undefined); assert.equal(button("背景画像を選ぶ"), undefined);
     await change(input("画像 URL"), "/other.webp"); assert.equal(canvasNode("photo").getAttribute("src"), "/other.webp");
@@ -884,7 +884,7 @@ function sourceLibrary({ stock = false, documents } = {}) {
       { id: "uploads", kind: "upload", label: "サイト", origin: "このサイトにアップロードした素材", status: "available", capabilities: caps({ upload: true, editMetadata: true, delete: true, folders: true }), seed: [garden] },
       { id: "experience", kind: "cms", label: "体験写真", origin: "NIHO の体験原稿で公開を許可された写真", terms: "体験の公開中だけ表示されます。写真の差し替え・非公開は体験原稿で行います。", status: "available", capabilities: caps(), seed: [yoga] },
       stock ? { id: "stock", kind: "stock", label: "ストック", origin: "ライセンス確認済みのストック素材", status: "available", capabilities: caps({ acquire: true }), seed: [wave] }
-        : { id: "stock", kind: "stock", label: "ストック", origin: "ライセンス確認済みのストック素材", status: "unavailable", unavailableReason: "ストック素材はまだ接続されていません。", capabilities: caps() }
+        : { id: "stock", kind: "stock", label: "ストック", origin: "ライセンス確認済みのストック素材", status: "unavailable", unavailableReason: "ストックアセットはまだ接続されていません。", capabilities: caps() }
     ]
   });
 }
@@ -893,7 +893,7 @@ function spy(library) {
   return { calls, adapter: { ...library, listAssets: async (query, signal) => { calls.lists.push(structuredClone(query)); return library.listAssets(query, signal); },
     acquireAsset: async (request, signal) => { calls.acquires.push(structuredClone(request)); return library.acquireAsset(request, signal); } } };
 }
-const sourceTabs = () => [...assetPanel().querySelectorAll('[aria-label="素材の出所"] button')];
+const sourceTabs = () => [...assetPanel().querySelectorAll('[aria-label="アセットの出所"] button')];
 const cardNames = () => [...assetPanel().querySelectorAll(".e-asset-card")].map((node) => node.getAttribute("aria-label").split("（")[0]);
 const assetButton = (text) => [...(assetPanel()?.querySelectorAll("button") ?? [])].find((node) => node.textContent === text);
 
@@ -901,7 +901,7 @@ test("upload, stock and connect tools scope their libraries while the image pick
   const { adapter } = spy(sourceLibrary());
   const app = await setup({ document: withImage(), assets: adapter });
   try {
-    assert.deepEqual([...document.querySelectorAll(".e-tools button")].filter((node) => !node.classList.contains("e-panel-toggle")).map((node) => node.title), ["追加", "ページ", "レイヤー", "スタイル", "アップロード", "ストック", "接続", "部品"]);
+    assert.deepEqual([...document.querySelectorAll(".e-tools button")].filter((node) => !node.classList.contains("e-panel-toggle")).map((node) => node.title), ["追加", "ページ", "レイヤー", "スタイル", "アップロード", "ストック", "接続", "コンポーネント"]);
     await tool("アップロード");
     assert.deepEqual(sourceTabs().map((node) => node.getAttribute("aria-label") ?? node.textContent), ["サイト"]);
     assert.deepEqual(cardNames(), ["庭の緑.png"]); assert.ok(button("アップロード"));
@@ -956,14 +956,14 @@ test("CMS photos show their origin and terms read-only, without save, upload, fo
     assert.equal(button("変更を保存"), undefined); assert.equal(button("削除…"), undefined); assert.ok(button("ページに追加"));
     const text = assetPanel().textContent;
     for (const expected of ["出所体験写真NIHO の体験原稿で公開を許可された写真体験「鎌倉の朝ヨガ」の写真", "利用条件体験の公開中だけ表示されます。写真の差し替え・非公開は体験原稿で行います。",
-      "この素材は「体験写真」で管理しています。名前・説明・写真の差し替えは出所で行ってください。", "「体験写真」の素材はここでは削除できません。", "このページ: 0 か所"]) assert.ok(text.includes(expected), expected);
+      "このアセットは「体験写真」で管理しています。名前・説明・写真の差し替えは出所で行ってください。", "「体験写真」のアセットはここでは削除できません。", "このページ: 0 か所"]) assert.ok(text.includes(expected), expected);
     await click("一覧に戻る"); await tool("アップロード"); await chooseAsset("庭の緑.png");
     assert.equal(input("名前").readOnly, false); assert.ok(button("変更を保存")); assert.ok(button("削除…")); assert.ok(input("保存先フォルダ"));
     await click("一覧に戻る"); await tool("接続");
     assert.equal(calls.lists.at(-1).provider, "experience"); assert.deepEqual(cardNames(), ["朝ヨガ.png"]);
     assert.ok(assetPanel().textContent.includes("NIHO の体験原稿で公開を許可された写真"));
     assert.equal(assetButton("アップロード"), undefined); assert.equal(button("フォルダを追加"), undefined); assert.equal(assetPanel().querySelector('select[aria-label="フォルダ"]'), null);
-    assert.ok(!assetPanel().textContent.includes("このサイトに素材を追加する権限がありません。"));
+    assert.ok(!assetPanel().textContent.includes("このサイトにアセットを追加する権限がありません。"));
     await tool("アップロード"); assert.ok(assetButton("アップロード")); assert.ok(assetPanel().querySelector('select[aria-label="フォルダ"]')); assert.deepEqual(cardNames(), ["庭の緑.png"]);
   } finally { await app.cleanup(); }
 });
@@ -975,7 +975,7 @@ test("an unconnected stock source explains why without requesting a listing", as
   try {
     await tool("ストック"); const before = calls.lists.length;
     assert.equal(sourceTabs().length, 1); assert.equal(sourceTabs()[0].getAttribute("aria-pressed"), "true");
-    assert.ok(assetPanel().textContent.includes("ストック素材はまだ接続されていません。")); assert.ok(assetPanel().textContent.includes("ライセンス確認済みのストック素材"));
+    assert.ok(assetPanel().textContent.includes("ストックアセットはまだ接続されていません。")); assert.ok(assetPanel().textContent.includes("ライセンス確認済みのストック素材"));
     assert.equal(calls.lists.length, before); assert.ok(calls.lists.every((query) => query.provider !== "stock"));
     assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0); assert.equal(assetPanel().querySelector('[role="alert"]'), null); assert.equal(assetButton("アップロード"), undefined);
     await tool("アップロード"); assert.deepEqual(cardNames(), ["庭の緑.png"]);
@@ -1023,7 +1023,7 @@ test("a removed provider leaves its open asset detail read-only and blocks place
     assert.equal(button("変更を保存"), undefined);
     assert.equal(button("削除…"), undefined);
     assert.equal(button("ページに追加").disabled, true);
-    assert.ok(assetPanel().textContent.includes("出所が確認できない素材は利用できません。"));
+    assert.ok(assetPanel().textContent.includes("出所が確認できないアセットは利用できません。"));
   } finally { await app.cleanup(); }
 });
 
@@ -1079,17 +1079,17 @@ test("source listing failures and assets from undeclared or other sources fail c
   const app = await setup({ assets: adapter });
   try {
     await tool("アップロード");
-    assert.ok(assetPanel().textContent.includes("素材の出所を読み込めませんでした。")); assert.ok(button("再読み込み"));
+    assert.ok(assetPanel().textContent.includes("アセットの出所を読み込めませんでした。")); assert.ok(button("再読み込み"));
     assert.equal(lists.length, 0); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0); assert.equal(assetPanel().querySelector('input[type="search"]'), null);
     failing = false; await click("再読み込み"); assert.deepEqual(sourceTabs().map((node) => node.textContent), ["サイト"]); assert.deepEqual(cardNames(), ["庭の緑.png"]);
     mode = "unknown"; await tool("接続");
-    assert.ok(assetPanel().textContent.includes("素材を読み込めませんでした。出所が確認できない素材は利用できません。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
+    assert.ok(assetPanel().textContent.includes("アセットを読み込めませんでした。出所が確認できないアセットは利用できません。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
     mode = "mixed"; await tool("アップロード");
-    assert.ok(assetPanel().textContent.includes("出所が確認できない素材は利用できません。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
+    assert.ok(assetPanel().textContent.includes("出所が確認できないアセットは利用できません。")); assert.equal(assetPanel().querySelectorAll(".e-asset-card").length, 0);
     mode = "ok"; await click("再読み込み"); assert.deepEqual(cardNames(), ["庭の緑.png"]);
     mode = "upload"; await uploadFiles([png("混入.png", 10)]);
     assert.deepEqual(uploads, ["uploads"]);
-    assert.ok(assetPanel().querySelector(".e-asset-uploads").textContent.includes("混入.png: 出所が確認できない素材は利用できません。")); assert.deepEqual(cardNames(), ["庭の緑.png"]);
+    assert.ok(assetPanel().querySelector(".e-asset-uploads").textContent.includes("混入.png: 出所が確認できないアセットは利用できません。")); assert.deepEqual(cardNames(), ["庭の緑.png"]);
   } finally { await app.cleanup(); }
 });
 
@@ -1105,7 +1105,7 @@ test("recently used assets are requested with recent, also while picking, and le
     assert.equal(button("最近使った").getAttribute("aria-pressed"), "true"); assert.equal(calls.lists.at(-1).recent, true); assert.equal(calls.lists.at(-1).kind, "image");
   } finally { await app.cleanup(); }
   const legacy = await setup({ assets: createMemoryAssetLibrary({ siteId: "demo", seed: [garden] }) });
-  try { await tool("素材"); assert.equal(button("最近使った"), undefined); assert.equal(document.querySelector('[aria-label="素材の出所"]'), null); } finally { await legacy.cleanup(); }
+  try { await tool("アセット"); assert.equal(button("最近使った"), undefined); assert.equal(document.querySelector('[aria-label="アセットの出所"]'), null); } finally { await legacy.cleanup(); }
 });
 // 保存状態・自動保存・端末内の復元・競合の比較・版履歴（docs/save-history-contract.md）
 const { createBrowserRecoveryStore, RecoveryTooLargeError } = await import("@niho/web/history");
@@ -1129,7 +1129,7 @@ test("a host without the new methods and props keeps manual saving and shows no 
     await change(input("ページタイトル"), "手動の編集"); assert.equal(status(), "未保存の変更あり");
     await wait(150); assert.equal(app.calls.saves.length, 0);
     await click("下書き保存"); assert.match(status(), /^保存済み（\d{2}:\d{2}）$/);
-    await click("公開"); assert.ok(!dialog().textContent.includes("影響する共通部品"));
+    await click("公開"); assert.ok(!dialog().textContent.includes("影響するコンポーネント"));
   } finally { await app.cleanup(); }
 });
 
@@ -1384,6 +1384,6 @@ test("release confirmation shows the plan URL and the affected shared parts, pag
     affected: [{ kind: "shared", name: "ヘッダー", detail: "全ページのナビゲーション" }, { kind: "page", name: "ホーム" }, { kind: "site", name: "サイト共通の設定" }] }) } });
   try {
     await click("公開"); const text = dialog().textContent;
-    for (const expected of ["公開URL", "https://example.test/about-us", "影響する共通部品・ページ・サイト設定", "共通部品", "ヘッダー", "全ページのナビゲーション", "ページ", "サイト設定", "サイト共通の設定"]) assert.ok(text.includes(expected), expected);
+    for (const expected of ["公開URL", "https://example.test/about-us", "影響するコンポーネント・ページ・サイト設定", "コンポーネント", "ヘッダー", "全ページのナビゲーション", "ページ", "サイト設定", "サイト共通の設定"]) assert.ok(text.includes(expected), expected);
   } finally { await app.cleanup(); }
 });
