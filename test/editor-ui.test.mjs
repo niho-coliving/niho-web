@@ -76,6 +76,9 @@ test("editor opens the page tree in a full-width quiet workspace", async () => {
     const zoom = document.querySelector('.e-inspector-actions select[aria-label="表示倍率"]');
     assert.deepEqual([...zoom.options].map((option) => option.textContent), [zoom.options[0].textContent, "25%", "50%", "75%", "100%", "150%", "200%"]);
     await change(zoom, "0.5"); assert.equal(document.querySelector(".e-canvas-spacer").dataset.scale, "0.500");
+    assert.equal(document.querySelector(".e-canvas-scaled").style.zoom, "0.5", "workspace scaling participates in layout so fixed iframe layers paint on first open");
+    assert.equal(document.querySelector(".e-canvas-scaled").style.transform, "");
+    assert.equal(document.querySelector("iframe").style.border, "0px", "the canvas border must not reduce the authored viewport width");
     await click("左パネルを閉じる"); assert.equal(document.querySelector('[aria-label="サイト・ページ・レイヤー"]').hidden, false); assert.ok(document.querySelector(".e-body").classList.contains("is-left-closed"));
     await click("ページ"); assert.equal(document.querySelector(".e-body").classList.contains("is-left-closed"), false);
     await click("右パネルを閉じる"); assert.equal(document.querySelector('[aria-label="インスペクタ"]').hidden, true);
