@@ -197,7 +197,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   }, [body, structureEditable, selectedId?.type === "text" ? "" : selectedId?.id, preview, editingId]);
   useEffect(() => {
     if (!body || !editingId) return;
-    const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === editingId);
+    const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === editingId && item.dataset.nwOwner === scope);
     if (!element) return;
     originalHtml.current = element.innerHTML;
     element.contentEditable = "true";
@@ -206,7 +206,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
     const range = body.ownerDocument.createRange(); range.selectNodeContents(element); range.collapse(false);
     const selectedRange = body.ownerDocument.getSelection(); selectedRange?.removeAllRanges(); selectedRange?.addRange(range);
     return () => { element.removeAttribute("contenteditable"); element.removeAttribute("spellcheck"); };
-  }, [body, editingId]);
+  }, [body, editingId, scope]);
   useEffect(() => {
     if (!editingId) return;
     return () => pending(`direct-${editingId}`, false);
@@ -214,9 +214,10 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   function editableElement(target: EventTarget | null): HTMLElement | null {
     const targetElement = asElement(target); if (!targetElement) return null;
     const candidate = targetElement.closest<HTMLElement>("div[role=group][aria-label='リッチテキスト'][data-nw-node]") ??
-      targetElement.closest<HTMLElement>("p[data-nw-node],h1[data-nw-node],h2[data-nw-node],h3[data-nw-node],h4[data-nw-node],h5[data-nw-node],h6[data-nw-node]");
+      targetElement.closest<HTMLElement>("p[data-nw-node],h1[data-nw-node],h2[data-nw-node],h3[data-nw-node],h4[data-nw-node],h5[data-nw-node],h6[data-nw-node]") ??
+      targetElement.closest<HTMLElement>("span[data-nw-node]");
     const entry = entries.find(({ node }) => node.type !== "text" && node.id === candidate?.dataset.nwNode);
-    if (!candidate || !entry || !isDirectlyEditable(entry.node)) return null;
+    if (!candidate || candidate.dataset.nwOwner !== scope || !entry || !isDirectlyEditable(entry.node)) return null;
     if (lockReason(document, entry.path, "children", locks)) return null;
     const descendants = walkNodes({ ...document, body: [entry.node] });
     if (descendants.some(({ node }) => node.type !== "text" && locks.some((lock) => lock.nodeId === node.id && lock.fields.some((field) => field === "*" || field === "children")))) return null;
@@ -226,7 +227,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   }
   function stopEditing(commit: boolean) {
     if (!body || !editing || editing.node.type !== "element") { if (editingId) pending(`direct-${editingId}`, false); setEditingId(null); return; }
-    const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === editingId);
+    const element = Array.from(body.querySelectorAll<HTMLElement>("[data-nw-node]")).find((item) => item.dataset.nwNode === editingId && item.dataset.nwOwner === scope);
     if (!element) { pending(`direct-${editingId}`, false); setEditingId(null); return; }
     if (commit) {
       try {
@@ -270,7 +271,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
     const selection = body?.ownerDocument.getSelection();
     if (selection && savedRange.current) { selection.removeAllRanges(); selection.addRange(savedRange.current); }
     format("createLink", linkHref); setLinkOpen(false); setLinkError("");
-    const element = body?.querySelector<HTMLElement>(`[data-nw-node="${editingId}"]`); element?.focus();
+    const element = body?.querySelector<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node="${editingId}"]`); element?.focus();
   }
   const defaultPreview = presentation
     ? <SitePageRenderer key={replay} document={rendered} presentation={presentation} blocks={blocks} assets={assets} missingAssets="placeholder" />

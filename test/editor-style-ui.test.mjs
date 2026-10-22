@@ -148,6 +148,35 @@ test("editing the canonical overlay shows and saves only its own selectable node
   } finally { await app.cleanup(); }
 });
 
+test("a menu span with a line break edits only its own document, preserves its link and reloads", async () => {
+  const shared = (pageId, body) => ({ schemaVersion: 1, siteId: "demo", pageId, locale: "ja-JP", revision: 1, title: pageId, tokens: {}, body });
+  const label = { type: "element", id: "menu_label", tag: "span", style: { base: { color: "#123456" } }, children: [{ type: "text", text: "Menu label" }, { type: "element", id: "menu_break", tag: "br", children: [] }] };
+  const document = shared("shared-menu", [{ type: "element", id: "menu_link", tag: "a", attrs: { href: "/#about" }, children: [label] }]);
+  const header = shared("header", [{ ...structuredClone(label), children: [{ type: "text", text: "HEADER_STAYS_UNCHANGED" }] }]);
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "menu-span-v1", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header, footer: shared("footer", []) },
+    overlays: [{ id: "site-menu", label: "メニュー", document, triggerIds: ["open-menu"], closeIds: ["close-menu"] }] };
+  const app = await setup({ document, presentation });
+  try {
+    const frameDocument = frame().contentDocument, view = frame().contentWindow;
+    const outside = frameDocument.querySelector('[data-nw-presentation-header] [data-nw-node="menu_label"]');
+    await act(async () => outside.dispatchEvent(new view.MouseEvent("dblclick", { bubbles: true, cancelable: true }))); await flush();
+    assert.notEqual(outside.contentEditable, "true", "shared text with the same node ID must not become editable");
+    const own = frameDocument.querySelector('[data-nw-overlay-editing] [data-nw-node="menu_label"]');
+    await act(async () => own.dispatchEvent(new view.MouseEvent("dblclick", { bubbles: true, cancelable: true }))); await flush();
+    assert.equal(own.contentEditable, "true");
+    own.firstChild.textContent = "Edited menu label";
+    await act(async () => own.dispatchEvent(new view.FocusEvent("focusout", { bubbles: true }))); await flush();
+    await click(button("下書き保存"));
+    const saved = app.calls.saves[0].document, link = saved.body[0], savedLabel = link.children[0];
+    assert.equal(saved.pageId, "shared-menu"); assert.equal(link.attrs.href, "/#about");
+    assert.equal(savedLabel.children[0].text, "Edited menu label"); assert.equal(savedLabel.children[1].id, "menu_break");
+    assert.deepEqual(savedLabel.style, label.style);
+    assert.equal(JSON.stringify(saved).includes("HEADER_STAYS_UNCHANGED"), false);
+    await click(button("最新の文書を再読込"));
+    assert.ok(frame().contentDocument.querySelector('[data-nw-overlay-editing]').textContent.includes("Edited menu label"));
+  } finally { await app.cleanup(); }
+});
+
 test("a tablet override is shown in the tier color, can be reset, and matches the published CSS after reload", async () => {
   const app = await setup();
   try {
