@@ -17,7 +17,7 @@ Node.js 22 以上が必要です。React renderer には React 18.3 または 19
 ```json
 {
   "dependencies": {
-    "@niho/web": "github:niho-coliving/niho-web#<reviewed-commit-sha>",
+    "@niho/web": "github:niho-life/niho-web#<reviewed-commit-sha>",
     "react": "^18.3.0 || ^19.0.0",
     "react-dom": "^18.3.0 || ^19.0.0"
   }
