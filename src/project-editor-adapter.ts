@@ -23,6 +23,16 @@ function assertDocumentTarget(document: unknown, target: EditorTarget): void {
   if (value.siteId !== target.siteId || value.pageId !== target.pageId || value.locale !== target.locale) throw new Error("文書の対象が一致しません。");
 }
 
+function assertPresentationTarget(presentation: unknown, target: EditorTarget): void {
+  if (presentation === undefined) return;
+  const value = record(presentation, "presentation"), shared = record(value.shared, "presentation.shared");
+  if (value.siteId !== target.siteId || value.locale !== target.locale) throw new Error("表示コンテキストの対象が一致しません。");
+  for (const name of ["header", "footer"] as const) {
+    const document = record(shared[name], `presentation.shared.${name}`);
+    if (document.siteId !== target.siteId || document.locale !== target.locale) throw new Error("共有文書の対象が一致しません。");
+  }
+}
+
 function assertLibrarySite(library: unknown, site: EditorSite): void {
   if (record(library, "library").siteId !== site.id) throw new Error("部品ライブラリの対象サイトが一致しません。");
 }
@@ -33,7 +43,8 @@ function releaseRequest(request: EditorReleaseRequest, target: EditorTarget): Ed
     expectedVersion: request.expectedVersion,
     action: request.action,
     ...(request.revision === undefined ? {} : { revision: request.revision }),
-    ...(request.componentsVersion === undefined ? {} : { componentsVersion: request.componentsVersion })
+    ...(request.componentsVersion === undefined ? {} : { componentsVersion: request.componentsVersion }),
+    ...(request.presentationVersion === undefined ? {} : { presentationVersion: request.presentationVersion })
   };
 }
 
@@ -204,6 +215,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       const checkedTarget = targetForProject(target, site);
       const snapshot = structuredClone(await adapter.readDocument(checkedTarget, signal));
       assertDocumentTarget(snapshot.document, checkedTarget);
+      assertPresentationTarget(snapshot.presentation, checkedTarget);
       const { readOnly: rawReadOnly, ...rest } = snapshot, readOnly = parseEditorReadOnly(rawReadOnly);
       return { ...rest, ...(readOnly ? { readOnly } : {}) };
     },
@@ -211,7 +223,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       const target = targetForProject(request.target, site);
       const document = structuredClone(request.document);
       assertDocumentTarget(document, target);
-      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion, ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}),
+      return adapter.saveDraft({ target, document, expectedVersion: request.expectedVersion, ...(request.presentationVersion === undefined ? {} : { presentationVersion: request.presentationVersion }), ...(request.trigger === "autosave" ? { trigger: "autosave" as const } : {}),
         ...(request.localization ? { localization: { expectedSourceVersion: request.localization.expectedSourceVersion, expectedVersion: request.localization.expectedVersion,
           expectedOverlayVersion: request.localization.expectedOverlayVersion } } : {}) }, signal);
     },
@@ -227,6 +239,7 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
       if (result.status === "released") {
         const snapshot = structuredClone(result.snapshot);
         assertDocumentTarget(snapshot.document, target);
+        assertPresentationTarget(snapshot.presentation, target);
         const { readOnly: rawReadOnly, ...rest } = snapshot, readOnly = parseEditorReadOnly(rawReadOnly);
         return { status: "released", snapshot: { ...rest, ...(readOnly ? { readOnly } : {}) } };
       }
@@ -277,7 +290,8 @@ export function createProjectEditorAdapter(adapter: EditorAdapter, projectInput:
         if (typeof request.id !== "string" || !request.id || request.id.length > 200) throw new Error("版を確認できません。");
         const result = structuredClone(await adapter.readRevision!({ target, id: request.id }, signal));
         assertDocumentTarget(result?.document, target);
-        return { document: result.document };
+        assertPresentationTarget(result?.presentation, target);
+        return { document: result.document, ...(result.siteStyles === undefined ? {} : { siteStyles: result.siteStyles }), ...(result.presentation === undefined ? {} : { presentation: result.presentation }) };
       }
     } satisfies Pick<EditorAdapter, "readRevision"> : {}),
     ...(adapter.createSnapshot ? {

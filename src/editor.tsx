@@ -2,7 +2,7 @@
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { PageRenderer } from "./react.js";
+import { PageRenderer, SitePageRenderer } from "./react.js";
 import { parsePageDocument } from "./document.js";
 import { canvasCss, pageScope } from "./css.js";
 import { DocumentValidationError } from "./validation-utils.js";
@@ -22,10 +22,11 @@ import { AutosaveSwitch, ConflictDialog, HistoryBar, HistoryDialogs, LibraryReco
 import { isDirectlyEditable, readEditableChildren } from "./editor-rich-text.js";
 import { isSafePublicLink } from "./validation-utils.js";
 import type { ComponentUsageEntry, EditorBlockRegistry, EditorCanvasPreviewProps, EditorLocaleReleasePlan, EditorLocaleReleaseState, EditorLock, EditorPage, EditorPageChange, EditorReleasePlan, EditorReleaseRequest, EditorSite, EditorTarget, PageEditorProps } from "./editor-types.js";
-import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode } from "./types.js";
+import type { ComponentKind, ComponentLibrary, ElementTag, PageDocument, PageNode, SitePresentation } from "./types.js";
 import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlacement, socialImageProblem, useLocalAssetUsage, useResolvedAssets, type AssetAction, type AssetPicker } from "./editor-assets.js";
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
+import { presentationAssetDocument } from "./presentation.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
 import { bumpChangedComponentVersions, componentCreationLock, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
 import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
@@ -126,7 +127,7 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, height, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, previewComponent: PreviewComponent, mode, baseVersion, historyRevision, assets, motionCss, replay, rendered, origins, openInstance }: {
+function Canvas({ document, blocks, width, height, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, previewComponent: PreviewComponent, mode, baseVersion, historyRevision, assets, motionCss, replay, rendered, presentation, origins, openInstance }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; height: number; selection: NodePath | null; selectedNodeId?: string; select: (path: NodePath | null, nodeId?: string, slot?: string | null) => void;
   canEditNode?: (nodeId: string) => boolean;
   slot: string | null;
@@ -140,6 +141,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   motionCss: string; replay: string;
   previewComponent?: PageEditorProps["previewComponent"]; mode: "edit" | "preview" | "history";
   baseVersion: string; historyRevision?: EditorCanvasPreviewProps["historyRevision"];
+  presentation?: SitePresentation;
   /** 描画する展開済みの文書と、展開したノードの出所。選択・ドラッグ等は document のノードで扱う。 */
   rendered: PageDocument; origins: ReadonlyMap<string, ResolvedOrigin>; openInstance: (instanceId: string, nodeId: string) => void;
 }) {
@@ -269,7 +271,9 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
     format("createLink", linkHref); setLinkOpen(false); setLinkError("");
     const element = body?.querySelector<HTMLElement>(`[data-nw-node="${editingId}"]`); element?.focus();
   }
-  const defaultPreview = <StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" />;
+  const defaultPreview = presentation
+    ? <SitePageRenderer key={replay} document={rendered} presentation={presentation} blocks={blocks} assets={assets} missingAssets="placeholder" />
+    : <StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" />;
   return <><iframe ref={frame} title="ページのライブキャンバス" sandbox="allow-same-origin" style={{ width, height }}
     srcDoc={'<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
     onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
@@ -301,7 +305,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
       onDragLeaveCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropPlace(null); }}
       onDropCapture={(event) => { event.preventDefault(); event.stopPropagation(); if (!editable || preview || !dragItem.current) return; const place = placeAt(event); drop(dragItem.current, place); dragItem.current = null; setDropPlace(null); }}
       onSubmitCapture={(event) => { event.preventDefault(); event.stopPropagation(); }}>
-      <style>{`body{font-family:sans-serif;position:relative;}[data-nw-node]{cursor:pointer;}[data-nw-owner][data-nw-node]:is(section,div):empty{min-height:48px;outline:1px dashed #a4b9aa;}[contenteditable=true]{cursor:text!important;outline:2px solid #2878ff!important;outline-offset:3px;} ${selectedId && selectedId.type !== "text" ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"]{outline:2px ${selectedId.type === "instance" ? "dashed #6d4bc3" : "solid #2878ff"}!important;outline-offset:2px;}` : ""}${selectedId?.type === "component" && slot ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"] [data-nw-slot="${slot}"]{outline:2px dashed #2878ff!important;outline-offset:2px;}` : ""}
+      <style>{`body{font-family:sans-serif;position:relative;}[data-nw-node]{cursor:pointer;}[contenteditable=true]{cursor:text!important;outline:2px solid #2878ff!important;outline-offset:3px;} ${selectedId && selectedId.type !== "text" ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"]{outline:2px ${selectedId.type === "instance" ? "dashed #6d4bc3" : "solid #2878ff"}!important;outline-offset:2px;}` : ""}${selectedId?.type === "component" && slot ? `[data-nw-owner="${scope}"][data-nw-node="${selectedId.id}"] [data-nw-slot="${slot}"]{outline:2px dashed #2878ff!important;outline-offset:2px;}` : ""}
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#2878ff;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#2878ff22;outline:2px dashed #2878ff;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#2878ff;box-shadow:0 0 0 1px #1452b8;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
       <style>{canvasAssetCss}</style>
@@ -696,7 +700,8 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
       const localized = targetMode ? localization.context : null;
       if (targetMode && (!localized || !sameTarget(localized.target, current.target))) throw new Error("訳文の状態を読み込んでから保存してください。");
       if (localized) await validateLocalizedDocumentSave(localized.config, localized.sourceDocument, document, localized.options);
-      const result = await adapter.saveDraft({ target: current.target, document: structuredClone(document), expectedVersion: current.version, ...(auto ? { trigger: "autosave" as const } : {}),
+      const result = await adapter.saveDraft({ target: current.target, document: structuredClone(document), expectedVersion: current.version,
+        ...(current.presentation ? { presentationVersion: current.presentation.version } : {}), ...(auto ? { trigger: "autosave" as const } : {}),
         ...(localized ? { localization: { expectedSourceVersion: localized.sourceVersion, expectedVersion: localized.version, expectedOverlayVersion: localized.overlay.version } } : {}) }, controller.signal);
       if (controller.signal.aborted) return false;
       if (result.status === "conflict") { failed("conflict", false); return false; }
@@ -729,7 +734,8 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     const controller = new AbortController(); action.current = controller; setBusy("公開差分を取得中"); setNotice("");
     // 確認 token を、表示している部品ライブラリの version にも結び付ける。
     const input: EditorReleaseRequest = { target: current.target, expectedVersion: current.version, action: actionType,
-      ...(actionType === "rollback" ? { revision } : {}), ...(components && libraryRef.current ? { componentsVersion: libraryRef.current.version } : {}) };
+      ...(actionType === "rollback" ? { revision } : {}), ...(components && libraryRef.current ? { componentsVersion: libraryRef.current.version } : {}),
+      ...(current.presentation ? { presentationVersion: current.presentation.version } : {}) };
     try {
       const result = await adapter.prepareRelease(input, controller.signal);
       if (controller.signal.aborted) return;
@@ -861,9 +867,12 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
       if (latestReadOnly) setNotice(latestReadOnly.reason);
       return;
     }
+    let fresh: Session;
+    try { fresh = editorSessionFrom(snapshot, current.target, blocks, libraryRef.current?.history.present, siteSettingsRef.current.settings, !siteSettingsRef.current.settings); }
+    catch { setNotice("最新の表示コンテキストを検証できませんでした。編集内容は保持しています。"); return; }
     const rebase = (document: PageDocument): PageDocument => ({ ...document, revision: latest.revision });
     const history = { past: current.history.past.map(rebase), present: rebase(current.history.present), future: current.history.future.map(rebase) };
-    replace({ ...current, history, version: snapshot.version, saved: fingerprint(latest), hasSavedDraft: snapshot.hasSavedDraft, locks: snapshot.locks ?? [], releases: snapshot.releases ?? [] });
+    replace({ ...fresh, history, saved: fingerprint(latest) });
     setConflictView(0); setProblem(null);
     if (fingerprint(history.present) === fingerprint(latest)) { setNotice("最新の保存内容と同じ内容です。"); return; }
     void save("manual");
@@ -948,7 +957,14 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   const canvasLibrary = targetMode && !masterId ? localization.context?.localizedComponents : libraryPresent;
   const canvas = useMemo(() => shown && resolveCanvas(shown, canvasLibrary, blocks), [shown, canvasLibrary, blocks]);
   const renderedCanvas = canvas?.document, canvasOrigins = canvas?.origins ?? noOrigins;
-  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, canvas?.document ?? versions.viewing?.document ?? document, fieldEpoch, coverReferences(document, siteSettings)), localUsage = useLocalAssetUsage(document);
+  // 履歴は対応する presentation が返らない旧 snapshot へ現在の共有枠を混ぜない。
+  // 共通部品そのものの編集はサイト枠へ合成しない。合成された共有 header/footer は本文選択 scope の外側に保つ。
+  const canvasPresentation = masterId ? undefined : historyMode ? versions.viewing?.presentation : session?.presentation;
+  const assetDocument = useMemo(() => {
+    const current = canvas?.document ?? versions.viewing?.document ?? document;
+    return current ? presentationAssetDocument(current, canvasPresentation) : undefined;
+  }, [canvas?.document, versions.viewing?.document, document, canvasPresentation]);
+  const resolvedAssets = useResolvedAssets(assets, session?.target.siteId, assetDocument, fieldEpoch, coverReferences(document, siteSettings)), localUsage = useLocalAssetUsage(document);
   const savedMaster = useMemo(() => library && masterId && library.savedLibrary.components.some((component) => component.id === masterId) ? fingerprint(componentDocument(library.savedLibrary, masterId, locale)) : undefined,
     [library?.savedLibrary, masterId, locale]);
   useEffect(() => {
@@ -1294,7 +1310,7 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage" ref={stageRef}><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : session?.hasSavedDraft === false ? publishHold : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
         rollback={session?.readOnly || session?.hasSavedDraft === false || viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && session && shown && renderedCanvas && localizationReady ? <div className="e-canvas-spacer" data-scale={canvasScale.toFixed(3)} data-viewport-height={canvasHeight} style={{ width: width * canvasScale, height: canvasHeight * canvasScale }}><div className="e-canvas-scaled" style={{ width, transform: `scale(${canvasScale})` }}><Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} height={canvasHeight} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+{document && session && shown && renderedCanvas && localizationReady ? <div className="e-canvas-spacer" data-scale={canvasScale.toFixed(3)} data-viewport-height={canvasHeight} style={{ width: width * canvasScale, height: canvasHeight * canvasScale }}><div className="e-canvas-scaled" style={{ width, transform: `scale(${canvasScale})` }}><Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} {...(canvasPresentation ? { presentation: canvasPresentation } : {})} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} height={canvasHeight} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
         motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /></div></div> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>} right={<aside className="e-rail e-right" aria-label="インスペクタ" hidden={!rightPanelOpen || preview}>
       <div className="e-inspector-actions" role="toolbar" aria-label="編集操作"><WorkspaceScaleSelect scale={scaleMode} fitPercent={Math.round(fitScale * 100)} onScale={setScaleMode} />
       {localization.site && selectedLocale && <LanguageSelector config={localization.site.config} locale={selectedLocale} disabled={blocked} select={selectLocale} />}

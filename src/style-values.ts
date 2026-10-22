@@ -88,6 +88,7 @@ const specs: Record<StyleProperty, PropertySpec> = {
   fontWeight: { kind: "number", valid: (v) => ["normal", "bold"].includes(v) || /^\d+$/.test(v) && +v >= 1 && +v <= 1000 },
   lineHeight: { kind: "number", valid: (v) => v === "normal" || positiveLength(v) || unitNumber(v) },
   letterSpacing: { kind: "length", px: true, valid: (v) => length(v) || v === "normal" },
+  wordSpacing: { kind: "length", px: true, valid: (v) => length(v) || v === "normal" },
   fontVariantEastAsian: { valid: oneOf("normal", "proportional-width") }, textAlign: { valid: oneOf("left", "right", "center", "start", "end", "justify") },
   width: dimensionWithCalc, height: dimensionWithCalc, minWidth: dimensionWithCalc, maxWidth: dimensionWithCalc, minHeight: dimension, maxHeight: dimension,
   margin, marginTop: offset, marginRight: offset, marginBottom: offset, marginLeft: offset,
@@ -98,6 +99,7 @@ const specs: Record<StyleProperty, PropertySpec> = {
   justifyContent: { valid: oneOf("start", "end", "center", "flex-start", "flex-end", "space-between", "space-around", "space-evenly") },
   alignItems: { valid: oneOf("start", "end", "center", "stretch", "baseline", "flex-start", "flex-end") },
   alignSelf: { valid: oneOf("auto", "start", "end", "center", "stretch", "baseline", "flex-start", "flex-end") },
+  alignContent: { valid: oneOf("normal", "start", "end", "center", "stretch", "flex-start", "flex-end", "space-between", "space-around", "space-evenly") },
   flexGrow: { kind: "number", valid: unitNumber }, flexShrink: { kind: "number", valid: unitNumber }, flexBasis: dimension,
   gap: nonnegative, rowGap: nonnegative, columnGap: nonnegative,
   gridTemplateColumns: { valid: grid }, gridTemplateRows: { valid: grid },
@@ -108,7 +110,11 @@ const specs: Record<StyleProperty, PropertySpec> = {
   zIndex: { kind: "number", valid: (v) => v === "auto" || /^-?\d+$/.test(v) && Math.abs(+v) <= 9999 },
   borderWidth: nonnegative, borderTopWidth: nonnegative, borderRightWidth: nonnegative, borderBottomWidth: nonnegative, borderLeftWidth: nonnegative,
   borderStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") },
+  borderTopStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") }, borderRightStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") },
+  borderBottomStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") }, borderLeftStyle: { valid: oneOf("none", "solid", "dashed", "dotted", "double") },
+  borderTopColor: { kind: "color", valid: color }, borderRightColor: { kind: "color", valid: color }, borderBottomColor: { kind: "color", valid: color }, borderLeftColor: { kind: "color", valid: color },
   borderRadius: padding, overflow: { valid: oneOf("visible", "hidden", "clip", "auto", "scroll") },
+  overflowWrap: { valid: oneOf("normal", "break-word", "anywhere") }, wordBreak: { valid: oneOf("normal", "break-all", "keep-all", "break-word") },
   objectFit: { valid: oneOf("fill", "contain", "cover", "none", "scale-down") },
   opacity: { kind: "number", valid: (v) => /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(v) },
   backgroundSize: { valid: oneOf("auto", "cover", "contain") },
@@ -130,7 +136,7 @@ export const appearEffects: readonly AppearEffect[] = ["fade", "fade-up", "fade-
 /** 遷移の指定。通常の規則には出さず、状態スタイルを持つノードの動きの規則だけに出す。 */
 export const motionProperties: readonly StyleProperty[] = ["transitionDuration", "transitionDelay", "transitionTimingFunction"];
 export const isStyleProperty = (value: unknown): value is StyleProperty => typeof value === "string" && Object.hasOwn(specs, value);
-export const textStyleProperties: readonly TextStyleProperty[] = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "fontVariantEastAsian", "fontStyle", "textDecorationLine"];
+export const textStyleProperties: readonly TextStyleProperty[] = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "wordSpacing", "fontVariantEastAsian", "fontStyle", "textDecorationLine"];
 /** token を参照できるプロパティの型。参照できなければ undefined。 */
 export const styleTokenKind = (property: StyleProperty): TokenKind | undefined => specs[property].kind;
 /** 数値だけの指定を px として扱うプロパティ。 */
@@ -145,6 +151,13 @@ function tokenName(name: string, path: string): void {
 }
 export function tokenCssValue(token: DesignToken): string {
   return typeof token.value === "number" && token.type === "length" ? `${token.value}px` : String(token.value);
+}
+/** CSS family names containing numeric words require a quoted string (e.g. Font Awesome 6 Brands). */
+export function fontFamilyCss(value: string): string {
+  return value.split(",").map((family) => {
+    const name = family.trim();
+    return name.split(/\s+/).some((word) => /^-?\d/.test(word)) ? JSON.stringify(name) : name;
+  }).join(", ");
 }
 export function parseTokens(value: unknown, path: string): Record<string, DesignToken> {
   const source = record(value, path), result: Record<string, DesignToken> = {};
@@ -282,6 +295,7 @@ export function declarationCss(property: StyleProperty, value: StyleValue): stri
     return `transform:skew(${cssValue.split(" ").join(",")});`;
   }
   const cssName = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-  const cssValue = typeof value === "object" ? `var(--nw-${value.token})` : literal(property, value, property);
+  let cssValue = typeof value === "object" ? `var(--nw-${value.token})` : literal(property, value, property);
+  if (property === "fontFamily" && typeof value !== "object") cssValue = fontFamilyCss(cssValue);
   return `${cssName}:${cssValue};`;
 }

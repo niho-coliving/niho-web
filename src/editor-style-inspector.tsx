@@ -61,6 +61,9 @@ const positions: Choice[] = [["static", "通常"], ["relative", "相対"], ["abs
 const overflows: Choice[] = [["visible", "表示"], ["hidden", "隠す"], ["auto", "スクロール"], ["clip", "切り取る"], ["scroll", "常にスクロール"]];
 const borders: Choice[] = [["none", "なし"], ["solid", "実線"], ["dashed", "破線"], ["dotted", "点線"], ["double", "二重線"]];
 const selfAligns: Choice[] = [["auto", "親に合わせる"], ["flex-start", "先頭"], ["center", "中央"], ["flex-end", "末尾"], ["stretch", "引き伸ばす"], ["baseline", "文字の基準線"]];
+const contentAligns: Choice[] = [["normal", "標準"], ["flex-start", "先頭"], ["center", "中央"], ["flex-end", "末尾"], ["stretch", "引き伸ばす"], ["space-between", "両端"], ["space-around", "均等（外側半分）"], ["space-evenly", "均等"]];
+const wrapChoices: Choice[] = [["normal", "標準"], ["break-word", "長い単語を折る"], ["anywhere", "必要な位置で折る"]];
+const wordBreakChoices: Choice[] = [["normal", "標準"], ["break-all", "文字単位で折る"], ["keep-all", "単語を保つ"], ["break-word", "長い単語を折る"]];
 const fits: Choice[] = [["fill", "引き伸ばす"], ["contain", "全体を収める"], ["cover", "全体を覆う"], ["none", "元のサイズ"], ["scale-down", "縮小のみ"]];
 const hasText = (node: PageNode): boolean => node.type === "text" ? !!node.text.trim() : node.type === "element" && node.children.some(hasText);
 const norm = (value: unknown): Align | undefined => value === "flex-start" || value === "start" ? "start" : value === "flex-end" || value === "end" ? "end" : value === "center" ? "center" : undefined;
@@ -196,6 +199,7 @@ export function StyleInspector(props: StyleInspectorProps) {
         preview={draft("fontFamily")} pending={pending} fieldKey={key("fontFamily")} disabled={disabled || !!lock("fontFamily")} status={status(["fontFamily"], fontHint)} />}
       <div className="e-grid2">{ui.unit("fontSize", "文字サイズ", { units: ["px", "rem", "em", "%", "vw"] })}{ui.select("fontWeight", "文字の太さ", weightChoices, true)}</div>
       <div className="e-grid2">{ui.unit("lineHeight", "行間", { units: ["", "px", "%", "rem", "em"], numberUnit: "", numberLabel: "倍", keywords: [["normal", "標準"]] })}{ui.unit("letterSpacing", "字間", { units: ["px", "em", "rem"] })}</div>
+      {ui.unit("wordSpacing", "単語間隔", { units: ["px", "em", "rem"], keywords: [["normal", "標準"]] })}
       {ui.select("fontVariantEastAsian", "日本語の字幅", [["normal", "標準"], ["proportional-width", "プロポーショナル"]])}
       {segment(["textAlign"], "文字揃え", <Segmented label="文字揃え" value={String(effective("textAlign") ?? "")} options={aligns} disabled={disabled || !!lock("textAlign")} onChange={(value) => report(set({ textAlign: value }))} />)}
       {(can("fontStyle") || can("textDecorationLine")) && <div className="e-actions">{toggle("fontStyle", "斜体", "italic", "normal", "I")}{toggle("textDecorationLine", "下線", "underline", "none", "U")}</div>}
@@ -210,7 +214,7 @@ export function StyleInspector(props: StyleInspectorProps) {
       tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="settings" />}
     {show("box") && normal && <Layout ui={ui} />}
     {show("box") && normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
-    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "borderColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle", "borderColor", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
       {appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
@@ -221,6 +225,13 @@ export function StyleInspector(props: StyleInspectorProps) {
           ui.unit(property, `${["上", "右", "下", "左"][at]}の枠線の太さ`, { units: ["px", "rem", "em"] }))}</div></div>
       </Collapse>}
       {color("borderColor", "枠線の色")}
+      {(["borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"] as const).some(can) && <Collapse key={key("border-side-details")} title="辺ごとの種類・色"
+        initial={(["borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"] as const).some((property) => state(property).own !== undefined)}>
+        <div className="e-box"><div className="e-grid2">{(["Top", "Right", "Bottom", "Left"] as const).flatMap((side, at) => {
+          const style = `border${side}Style` as StyleProperty, colorProperty = `border${side}Color` as StyleProperty, label = ["上", "右", "下", "左"][at];
+          return [ui.select(style, `${label}の枠線の種類`, borders), color(colorProperty, `${label}の枠線の色`)];
+        })}</div></div>
+      </Collapse>}
       {can("opacity") && <PercentField key={key("opacity")} caption="不透明度" value={state("opacity").own} apply={(value) => set({ opacity: value })} preview={draft("opacity")} pending={pending} fieldKey={key("opacity")}
         disabled={disabled || !!lock("opacity")} status={status(["opacity"])} placeholder={typeof effective("opacity") === "number" ? String(Math.round(Number(effective("opacity")) * 100)) : "100"} />}
     </section>}
@@ -231,11 +242,13 @@ export function StyleInspector(props: StyleInspectorProps) {
         disabled={disabled || !!lock("zIndex")} status={status(["zIndex"])} placeholder={text(state("zIndex").inherited?.value)} />}
       {ui.select("overflow", "はみ出し", overflows)}
     </Collapse>}
-    {show("box") && normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
+    {show("box") && normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit", "overflowWrap", "wordBreak"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
       <div className="e-grid2">{ui.unit("flexGrow", "伸びる比率", { units: [""], numberUnit: "" })}{ui.unit("flexShrink", "縮む比率", { units: [""], numberUnit: "" })}</div>
       {ui.unit("flexBasis", "基準サイズ", { keywords: sizes })}
       <div className="e-grid2">{ui.unit("gridColumn", "グリッドの列位置", { units: [] })}{ui.unit("gridRow", "グリッドの行位置", { units: [] })}</div>
       {ui.select("alignSelf", "自身の揃え", selfAligns)}
+      {ui.select("overflowWrap", "長い文字の折り返し", wrapChoices)}
+      {ui.select("wordBreak", "単語の改行", wordBreakChoices)}
       {(element?.tag === "img" || slot) && ui.select("objectFit", "画像の収まり", fits)}
     </Collapse>}
   </div>;
@@ -308,7 +321,7 @@ function Corners({ ui }: { ui: Ui }) {
 }
 
 function Flow({ ui, flex, grid }: { ui: Ui; flex: boolean; grid: boolean }) {
-  const properties: StyleProperty[] = ["display", "flexDirection", "flexWrap", "justifyContent", "alignItems", "gap", "gridTemplateColumns", "gridTemplateRows"];
+  const properties: StyleProperty[] = ["display", "flexDirection", "flexWrap", "justifyContent", "alignItems", "alignContent", "gap", "gridTemplateColumns", "gridTemplateRows"];
   if (!properties.some(ui.can)) return null;
   const direction = String(ui.effective("flexDirection") ?? "row"), column = direction.startsWith("column"), reverse = direction.endsWith("reverse");
   const wrap = ui.effective("flexWrap");
@@ -326,6 +339,7 @@ function Flow({ ui, flex, grid }: { ui: Ui; flex: boolean; grid: boolean }) {
           ui.report(ui.set({ flexDirection: value === "wrap" ? "row" : value, flexWrap: value === "wrap" ? "wrap" : inherited === "wrap" || inherited === "wrap-reverse" ? "nowrap" : undefined }));
         }} />)}
       {ui.unit("gap", "要素間の余白")}
+      {ui.select("alignContent", "複数行の揃え", contentAligns)}
       {row(["justifyContent", "alignItems"], "配置", <><AlignGrid label="配置" value={spread ? undefined : [x, y]} disabled={ui.disabled || lock("justifyContent") || lock("alignItems")} onChange={(nx, ny) => {
         const mainAxis = column ? ny : nx, crossAxis = column ? nx : ny;
         ui.report(ui.set({ justifyContent: flexValue((reverse ? flip(mainAxis) : mainAxis)!), alignItems: flexValue(crossAxis) }));

@@ -1117,6 +1117,7 @@ type WorkerEditorAdapter = {
   readonly assetPreview?: (action: string) => string | null;
   readonly dispatchAssetPreview?: (request: Request, env: Env, identity: AccessIdentity, assetId: string) => Promise<Response>;
   readonly connectOrigins?: readonly string[];
+  readonly fontSources?: readonly string[];
 };
 
 const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map([
@@ -1135,7 +1136,8 @@ const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map
     dispatch: (request, env, identity, route) => signedKamakuraEditorRequest(request, env, identity, route),
     assetPreview: (action) => /^\/editor\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/preview$/iu.exec(action)?.[1] ?? null,
     dispatchAssetPreview: signedKamakuraAssetPreview,
-    connectOrigins: [KAMAKURA_EDITOR_UPSTREAM_ORIGIN]
+    connectOrigins: [KAMAKURA_EDITOR_UPSTREAM_ORIGIN],
+    fontSources: ["https://kamakura-media.niho.life/niho-web/fonts/v1/"]
   }]
 ]);
 
@@ -1171,11 +1173,11 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   }
 }
 
-function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = []): Response {
+function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = [], fontSources: readonly string[] = []): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
   const connectSrc = `connect-src 'self'${connectOrigins.map((origin) => ` ${origin}`).join("")};`;
-  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + " font-src 'self';" + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + ` font-src 'self'${fontSources.map((source) => ` ${source}`).join("")};` + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -1241,7 +1243,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor || projectAlias !== null) {
     if (editorPage?.environment === "staging" && pageAdapter && !await pageAdapter.authorize(env, identity, editorPage)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? []);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? [], pageAdapter?.fontSources ?? []);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }

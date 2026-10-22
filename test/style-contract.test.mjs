@@ -85,6 +85,26 @@ test("new text appearance properties accept only their closed values", () => {
   }
 });
 
+test("native layout additions serialize as a closed style vocabulary", () => {
+  const input = doc();
+  input.body[0].style.base = { ...input.body[0].style.base, alignContent: "space-between", borderTopStyle: "solid", borderRightStyle: "dashed", borderBottomStyle: "dotted", borderLeftStyle: "double",
+    borderTopColor: "#112233", borderRightColor: "transparent", borderBottomColor: "#010203", borderLeftColor: "#abcdef", overflowWrap: "anywhere", wordBreak: "break-word" };
+  const css = generatePageCss(input);
+  for (const part of ["align-content:space-between;", "border-top-style:solid;", "border-right-style:dashed;", "border-bottom-style:dotted;", "border-left-style:double;", "border-top-color:#112233;", "overflow-wrap:anywhere;", "word-break:break-word;"]) assert.ok(css.includes(part), part);
+  for (const [property, value] of [["alignContent", "baseline"], ["borderTopStyle", "ridge"], ["borderLeftColor", "red;display:none"], ["overflowWrap", "normal anywhere"], ["wordBreak", "auto-phrase"]]) {
+    const copy = doc(); copy.body[0].style.base[property] = value; reject(copy);
+  }
+});
+
+test("numeric words in font family names remain valid CSS for both literal and token fonts", () => {
+  const input = doc();
+  input.tokens.icons = { type: "fontFamily", value: "Font Awesome 6 Brands, sans-serif" };
+  input.body[0].style.base.fontFamily = "Font Awesome 6 Brands";
+  const css = generatePageCss(input);
+  assert.ok(css.includes('font-family:"Font Awesome 6 Brands";'));
+  assert.ok(css.includes('--nw-icons:"Font Awesome 6 Brands", sans-serif;'));
+});
+
 test("oversized lengths and stacking orders are rejected at unit specific limits", () => {
   const accept = (declarations) => { const copy = doc(); copy.body[0].style.base = declarations; assert.doesNotThrow(() => parsePageDocument(copy), JSON.stringify(declarations)); };
   const deny = (declarations) => { const copy = doc(); copy.body[0].style.base = declarations; reject(copy); };

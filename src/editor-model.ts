@@ -479,7 +479,7 @@ export function sameTarget(left: EditorTarget, right: EditorTarget): boolean {
 }
 export function validateReleasePlan(plan: EditorReleasePlan, request: EditorReleaseRequest, site: EditorSite): void {
   if (!isSafeHttpsOrigin(plan.domain) || !site.domains.includes(plan.domain) || !sameTarget(plan.target, request.target) || plan.expectedVersion !== request.expectedVersion || plan.action !== request.action || plan.revision !== request.revision ||
-    plan.componentsVersion !== request.componentsVersion ||
+    plan.componentsVersion !== request.componentsVersion || plan.presentationVersion !== request.presentationVersion ||
     typeof plan.confirmationToken !== "string" || !plan.confirmationToken || !Array.isArray(plan.changes) ||
     plan.changes.some((change) => !change || typeof change.path !== "string" || typeof change.before !== "string" || typeof change.after !== "string") ||
     (request.action === "rollback" && (!Number.isSafeInteger(request.revision) || request.revision! < 1)) ||

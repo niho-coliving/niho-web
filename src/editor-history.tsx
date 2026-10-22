@@ -11,6 +11,8 @@ import { Icon } from "./editor-pages.js";
 import { diffDocuments, parseRevisionEntry, parseRevisionPage, RecoveryTooLargeError, type DocumentChange, type EditorRecoveryStore, type EditorRevisionEntry, type EditorRevisionKind } from "./history.js";
 import type { EditorAdapter, EditorBlockRegistry, EditorReleaseAffected, EditorSnapshot, EditorTarget } from "./editor-types.js";
 import type { ComponentLibrary, PageDocument } from "./types.js";
+import { parseSitePresentation } from "./presentation.js";
+import type { SitePresentation } from "./types.js";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 /** ja-JP の YYYY/MM/DD HH:MM（端末の時刻）。 */
@@ -334,7 +336,7 @@ export function useVersionHistory({ adapter, blocks, components, target, version
   report: (text: string) => void; guard: () => string | undefined;
 }) {
   const [open, setOpen] = useState(false), [list, setList] = useState<RevisionList>(emptyList), [attempt, setAttempt] = useState(0);
-  const [viewing, setViewing] = useState<{ entry: EditorRevisionEntry; document: PageDocument } | null>(null), [reading, setReading] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<{ entry: EditorRevisionEntry; document: PageDocument; presentation?: SitePresentation } | null>(null), [reading, setReading] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"diff" | "snapshot" | null>(null), [snapshot, setSnapshot] = useState<SnapshotForm>({ label: "", error: "", busy: false });
   const controllers = useRef(new Set<AbortController>()), latest = useRef({ target, version, report, guard, list, components });
   latest.current = { target, version, report, guard, list, components };
@@ -381,7 +383,8 @@ export function useVersionHistory({ adapter, blocks, components, target, version
       const library = latest.current.components, raw = parsePageDocument(result?.document, blocks, { ...(library ? { components: library } : {}), ...(result.siteStyles ? { siteStyles: result.siteStyles } : {}) });
       const document = result.siteStyles ? resolvePageStyles(raw, result.siteStyles) : raw;
       if (!sameTarget(document, requested)) throw new Error("target mismatch");
-      setViewing({ entry, document });
+      const presentation = result.presentation === undefined ? undefined : parseSitePresentation(result.presentation, document, blocks);
+      setViewing({ entry, document, ...(presentation ? { presentation } : {}) });
     }).catch(() => { if (!controller.signal.aborted) latest.current.report("この版を読み込めませんでした。"); })
       .finally(() => { untrack(controller); if (readController.current === controller) { readController.current = null; setReading(null); } });
   }
