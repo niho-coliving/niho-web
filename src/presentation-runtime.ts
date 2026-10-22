@@ -55,7 +55,7 @@ export function initializeSitePresentation(scope: ParentNode = document): () => 
     }
     listen(overlay, "click", ((event: Event) => {
       const target = event.target as Element | null;
-      if (target?.closest("a[href]")) close(false);
+      if (target?.closest?.("a[href]")) close(event.defaultPrevented);
     }) as EventListener);
   }
   listen(ownerDocument, "keydown", ((event: Event) => {

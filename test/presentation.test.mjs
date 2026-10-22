@@ -117,6 +117,10 @@ test("trusted overlay runtime opens, traps focus, closes and fully cleans up", (
   const navigation = root.querySelector('[data-nw-node="menu-panel"]').querySelector('a[href="/one"]');
   const event = new dom.window.Event("click", { bubbles: true, cancelable: true });
   navigation.dispatchEvent(event); assert.equal(overlay.hidden, true); assert.equal(event.defaultPrevented, false);
+  toggle.click();
+  const previewClick = new dom.window.Event("click", { bubbles: true, cancelable: true });
+  previewClick.preventDefault(); navigation.dispatchEvent(previewClick);
+  assert.equal(overlay.hidden, true); assert.equal(root.activeElement, toggle, "blocked preview navigation returns focus to the opener");
   toggle.click(); assert.equal(overlay.hidden, false); cleanup();
   assert.equal(overlay.hidden, true); assert.equal(root.documentElement.style.overflow, "clip");
   assert.equal(root.documentElement.style.scrollbarGutter, "auto");
