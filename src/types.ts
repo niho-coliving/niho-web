@@ -5,16 +5,19 @@ export type TokenReference = { token: string };
 export type StyleValue = string | number | TokenReference;
 export type StyleProperty =
   | "color" | "backgroundColor" | "borderColor"
-  | "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "fontVariantEastAsian" | "textAlign"
+  | "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "wordSpacing" | "fontVariantEastAsian" | "textAlign"
   | "width" | "height" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight"
   | "margin" | "marginTop" | "marginRight" | "marginBottom" | "marginLeft"
   | "padding" | "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft"
   | "display" | "flexDirection" | "flexWrap" | "justifyContent" | "alignItems" | "alignSelf"
+  | "alignContent"
   | "flexGrow" | "flexShrink" | "flexBasis" | "gap" | "rowGap" | "columnGap"
   | "gridTemplateColumns" | "gridTemplateRows" | "gridColumn" | "gridRow"
   | "position" | "top" | "right" | "bottom" | "left" | "zIndex"
   | "borderWidth" | "borderTopWidth" | "borderRightWidth" | "borderBottomWidth" | "borderLeftWidth"
-  | "borderStyle" | "borderRadius" | "overflow" | "objectFit" | "opacity"
+  | "borderStyle" | "borderTopStyle" | "borderRightStyle" | "borderBottomStyle" | "borderLeftStyle"
+  | "borderTopColor" | "borderRightColor" | "borderBottomColor" | "borderLeftColor"
+  | "borderRadius" | "overflow" | "objectFit" | "opacity" | "overflowWrap" | "wordBreak"
   | "backgroundSize" | "backgroundPosition" | "backgroundRepeat"
   | "fontStyle" | "textDecorationLine"
   | "translate" | "rotate" | "scale" | "skew" | "transformOrigin"
@@ -25,7 +28,7 @@ export type AssetReference = { provider: string; id: string };
 export type BackgroundImageValue = { asset: AssetReference };
 export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>> & { backgroundImage?: BackgroundImageValue };
 /** 文字スタイルで共通化できる見た目。色はカラーの token で共通化する。 */
-export type TextStyleProperty = "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "fontVariantEastAsian" | "fontStyle" | "textDecorationLine";
+export type TextStyleProperty = "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "wordSpacing" | "fontVariantEastAsian" | "fontStyle" | "textDecorationLine";
 export type TextStyleDeclarations = Partial<Record<TextStyleProperty, StyleValue>>;
 export type TextStyle = {
   label?: string;
@@ -125,6 +128,31 @@ export type PageDocument = {
   tokens: Record<string, DesignToken>;
   textStyles?: Record<string, TextStyle>;
   body: PageNode[];
+};
+
+/** 公開サイトが所有する、安全な構造化 font-face。CSS 文字列は受け付けない。 */
+export type SiteFontFace = {
+  family: string;
+  sources: { url: string; format: "woff2" | "woff" }[];
+  style?: "normal" | "italic";
+  weight?: number | string;
+  display?: "auto" | "block" | "swap" | "fallback" | "optional";
+  unicodeRange?: string;
+};
+/**
+ * ページ本文とは独立した、版固定のサイト表示コンテキスト。
+ * header/footer はそれぞれ独立して編集・保存する canonical PageDocument であり、本文へ複製しない。
+ */
+export type SitePresentation = {
+  schemaVersion: 1;
+  siteId: string;
+  locale: string;
+  version: string;
+  reset: "neutral-v1";
+  tokens: Record<string, DesignToken>;
+  layout?: NodeStyle;
+  fonts: SiteFontFace[];
+  shared: { header: PageDocument; footer: PageDocument };
 };
 
 export type ComponentKind = "header" | "footer" | "navigation" | "section" | "part";

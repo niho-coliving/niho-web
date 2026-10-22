@@ -41,7 +41,7 @@ async function setup(options = {}) {
   const adapter = {
     listSites: async () => [{ id: "demo", name: "デモサイト", domains: ["https://example.test"] }],
     listPages: async () => [{ siteId: "demo", pageId: "home", locale: "ja-JP", title: "ホーム" }],
-    readDocument: async () => ({ document: structuredClone(stored), version }),
+    readDocument: async () => ({ document: structuredClone(stored), version, ...(options.presentation ? { presentation: structuredClone(options.presentation) } : {}) }),
     saveDraft: async (request) => { calls.saves.push(structuredClone(request)); stored = { ...structuredClone(request.document), revision: stored.revision + 1 }; version = `v${Number(version.slice(1)) + 1}`; return { status: "saved", version, revision: stored.revision }; },
     prepareRelease: async () => { throw new Error("not used"); }, release: async () => { throw new Error("not used"); },
     ...options.adapter
@@ -79,6 +79,34 @@ test("a shared color is created, applied to two elements, recolored live and sav
     await click(button("削除する", left())); await click(button("下書き保存"));
     const detached = app.calls.saves[1].document;
     assert.equal(detached.tokens["color-1"], undefined); assert.equal(detached.body[0].children[0].style.base.color, "#00aa00");
+  } finally { await app.cleanup(); }
+});
+
+test("native shared context renders outside the editable scope, preserves a 5px empty box and is excluded from page save", async () => {
+  const shared = (pageId, id, text) => ({ schemaVersion: 1, siteId: "demo", pageId, locale: "ja-JP", revision: 1, title: pageId, tokens: {}, body: [{ type: "element", id, tag: pageId === "header" ? "header" : "footer", children: [{ type: "text", text }] }] });
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "presentation-v1", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header: shared("header", "shared_head", "SHARED_HEADER_MUST_NOT_SAVE"), footer: shared("footer", "shared_foot", "SHARED_FOOTER_MUST_NOT_SAVE") } };
+  const source = structuredClone(fixture);
+  source.body[0].children[0].style = { base: { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word" } };
+  source.body[0].style.base.alignContent = "space-between";
+  source.body[0].children.push({ type: "element", id: "bullet", tag: "div", style: { base: { width: "5px", height: "5px", backgroundColor: "#123456" } }, children: [] });
+  const app = await setup({ document: source, presentation });
+  try {
+    const frameDocument = frame().contentDocument;
+    assert.ok(frameDocument.body.textContent.includes("SHARED_HEADER_MUST_NOT_SAVE"));
+    assert.ok(frameDocument.body.textContent.includes("SHARED_FOOTER_MUST_NOT_SAVE"));
+    const css = [...frameDocument.querySelectorAll("style")].map((node) => node.textContent).join("\n");
+    assert.match(css, /\[data-nw-node="bullet"\]\{background-color:#123456;height:5px;width:5px;\}/);
+    assert.equal(css.includes("min-height:48px"), false);
+    await canvasClick("h1"); await editorTab("ボックス");
+    assert.ok(right().textContent.includes("辺ごとの種類・色"));
+    assert.ok(right().textContent.includes("長い文字の折り返し"));
+    await change(input("幅", right()), "99%");
+    await click(button("下書き保存"));
+    assert.equal(app.calls.saves[0].presentationVersion, "presentation-v1");
+    assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_HEADER_MUST_NOT_SAVE"), false);
+    assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_FOOTER_MUST_NOT_SAVE"), false);
+    assert.deepEqual(app.calls.saves[0].document.body[0].children[0].style.base, { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word", width: "99%" });
+    assert.deepEqual(app.calls.saves[0].document.body[0].children.at(-1).style.base, { width: "5px", height: "5px", backgroundColor: "#123456" });
   } finally { await app.cleanup(); }
 });
 

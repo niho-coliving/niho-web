@@ -1,6 +1,7 @@
 export type * from "./types.js";
 export { parsePageDocument, parsePageDocument as validateDocument, parsePageMeta, type PageParseOptions } from "./document.js";
 export { generatePageCss, pageScope } from "./css.js";
+export { SITE_PRESENTATION_LIMITS, cssForSitePresentation, parseSitePresentation, presentationAssetDocument, presentationLayoutDocument } from "./presentation.js";
 export {
   COMPONENT_LIMITS, componentAssetReferences, componentIssues, componentUsage, findComponentLinks, findInstanceLinks, parseComponentLibrary, resolvePageDocument,
   rewriteComponentLinks, rewriteInstanceLinks, type ResolvedOrigin

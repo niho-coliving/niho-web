@@ -126,6 +126,8 @@ export type EditorSnapshot = {
   releases?: readonly { revision: number; label: string }[];
   /** 省略時は従来どおり編集可能。ブラウザ退避や履歴からは復元せず、毎回ホストの現在値を使う。 */
   readOnly?: EditorReadOnly;
+  /** 本文と独立した、同じ snapshot/version に対応する native site presentation。旧ホストは省略可。 */
+  presentation?: unknown;
 };
 export type EditorSaveResult = {
   status: "saved";
@@ -140,6 +142,8 @@ export type EditorReleaseRequest = {
   revision?: number;
   /** 公開確認時にエディターが表示している部品ライブラリの version。ホストは確認 token に結び付ける。 */
   componentsVersion?: string;
+  /** presentation がある snapshot では必須。ホストは共有文書等の依存版も CAS する。 */
+  presentationVersion?: string;
 };
 /** 公開確認に添える影響範囲。kind は共通部品・ページ・サイト設定。 */
 export type EditorReleaseAffected = { kind: "shared" | "page" | "site"; name: string; detail?: string };
@@ -200,7 +204,7 @@ export interface EditorAdapter {
   listPages(siteId: string, signal: AbortSignal): Promise<readonly EditorPage[]>;
   readDocument(target: EditorTarget, signal: AbortSignal): Promise<EditorSnapshot>;
   /** trigger は自動保存のときだけ "autosave"。ホストは履歴の種類の区別に使える。 */
-  saveDraft(request: { target: EditorTarget; document: PageDocument; expectedVersion: string; trigger?: "autosave";
+  saveDraft(request: { target: EditorTarget; document: PageDocument; expectedVersion: string; presentationVersion?: string; trigger?: "autosave";
     /** Present for translated drafts; the host must CAS these values and persist only validated localized overlays. */
     localization?: { expectedSourceVersion: string; expectedVersion: string; expectedOverlayVersion: number };
   }, signal: AbortSignal): Promise<EditorSaveResult>;
@@ -224,7 +228,7 @@ export interface EditorAdapter {
   /** 版履歴。新しい順で、続きは next を cursor に渡す。実装した場合だけ「履歴」を表示する。 */
   listRevisions?(request: { target: EditorTarget; cursor?: string }, signal: AbortSignal): Promise<EditorRevisionPage>;
   /** 共通スタイルを参照する版は、その版に対応する不変のスタイル snapshot も返す。 */
-  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown; siteStyles?: SiteStyles }>;
+  readRevision?(request: { target: EditorTarget; id: string }, signal: AbortSignal): Promise<{ document: unknown; siteStyles?: SiteStyles; presentation?: unknown }>;
   /** 保存済みの状態に名前を付ける。ホストは expectedVersion を検証する。 */
   createSnapshot?(request: { target: EditorTarget; expectedVersion: string; label: string }, signal: AbortSignal): Promise<EditorSnapshotResult>;
 }

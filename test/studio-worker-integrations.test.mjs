@@ -91,6 +91,7 @@ test("registered Worker integrations retain JWT, membership, staging owner, sign
   assert.match(stagingPage.headers.get("Content-Security-Policy"), /connect-src 'self';/u);
   assert.match(stagingPage.headers.get("Content-Security-Policy"), /frame-src 'self';/u);
   assert.doesNotMatch(stagingPage.headers.get("Content-Security-Policy"), /next-kamakura/u);
+  assert.doesNotMatch(stagingPage.headers.get("Content-Security-Policy"), /kamakura-media/u);
 
   assert.equal((await call(`${kamakura}/editor/kamakura-home`)).status, 403);
   assert.equal((await call(`${kamakura}/editor/assets/00000000-0000-4000-8000-000000000001/preview`)).status, 403);
@@ -100,6 +101,7 @@ test("registered Worker integrations retain JWT, membership, staging owner, sign
   const kamakuraPage = await call("/projects/kamakura-site/admin/editor");
   assert.equal(kamakuraPage.status, 200);
   assert.match(kamakuraPage.headers.get("Content-Security-Policy"), /connect-src 'self' https:\/\/next-kamakura\.niho\.life;/u);
+  assert.match(kamakuraPage.headers.get("Content-Security-Policy"), /font-src 'self' https:\/\/kamakura-media\.niho\.life\/niho-web\/fonts\/v1\//u);
   assert.ok(bindings.some((values) => values[1] === "project-kamakura" && values[2] === "kamakura"));
 
   const before = calls.length;

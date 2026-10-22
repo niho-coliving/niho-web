@@ -1,7 +1,7 @@
 import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import type { AppearEffect, BlockContracts, NodeStyle, PageDocument, PageNode, StateName, StateProperty, StyleDeclarations, StyleProperty } from "./types.js";
 import { parsePageDocument } from "./document.js";
-import { declarationCss, motionProperties, tokenCssValue } from "./style-values.js";
+import { declarationCss, fontFamilyCss, motionProperties, tokenCssValue } from "./style-values.js";
 import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
 
 /** 長さを付けて区切るため、異なる ID の組み合わせが同じ scope にならない。 */
@@ -11,12 +11,18 @@ export function pageScope(document: Pick<PageDocument, "siteId" | "pageId" | "lo
 }
 // 遷移は状態スタイルを持つノードの動きの規則だけに出す。
 const motion = new Set<string>(motionProperties);
-const sideBorderWidths = new Set<string>(["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"]);
+const sideBorderProperties = new Set<string>([
+  "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+  "borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle",
+  "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"
+]);
 function declarations(values: StyleDeclarations, assets: ResolvedAssetMap): string {
   const properties = (Object.keys(values) as (StyleProperty | "backgroundImage")[]).filter((property) => !motion.has(property)).sort();
-  const commonWidth = properties.indexOf("borderWidth"), firstSideWidth = properties.findIndex((property) => sideBorderWidths.has(property));
   // CSS shorthand は後にあると side-specific longhand を上書きするため、同じ rule 内で先に出す。
-  if (commonWidth > firstSideWidth && firstSideWidth >= 0) properties.splice(firstSideWidth, 0, properties.splice(commonWidth, 1)[0]!);
+  for (const common of ["borderWidth", "borderStyle", "borderColor"] as const) {
+    const index = properties.indexOf(common), firstSide = properties.findIndex((property) => sideBorderProperties.has(property));
+    if (index > firstSide && firstSide >= 0) properties.splice(firstSide, 0, properties.splice(index, 1)[0]!);
+  }
   return properties.map((property) => {
     if (property !== "backgroundImage") return declarationCss(property, values[property]!);
     // src は parseResolvedAssets で引用符・空白・<> を拒否済み。解決できない宣言だけ省く。
@@ -49,7 +55,7 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
   const scope = `[data-nw-scope="${pageScope(document)}"]`;
   const rules: string[] = [];
   const tokens = Object.entries(document.tokens).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([name, token]) => `--nw-${name}:${tokenCssValue(token)};`).join("");
+    .map(([name, token]) => `--nw-${name}:${token.type === "fontFamily" ? fontFamilyCss(tokenCssValue(token)) : tokenCssValue(token)};`).join("");
   // box sizing の規則も文書の外には出さない。
   const owner = `[data-nw-owner="${pageScope(document)}"]`;
   rules.push(`${scope}{box-sizing:border-box;${tokens}}`, `${scope} ${owner}[data-nw-node]{box-sizing:border-box;}`);

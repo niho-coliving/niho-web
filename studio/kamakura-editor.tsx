@@ -7,6 +7,7 @@ import { studioBuilderDefinition } from "./integration-builder.js";
 import { projectRoutePath } from "./project-routes.mjs";
 import { kamakuraAssetLibrary } from "./kamakura-assets.js";
 import { createKamakuraEditorBlocks } from "./kamakura-editor-blocks.js";
+import { parsePageDocument, parseSitePresentation, type BlockContracts } from "../src/core.js";
 import { KAMAKURA_CATALOG_CONTRACT_ERROR_CODE, KAMAKURA_CATALOG_CONTRACT_ERROR_STATUS, KAMAKURA_COMMON_PAGE_ID as COMMON_PAGE_ID, KAMAKURA_EDITOR_DOMAIN as DOMAIN, KAMAKURA_EDITOR_SITE_ID, KamakuraCatalogContractError, parseKamakuraCatalog } from "./kamakura-catalog.js";
 import type { KamakuraCatalog } from "./kamakura-catalog.js";
 
@@ -79,9 +80,12 @@ function statusFromError(error: unknown): EditorApiStatus {
   return { status: 503, errorCode: null, supportId: null };
 }
 
-function parseSnapshot(value: unknown, target: EditorTarget): EditorSnapshot {
+function parseSnapshot(value: unknown, target: EditorTarget, blocks: BlockContracts, required = false): EditorSnapshot {
   const source = record(value), document = record(source.document), checked = validTarget(target);
   if (document.siteId !== checked.siteId || document.pageId !== checked.pageId || document.locale !== checked.locale || !validVersion(source.version)) throw new Error("文書の対象または版が一致しません。");
+  const parsed = parsePageDocument(source.document, blocks);
+  if (required && source.presentation === undefined) throw new Error("このサイトに必要な表示コンテキストがありません。");
+  if (source.presentation !== undefined) parseSitePresentation(source.presentation, parsed, blocks);
   return structuredClone(value) as EditorSnapshot;
 }
 
@@ -95,7 +99,7 @@ function releaseMatches(plan: EditorReleasePlan, request: EditorReleaseRequest):
   let target: EditorTarget;
   try { target = validTarget(plan.target); validTarget(request.target); }
   catch { return false; }
-  if (target.siteId !== request.target.siteId || target.pageId !== request.target.pageId || target.locale !== request.target.locale || !validVersion(plan.expectedVersion) || plan.expectedVersion !== request.expectedVersion || plan.action !== request.action || plan.revision !== request.revision || plan.domain !== DOMAIN) return false;
+  if (target.siteId !== request.target.siteId || target.pageId !== request.target.pageId || target.locale !== request.target.locale || !validVersion(plan.expectedVersion) || plan.expectedVersion !== request.expectedVersion || !validVersion(plan.presentationVersion) || plan.presentationVersion !== request.presentationVersion || plan.action !== request.action || plan.revision !== request.revision || plan.domain !== DOMAIN) return false;
   if (plan.action === "publish" ? plan.revision !== undefined : plan.action !== "rollback" || !Number.isSafeInteger(plan.revision) || plan.revision! <= 0) return false;
   if (typeof plan.confirmationToken !== "string" || !CONFIRMATION_TOKEN.test(plan.confirmationToken) || !Array.isArray(plan.changes) || plan.changes.length > 81) return false;
   return plan.changes.every((change) => !!change && typeof change.path === "string" && change.path.length <= 512 && typeof change.before === "string" && change.before.length <= 1_200 && typeof change.after === "string" && change.after.length <= 1_200);
@@ -107,10 +111,10 @@ function parsePlan(value: unknown, request: EditorReleaseRequest): EditorRelease
   return plan;
 }
 
-function parseReleased(value: unknown, target: EditorTarget): Extract<EditorReleaseResult, { status: "released" }> {
+function parseReleased(value: unknown, target: EditorTarget, blocks: BlockContracts, required = false): Extract<EditorReleaseResult, { status: "released" }> {
   const source = record(value);
   if (source.status !== "released") throw new Error("公開結果が正しくありません。");
-  return { status: "released", snapshot: parseSnapshot(source.snapshot, target) };
+  return { status: "released", snapshot: parseSnapshot(source.snapshot, target, blocks, required) };
 }
 
 function createKamakuraAdapter(catalog: KamakuraCatalog, onStatus: (status: EditorApiStatus | null) => void): EditorAdapter {
@@ -136,20 +140,21 @@ function createKamakuraAdapter(catalog: KamakuraCatalog, onStatus: (status: Edit
       if (siteId !== "kamakura") throw new Error("編集対象のサイトがありません。");
       return catalog.pages;
     }),
-    readDocument: (target, signal) => request(signal, async () => parseSnapshot(await api(pagePath(target), "GET", undefined, signal), target)),
+    readDocument: (target, signal) => request(signal, async () => parseSnapshot(await api(pagePath(target), "GET", undefined, signal), target, catalog.blockContracts, catalog.nativePresentationPages.includes(target.pageId))),
     saveDraft: (input, signal) => conflict(() => request(signal, async () => {
       if (!validVersion(input.expectedVersion)) throw new Error("保存対象の版が正しくありません。");
-      return parseSaved(await api(`${pagePath(input.target)}/draft`, "PUT", { expectedVersion: input.expectedVersion, document: input.document }, signal));
+      if (!validVersion(input.presentationVersion)) throw new Error("表示コンテキストの版が正しくありません。");
+      return parseSaved(await api(`${pagePath(input.target)}/draft`, "PUT", { expectedVersion: input.expectedVersion, presentationVersion: input.presentationVersion, document: input.document }, signal));
     })),
     prepareRelease: (input, signal) => request(signal, async () => {
       validTarget(input.target);
-      if (!validVersion(input.expectedVersion) || (input.action === "publish" ? input.revision !== undefined : input.action !== "rollback" || !Number.isSafeInteger(input.revision) || input.revision! <= 0)) throw new Error("公開操作と版の指定が一致しません。");
-      const body = { expectedVersion: input.expectedVersion, action: input.action, ...(input.action === "rollback" ? { revision: input.revision } : {}) };
+      if (!validVersion(input.expectedVersion) || !validVersion(input.presentationVersion) || (input.action === "publish" ? input.revision !== undefined : input.action !== "rollback" || !Number.isSafeInteger(input.revision) || input.revision! <= 0)) throw new Error("公開操作と版の指定が一致しません。");
+      const body = { expectedVersion: input.expectedVersion, presentationVersion: input.presentationVersion, action: input.action, ...(input.action === "rollback" ? { revision: input.revision } : {}) };
       return parsePlan(await api(`${pagePath(input.target)}/release-plan`, "POST", body, signal), input);
     }),
     release: (plan, signal) => conflict(() => request(signal, async () => {
       if (!releaseMatches(plan, plan)) throw new Error("公開確認が不正です。再度確認してください。");
-      return parseReleased(await api(`${pagePath(plan.target)}/release`, "POST", { expectedVersion: plan.expectedVersion, confirmationToken: plan.confirmationToken }, signal), plan.target);
+      return parseReleased(await api(`${pagePath(plan.target)}/release`, "POST", { expectedVersion: plan.expectedVersion, presentationVersion: plan.presentationVersion, confirmationToken: plan.confirmationToken }, signal), plan.target, catalog.blockContracts, catalog.nativePresentationPages.includes(plan.target.pageId));
     }))
   };
 }

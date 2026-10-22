@@ -60,6 +60,24 @@ test("legal read and save preserve compatibility while forwarding identity field
   await assert.rejects(() => wrapped.saveDraft({ target, document: { ...document, siteId: "other" }, expectedVersion: "v1" }, signal()), /文書の対象/);
 });
 
+test("presentation stays target-scoped and its dependency version is forwarded to save and release CAS", async () => {
+  const target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
+  const shared = (pageId) => ({ ...fixture, siteId: "demo", pageId, locale: "ja-JP", title: pageId, body: [] });
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "context-v2", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header: shared("header"), footer: shared("footer") } };
+  const { calls, wrapped } = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation }) });
+  const snapshot = await wrapped.readDocument(target, signal());
+  assert.equal(snapshot.presentation.version, "context-v2");
+  await wrapped.saveDraft({ target, document: snapshot.document, expectedVersion: "v1", presentationVersion: "context-v2" }, signal());
+  assert.equal(calls.saves[0].presentationVersion, "context-v2");
+  const plan = await wrapped.prepareRelease({ target, expectedVersion: "v1", presentationVersion: "context-v2", action: "publish" }, signal());
+  assert.equal(calls.prepares[0].presentationVersion, "context-v2");
+  assert.equal(plan.presentationVersion, "context-v2");
+  const mismatched = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation: { ...presentation, siteId: "other" } }) }).wrapped;
+  await assert.rejects(() => mismatched.readDocument(target, signal()), /表示コンテキスト/);
+  const foreignShared = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation: { ...presentation, shared: { ...presentation.shared, header: { ...presentation.shared.header, locale: "en" } } } }) }).wrapped;
+  await assert.rejects(() => foreignShared.readDocument(target, signal()), /共有文書/);
+});
+
 test("prepare and release reject cross-site plans and unapproved domains, but legal release remains compatible", async () => {
   const target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
   const request = { target, expectedVersion: "v1", action: "publish" };
