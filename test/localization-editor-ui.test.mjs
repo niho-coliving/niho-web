@@ -13,6 +13,11 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { PageEditor } = await import("@niho/web/editor");
 const flush = async (turns = 3) => { for (let index = 0; index < turns; index++) await act(async () => new Promise((resolve) => setTimeout(resolve, 0))); };
+async function waitForUi(condition, message) {
+  const deadline = Date.now() + 5000;
+  while (!condition() && Date.now() < deadline) await flush(1);
+  assert.ok(condition(), message);
+}
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent === text) ?? (() => { const id = / · ([^ ]+)$/.exec(text)?.[1]; return id ? document.querySelector(`[data-node-id="${id}"] button.e-layer`) : undefined; })();
 async function click(text) { const target = button(text); assert.ok(target, text); await act(async () => target.click()); await flush(); }
 async function showInspector(value) {
@@ -241,7 +246,10 @@ test("same logical page switches locale through the dirty guard, saves real targ
     await click("English（訳文）"); await click("保存して移動"); await flush(5);
     assert.equal(input("ページタイトル").value, "Manual Kamakura");
     assert.equal(tool("スタイル").disabled, true); assert.ok(button("元に戻す").disabled);
-    await click("h1 · heading"); await change(input("テキスト"), "Edited target heading"); await click("下書き保存");
+    await click("h1 · heading"); await change(input("テキスト"), "Edited target heading");
+    await waitForUi(() => !button("下書き保存").disabled, "訳文の変更が保存可能になる");
+    await click("下書き保存");
+    await waitForUi(() => [...document.querySelectorAll('[role="status"]')].some(node => node.textContent.startsWith("保存済み")), "訳文の非同期検証と保存が完了する");
     assert.equal(app.sites.kamakura.sourceDocument.body[0].children[0].children[0].text, "海辺で暮らす");
     assert.equal(app.sites.kamakura.targetDocument.body[0].children[0].children[0].text, "Edited target heading");
     assert.ok(app.calls.saves.at(-1).localization.expectedSourceVersion.startsWith("source-"));

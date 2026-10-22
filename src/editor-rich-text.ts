@@ -6,7 +6,7 @@ const blockTags = new Set<ElementTag>(["p", "h1", "h2", "h3", "h4", "h5", "h6", 
 const id = () => `edit_${crypto.randomUUID().replaceAll("-", "")}`;
 
 export function isDirectlyEditable(node: PageNode): node is ElementNode {
-  return node.type === "element" && (/^(?:p|h[1-6])$/.test(node.tag) ||
+  return node.type === "element" && (/^(?:p|h[1-6]|span)$/.test(node.tag) ||
     (node.tag === "div" && node.attrs?.role === "group" && node.attrs?.["aria-label"] === "リッチテキスト"));
 }
 
