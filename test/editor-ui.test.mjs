@@ -70,6 +70,8 @@ test("editor opens the page tree in a full-width quiet workspace", async () => {
     const css = document.querySelector(".nw-editor style").textContent;
     assert.ok(css.includes("--e-blue:#2878ff")); assert.ok(css.includes("grid-template-columns:296px minmax(0,1fr) 300px"));
     assert.ok(css.includes("position:absolute")); assert.ok(css.includes("@media(max-width:820px)"));
+    assert.ok(css.includes("scrollbar-gutter:stable"), "fit canvas keeps the scrollbar gutter even when its content fits");
+    assert.ok(css.includes("@supports not (scrollbar-gutter:stable){.nw-editor .e-stage{overflow-y:scroll}}"), "older engines reserve the same width with a persistent scrollbar");
     assert.equal(document.querySelector(".e-toolbar"), null); assert.ok(document.querySelector(".e-project-context")); assert.ok(document.querySelector(".e-inspector-actions"));
     const zoom = document.querySelector('.e-inspector-actions select[aria-label="表示倍率"]');
     assert.deepEqual([...zoom.options].map((option) => option.textContent), [zoom.options[0].textContent, "25%", "50%", "75%", "100%", "150%", "200%"]);
