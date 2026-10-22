@@ -4,8 +4,7 @@ import { ProjectDashboard } from "../src/project-dashboard.js";
 import { ProjectDirectory } from "../src/project-directory.js";
 import { parseProjectDirectoryResult, type ProjectDirectoryResult } from "../src/project-read-model.js";
 import type { Project } from "../src/projects.js";
-import { resolveClientIntegration, TrustedIntegrationEditor } from "./integration-entry.js";
-import { resolveTrustedEditorPage, resolveTrustedIntegration, trustedEditorPath, type ResolvedTrustedIntegration } from "./integration-registry.mjs";
+import { resolveTrustedEditorPage, resolveTrustedIntegration, trustedEditorPath } from "./integration-registry.mjs";
 import { parseProjectAliasPath, projectRoutePath } from "./project-routes.mjs";
 
 type Role = "owner" | "editor";
@@ -392,19 +391,18 @@ function App() {
   const selected = screen.kind === "dashboard" || screen.kind === "editor"
     ? session.directory.entries.find(({ project }) => project.id === screen.projectId && project.site.id === screen.siteId)?.project
     : undefined;
-  const resolvedEditor: ResolvedTrustedIntegration | null = screen.kind === "editor" && selected
+  const resolvedEditor = screen.kind === "editor" && selected
     ? resolveTrustedIntegration(selected.id, selected.site.id, screen.environment)
     : null;
-  const clientIntegration = resolveClientIntegration(resolvedEditor);
 
-  return <div className={`studio-app${clientIntegration?.shellClass ? ` ${clientIntegration.shellClass}` : ""}`}>
+  return <div className="studio-app">
     <header className="studio-shell-header"><a href="/" onClick={screen.kind === "editor" ? undefined : (event) => { event.preventDefault(); navigate({ kind: "directory" }); }}><span>NIHO</span> Web Studio</a><details className="studio-account"><summary>{session.identity.email}</summary><div><small>Google / Cloudflare Access</small><label>Access ID <code>{session.identity.subject}</code></label></div></details></header>
-    <div className={`studio-content${screen.kind === "editor" ? " studio-content-editor" : ""}${clientIntegration?.contentClass ? ` ${clientIntegration.contentClass}` : ""}`}>
+    <div className={`studio-content${screen.kind === "editor" ? " studio-content-editor" : ""}`}>
       {(screen.kind === "dashboard" || screen.kind === "editor") && !selected
         ? <Notice title="プロジェクトを表示できません">プロジェクトが存在しないか、現在のアカウントには参加資格がありません。</Notice>
         : selected && screen.kind === "editor"
-          ? resolvedEditor && clientIntegration
-            ? <TrustedIntegrationEditor resolved={resolvedEditor} project={selected} />
+          ? resolvedEditor
+            ? <Notice title="サイトデザイン編集は休止中です">ヘッダー、余白、レイアウトなどの変更は各サイトの開発で対応します。以前の編集内容は保管しています。記事や体験の原稿は、それぞれの管理画面で引き続き編集できます。</Notice>
             : <Notice title="エディターを表示できません">このサイトまたは環境のエディターは接続されていません。</Notice>
         : selected && screen.kind === "dashboard"
           ? <>

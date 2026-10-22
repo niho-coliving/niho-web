@@ -1,5 +1,7 @@
 # NIHO Web Studio host
 
+> 2026-10-22: Experience / Kamakura のvisual editorは凍結した。canonical・alias・stagingの既知editor URLはAccess認証後に凍結案内を表示し、editor APIはmembership確認後に `409 visual_editor_frozen` を返して上流を呼ばない。`integration-entry`、各site editor、`PageEditor` は実client bundleへ含めない。source/coreと保存データは将来用に保持するが、サイト変更のpreview一致・schema同期・版同期を受入条件にしない。Dashboard、membership、招待は継続する。以下のBFF説明は再接続時の履歴資料である。
+
 Issue #68 / #69 / #70 の Studio host です。共有 `@niho/web` ライブラリとは別に Cloudflare Workers へ配置し、静的 React UI、Worker API、Studio 専用 D1 registry、Experience / Kamakura editor BFF を1つの境界として運用します。
 
 ## この host が所有するもの

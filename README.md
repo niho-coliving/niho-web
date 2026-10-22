@@ -1,10 +1,12 @@
 # niho-web
 
+> 2026-10-22: Studioの2サイト向けvisual editor実行経路は凍結しました。公開サイトの構造・レイアウト・スタイルは各サイトのコードが正本です。editor source/coreは将来用の独立ライブラリとして保持しますが、Studio client bundle、HTML route、server proxyには接続しません。Dashboard、membership、招待など他のplatform機能は継続します。
+
 公開ページの JSON 文書、入力検証、scoped CSS、React / HTML renderer を共有する TypeScript パッケージです。Astro と Next.js が同じ文書を描画できます。React renderer は本文と登録済みブロックをサーバーで描画し、初期 HTML に含めます。
 
 このリポジトリには公開可能な文書契約と描画処理を置きます。認証情報、管理 API、サイトの非公開データ、価格・在庫・予約の判断処理は利用側が所有します。
 
-`studio/` には、このライブラリとは独立して配置する NIHO Web Studio host があります。Cloudflare Access の Google 認証、Studio専用D1のProject/Site・membership、参加Project一覧とDashboardを所有し、niho-appのUser/Project DBやcookieには接続しません。サイト編集bridgeは未接続で、公開・解析など未取得の値は合成しません。構成、security boundary、D1 migration、owner bootstrap、配置手順は [Studio runbook](studio/README.md) を参照してください。
+`studio/` には、このライブラリとは独立して配置する NIHO Web Studio host があります。Cloudflare Access の Google 認証、Studio専用D1のProject/Site・membership、参加Project一覧とDashboardを所有し、niho-appのUser/Project DBやcookieには接続しません。サイト編集routeは凍結案内を返し、editor APIは上流へproxyしません。構成、security boundary、D1 migration、owner bootstrap、配置手順は [Studio runbook](studio/README.md) を参照してください。
 
 ソースは公開されていますが、第三者への再利用ライセンスは付与していません（`UNLICENSED`）。
 

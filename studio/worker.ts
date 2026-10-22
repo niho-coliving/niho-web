@@ -1121,7 +1121,8 @@ type WorkerEditorAdapter = {
   readonly frameSources?: readonly string[];
 };
 
-const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map([
+function workerEditorAdapter(resolved: ResolvedTrustedIntegration): WorkerEditorAdapter | null {
+  const frozenAdapters: ReadonlyMap<string, WorkerEditorAdapter> = new Map([
   [integrationIdentity(EDITOR_PROJECT_ID, EDITOR_SITE_ID), {
     route: (action, method, environment) => experienceEditorRoute(action, method, environment === "staging"),
     authorize: (env, identity, resolved) => resolved.environment === "staging"
@@ -1141,38 +1142,22 @@ const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map
     fontSources: ["https://kamakura-media.niho.life/niho-web/fonts/v1/"],
     frameSources: ["https://kamakura-media.niho.life/niho-web/embeds/v1/", "https://www.google.com/maps/embed"]
   }]
-]);
-
-function workerEditorAdapter(resolved: ResolvedTrustedIntegration): WorkerEditorAdapter | null {
-  return WORKER_EDITOR_ADAPTERS.get(integrationIdentity(resolved.registration.projectId, resolved.registration.siteId)) ?? null;
+  ]);
+  return frozenAdapters.get(integrationIdentity(resolved.registration.projectId, resolved.registration.siteId)) ?? null;
 }
+// Retain the legacy adapters as frozen source only. No active route invokes
+// them while visual editor write paths are frozen.
+if (false) void workerEditorAdapter;
 
-async function editorApi(request: Request, env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
+async function editorApi(env: Env, identity: AccessIdentity, url: URL, projectId: string, siteId: string, action: string): Promise<Response> {
   if (url.href.includes("?")) return json({ error: "invalid_request" }, 400);
   const resolved = resolveTrustedEditorApi(projectId, siteId, action);
-  const adapter = resolved ? workerEditorAdapter(resolved) : null;
-  if (!resolved || !adapter) return json({ error: "not_found" }, 404);
-  const assetId = adapter.assetPreview?.(action) ?? null;
-  if (assetId && adapter.dispatchAssetPreview) {
-    if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-    if (!await adapter.authorize(env, identity, resolved)) return json({ error: "forbidden" }, 403);
-    try { return await adapter.dispatchAssetPreview(request, env, identity, assetId); }
-    catch (error) {
-      if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
-      throw error;
-    }
-  }
-  const route = adapter.route(action, request.method, resolved.environment);
-  if (route === null) return json({ error: "not_found" }, 404);
-  if (route === "method_not_allowed") return json({ error: "method_not_allowed" }, 405);
-  if (!await adapter.authorize(env, identity, resolved)) return json({ error: "forbidden" }, 403);
-  try {
-    return await adapter.dispatch(request, env, identity, route, resolved);
-  }
-  catch (error) {
-    if (error instanceof AuthenticationError) return json({ error: "invalid_request" }, 400);
-    throw error;
-  }
+  if (!resolved) return json({ error: "not_found" }, 404);
+  const authorized = resolved.environment === "staging"
+    ? resolved.registration.projectId === EDITOR_PROJECT_ID && resolved.registration.siteId === EDITOR_SITE_ID && await experienceEditorOwner(env, identity)
+    : await editorMember(env, identity, resolved.registration.projectId, resolved.registration.siteId);
+  if (!authorized) return json({ error: "forbidden" }, 403);
+  return json({ error: "visual_editor_frozen", message: "Site layout and styling are maintained in code." }, 409);
 }
 
 function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = [], fontSources: readonly string[] = [], frameSources: readonly string[] = []): Response {
@@ -1195,7 +1180,7 @@ async function scopedApi(request: Request, env: Env, identity: AccessIdentity, u
   const projectId = match[1]!;
   const siteId = match[2]!;
   const action = match[3] ?? "";
-  if (isTrustedEditorAction(action)) return editorApi(request, env, identity, url, projectId, siteId, action);
+  if (isTrustedEditorAction(action)) return editorApi(env, identity, url, projectId, siteId, action);
   if (request.method === "GET") {
     if (action === "/dashboard") return dashboard(env, identity, projectId, siteId);
     if (action === "/membership") return membershipAdministration(env, identity, projectId, siteId);
@@ -1240,12 +1225,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return htmlError("この操作は利用できません。", 405);
   const projectAlias = parseProjectAliasPath(url.pathname);
   const editorPage = resolveTrustedEditorPage(url.pathname);
-  const pageAdapter = editorPage ? workerEditorAdapter(editorPage) : null;
-  const isEditor = editorPage !== null && pageAdapter !== null;
+  const isEditor = editorPage !== null;
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor || projectAlias !== null) {
-    if (editorPage?.environment === "staging" && pageAdapter && !await pageAdapter.authorize(env, identity, editorPage)) return htmlError("このページを表示できません。", 403);
+    if (editorPage?.environment === "staging" && !await experienceEditorOwner(env, identity)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? [], pageAdapter?.fontSources ?? [], pageAdapter?.frameSources ?? []);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), false);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }
