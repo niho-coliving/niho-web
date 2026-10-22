@@ -957,7 +957,13 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
   }, [document, selectedId, selection]);
   useEffect(() => {
     const stage = stageRef.current; if (!stage) return;
-    const update = () => { const style = stage.ownerDocument.defaultView?.getComputedStyle(stage), horizontalPadding = Number.parseFloat(style?.paddingLeft ?? "0") + Number.parseFloat(style?.paddingRight ?? "0"), verticalPadding = Number.parseFloat(style?.paddingTop ?? "0") + Number.parseFloat(style?.paddingBottom ?? "0"); setStageSize({ width: Math.max(0, stage.clientWidth - horizontalPadding), height: Math.max(0, stage.clientHeight - verticalPadding) }); };
+    const update = () => {
+      const style = stage.ownerDocument.defaultView?.getComputedStyle(stage);
+      const horizontalPadding = Number.parseFloat(style?.paddingLeft ?? "0") + Number.parseFloat(style?.paddingRight ?? "0");
+      const verticalPadding = Number.parseFloat(style?.paddingTop ?? "0") + Number.parseFloat(style?.paddingBottom ?? "0");
+      const width = Math.max(0, stage.clientWidth - horizontalPadding), height = Math.max(0, stage.clientHeight - verticalPadding);
+      setStageSize((current) => current.width === width && current.height === height ? current : { width, height });
+    };
     update(); const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update); observer?.observe(stage); window.addEventListener("resize", update);
     return () => { observer?.disconnect(); window.removeEventListener("resize", update); };
   }, []);
