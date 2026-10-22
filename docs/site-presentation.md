@@ -25,3 +25,18 @@ CSS生成は数字で始まる単語を含むフォント名も正しく引用�
 `initializeSitePresentation` は同じ信頼済みruntimeを公開SSRとEditorプレビューで使い、開閉・Escape・Tab循環・フォーカス復帰・スクロール固定を行う。呼び直す前に返されたcleanupを呼ぶ。スクロール固定時もgutterを維持し、表示幅を変えない。Editorのプレビューではoverlay操作とメニューを閉じる操作だけを通し、ページ遷移・フォーム送信は引き続き止める。
 
 公開ホストは `@niho/web/presentation-runtime` から初期化する。JSONからJavaScript・CSSを読み込む経路や、iframe sandbox/CSPの緩和は追加しない。overlayの公開済み文書と表示設定も依存SHA・公開commitのCAS対象に含める。
+
+## host-owned display view
+
+`hostViews` は、CMS・予約・カレンダー・地図・カルーセルのようにホストが所有する表示を、本文のblock propsと完全一致させて合成する任意のsnapshotです。本文には元のcomponentとpropsだけを保存し、展開済みの表示文書は下書きへ保存しません。
+
+- 一致keyは登録済みblock名と、block contractで正規化したpropsです。同じkeyの重複、未知props、対象site/localeの不一致、presentation内のpageId再利用を拒否します。対象block用のview集合が有効なとき、一致するviewがなければsample componentへfallbackせず描画を止めます。
+- viewの`document`は安全な`PageDocument`だけです。component/instanceを含められず、再帰できません。view数、合計JSON bytes、node数、slot binding数を上限内に制限します。`presentationAssetDocument`はviewも素材解決へ含めますが、編集・保存対象にはしません。
+- `slotBindings` はblock contractで宣言済みのslotだけを、view内の一意なelement IDへ結びます。本文componentのslot style規則はこの要素へ通常どおり適用されます。
+- `externalFrames` は空の`div`を置換する読み取り専用iframe descriptorです。HTTPS、title、loading、限定referrer policy、fullscreen flagと、任意の論理`frameKey`＋数値上限だけを受け付け、資格情報・制御文字・markup delimiterを拒否します。rendererは既定でopaqueな`sandbox="allow-scripts"`、幅・高さ100%、border 0を付けます。任意の`sandbox` / `allow` / HTMLは指定できません。接続先hostの許可リストは統合側でさらに狭めます。Google Mapsのようなorigin維持が必要な外部サービスは、信頼する実行コード側で`createExternalFramePolicy({parentOrigin, sources})`を渡します。同一originは禁止し、HTTPSの完全なoriginとpathだけを照合します。JSONからsandbox権限を要求することはできません。自動高さ通知は送信元iframe window、opaque origin、type/key、100px以上の整数、descriptor上限の全条件が一致した場合だけ反映し、cleanup時に戻します。
+- `carousel` はroot・全slide・prev/next/play操作の既知IDと、上限付きinterval・fadeMs、loop、swipeだけを宣言します。runtimeは先頭slideから決定的に開始し、非表示slideをlayoutから外し、hover/focus/reduced-motion時にautoplayを止め、cleanupでtimer/listener/animation/属性を戻します。fadeMsは重なるslide用のクロスフェードで、reduced-motionまたはWeb Animations未対応なら即時切替です。frame高さは編集モードでも再要求し、Editorのpreviewではpresentation runtimeの操作だけを通し、通常のlink遷移やform送信は止めます。
+- native `details` / `summary` は文書の`open`有無を初期状態とし、Editorプレビューでもsummaryの標準開閉を許可します。選択・編集境界は従来どおり本文owner scopeに限定します。
+
+受け手の互換性を先に配備します。順序は (1) library/Studio reader、(2) site Worker/static reader、(3) `hostViews`を含むnative dataです。CMS等からbuild時にコンパイルするviewは、検証済みview本体だけの決定的`contentHash`を`presentationVersion`へ含めます（hash自身は入力にしません）。編集可能本文へviewを保存せず、旧sampleや古いsnapshotへ黙って戻しません。config/fonts/shared文書などcanonical Git resourceは引き続きblob SHA集合でCASします。
+
+`SitePageRenderer`とSSRの既定`hostViewMode="prefer"`はStudio/静的確認用のdisplay viewを優先します。実公開hostが送信可能form等の実componentを所有するときは`fallback`（実componentがあれば優先）または`off`を明示し、読み取り専用表示で置換しないでください。

@@ -2,7 +2,7 @@ import type { SiteStyles } from "./site-styles.js";
 import type { BuilderDefinition } from "./builder.js";
 import type { ComponentType, ReactNode } from "react";
 import type { AssetLibraryAdapter } from "./assets.js";
-import type { BlockDefinition } from "./react.js";
+import type { BlockDefinition, ExternalFramePolicy } from "./react.js";
 import type { PageKind, PageVisibility, SiteSettings } from "./pages.js";
 import type { ComponentLibrary, PageDocument, PublicPropValue, StyleProperty } from "./types.js";
 import type { EditorRecoveryStore, EditorRevisionEntry, EditorRevisionPage } from "./history.js";
@@ -267,6 +267,8 @@ export type PageEditorProps = {
   /** ホストが用意する戻るなどの操作をツールバーの先頭へ表示する。 */
   toolbarStart?: ReactNode;
   blocks?: EditorBlockRegistry;
+  /** 信頼する外部サービスにだけorigin保持を許す、ホスト所有の実行時policy。 */
+  externalFramePolicy?: ExternalFramePolicy;
   /** 標準の挿入・モーションカタログを同じ ID で置換、または新しい項目で拡張する。 */
   builder?: BuilderDefinition;
   /** Canvasと同じiframe内で描画する。予約・送信などの副作用を起こさず、未指定時は従来どおり。 */

@@ -250,7 +250,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       if (node.type === "text") continue;
       if (node.type === "element" && node.asset && same(node.asset)) { node.asset = structuredClone(to); count++; }
       for (const declarations of [node.style?.base, ...(node.style?.responsive ?? []).map((entry) => entry.declarations)]) {
-        if (declarations?.backgroundImage && same(declarations.backgroundImage.asset)) { declarations.backgroundImage = { asset: structuredClone(to) }; count++; }
+        if (declarations?.backgroundImage && declarations.backgroundImage !== "none" && same(declarations.backgroundImage.asset)) { declarations.backgroundImage = { asset: structuredClone(to) }; count++; }
       }
     }
     const cover = draft.meta?.ogImage;

@@ -193,17 +193,19 @@ test("img elements can reference a library asset instead of a URL and still requ
     { provider: "uploads" }, "uploads:sea", null]) reject(image({ asset, attrs: { alt: "" } }));
 });
 
-test("background images accept only library asset references and background enums are closed", () => {
+test("background images accept only library asset references and bounded background values", () => {
   const input = doc();
   Object.assign(input.body[0].style.base, { backgroundImage: { asset: { provider: "uploads", id: "wave" } }, backgroundSize: "cover", backgroundPosition: "top left", backgroundRepeat: "no-repeat" });
   assert.deepEqual(parsePageDocument(input), input);
+  const percent = structuredClone(input); percent.body[0].style.base.backgroundPosition = "50% 50%";
+  assert.match(generatePageCss(percent), /background-position:50% 50%/);
   const css = generatePageCss(input);
   assert.ok(css.includes("background-position:top left;background-repeat:no-repeat;background-size:cover;color:var(--nw-ink);"));
   assert.ok(!css.includes("background-image"));
   for (const declarations of [{ backgroundImage: "url(/a.webp)" }, { backgroundImage: "/a.webp" }, { backgroundImage: { token: "ink" } }, { backgroundImage: 1 },
     { backgroundImage: { asset: { provider: "uploads", id: "a" }, url: "/a.webp" } }, { backgroundImage: { asset: { provider: "uploads", id: "a", src: "/a.webp" } } },
     { backgroundImage: { asset: "uploads:a" } }, { backgroundImage: {} }, { backgroundSize: "100px" }, { backgroundSize: 10 }, { backgroundSize: { token: "space" } },
-    { backgroundPosition: "center;color:red" }, { backgroundPosition: "50% 50%" }, { backgroundRepeat: "round" }]) {
+    { backgroundPosition: "center;color:red" }, { backgroundPosition: "100.1% 50%" }, { backgroundPosition: "50% 50% 50%" }, { backgroundRepeat: "round" }]) {
     const copy = doc(); copy.body[0].style.base = declarations; reject(copy);
   }
 });

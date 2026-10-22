@@ -102,6 +102,7 @@ test("registered Worker integrations retain JWT, membership, staging owner, sign
   assert.equal(kamakuraPage.status, 200);
   assert.match(kamakuraPage.headers.get("Content-Security-Policy"), /connect-src 'self' https:\/\/next-kamakura\.niho\.life;/u);
   assert.match(kamakuraPage.headers.get("Content-Security-Policy"), /font-src 'self' https:\/\/kamakura-media\.niho\.life\/niho-web\/fonts\/v1\//u);
+  assert.match(kamakuraPage.headers.get("Content-Security-Policy"), /frame-src 'self' https:\/\/kamakura-media\.niho\.life\/niho-web\/embeds\/v1\/ https:\/\/www\.google\.com\/maps\/embed;/u);
   assert.ok(bindings.some((values) => values[1] === "project-kamakura" && values[2] === "kamakura"));
 
   const before = calls.length;

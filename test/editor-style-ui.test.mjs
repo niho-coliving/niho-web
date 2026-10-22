@@ -89,9 +89,11 @@ test("native shared context renders outside the editable scope, preserves a 5px 
   const menu = shared("shared-menu", "shared_menu", "SHARED_MENU_DRAFT_MUST_NOT_SAVE");
   menu.body[0].tag = "nav";
   menu.body[0].children.push({ type: "element", id: "shared_menu_link", tag: "a", attrs: { href: "/other" }, children: [{ type: "text", text: "OTHER" }] });
+  menu.body[0].children.push({ type: "element", id: "shared_menu_anchor", tag: "a", attrs: { href: "#about" }, children: [{ type: "text", text: "ABOUT" }] });
   menu.body[0].children.push({ type: "element", id: "shared_menu_close_node", tag: "a", attrs: { id: "shared-menu-close", href: "#shared-menu" }, children: [{ type: "text", text: "CLOSE" }] });
   const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "presentation-v1", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header, footer: shared("footer", "shared_foot", "SHARED_FOOTER_MUST_NOT_SAVE") }, overlays: [{ id: "shared-menu", label: "共有メニュー", document: menu, triggerIds: ["shared-menu-trigger"], closeIds: ["shared-menu-close"] }] };
   const source = structuredClone(fixture);
+  source.body[0].attrs = { id: "about" };
   source.body[0].children[0].style = { base: { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word" } };
   source.body[0].style.base.alignContent = "space-between";
   source.body[0].children.push({ type: "element", id: "bullet", tag: "div", style: { base: { width: "5px", height: "5px", backgroundColor: "#123456" } }, children: [] });
@@ -111,6 +113,13 @@ test("native shared context renders outside the editable scope, preserves a 5px 
     const ordinaryLink = frameDocument.querySelector('[data-nw-node="shared_menu_link"]');
     const blocked = new (frame().contentWindow.MouseEvent)("click", { bubbles: true, cancelable: true });
     ordinaryLink.dispatchEvent(blocked); assert.equal(blocked.defaultPrevented, true, "preview keeps ordinary navigation blocked");
+    await canvasClick("[data-nw-overlay-open]");
+    assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, false);
+    let scrolled = 0; frameDocument.getElementById("about").scrollIntoView = () => { scrolled++; };
+    const anchor = frameDocument.querySelector('[data-nw-node="shared_menu_anchor"]'), anchorClick = new (frame().contentWindow.MouseEvent)("click", { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(anchorClick); await flush();
+    assert.equal(anchorClick.defaultPrevented, true); assert.equal(scrolled, 1); assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, true, "menu closes before scrolling to the same-page target");
+    await canvasClick("[data-nw-overlay-open]");
     await canvasClick("[data-nw-overlay-close=shared-menu]:not([data-nw-overlay-backdrop])");
     assert.equal(frameDocument.querySelector("[data-nw-overlay]").hidden, true);
     await click(button("編集に戻る"));
@@ -125,6 +134,41 @@ test("native shared context renders outside the editable scope, preserves a 5px 
     assert.equal(JSON.stringify(app.calls.saves[0].document).includes("SHARED_MENU_DRAFT_MUST_NOT_SAVE"), false);
     assert.deepEqual(app.calls.saves[0].document.body[0].children[0].style.base, { borderTopStyle: "solid", borderTopColor: "#334455", overflowWrap: "anywhere", wordBreak: "break-word", width: "99%" });
     assert.deepEqual(app.calls.saves[0].document.body[0].children.at(-1).style.base, { width: "5px", height: "5px", backgroundColor: "#123456" });
+  } finally { await app.cleanup(); }
+});
+
+test("native preview allows details toggling while host views remain read-only and absent from saved drafts", async () => {
+  const blocks = { PreviewBlock: { props: { variant: { type: "enum", values: ["exact"], required: true } }, component: () => null } };
+  const shared = (pageId, tag) => ({ schemaVersion: 1, siteId: "demo", pageId, locale: "ja-JP", revision: 1, title: pageId, tokens: {}, body: [{ type: "element", id: `${pageId}_root`, tag, children: [] }] });
+  const source = { schemaVersion: 1, siteId: "demo", pageId: "details-page", locale: "ja-JP", revision: 1, title: "Details", tokens: {}, body: [
+    { type: "element", id: "faq", tag: "details", children: [
+      { type: "element", id: "faq_summary", tag: "summary", children: [{ type: "text", text: "FAQ question" }] },
+      { type: "element", id: "faq_answer", tag: "p", children: [{ type: "text", text: "FAQ answer" }] },
+    ] },
+    { type: "component", id: "preview_block", block: "PreviewBlock", props: { variant: "exact" } },
+  ] };
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "details-host-v1", reset: "neutral-v1", tokens: {}, fonts: [],
+    shared: { header: shared("header", "header"), footer: shared("footer", "footer") }, hostViews: [{ id: "preview-exact", block: "PreviewBlock", props: { variant: "exact" },
+      document: { schemaVersion: 1, siteId: "demo", pageId: "preview-exact-view", locale: "ja-JP", revision: 1, title: "View", tokens: {}, body: [{ type: "element", id: "view_copy", tag: "p", children: [{ type: "text", text: "HOST_VIEW_MUST_NOT_SAVE" }] }, { type: "element", id: "view_frame", tag: "div", children: [] }] },
+      externalFrames: [{ nodeId: "view_frame", src: "https://embed.example.test/read-only", title: "Read only" }] }] };
+  const app = await setup({ document: source, presentation, props: { blocks } });
+  try {
+    const frameDocument = frame().contentDocument;
+    assert.equal(frame().getAttribute("sandbox"), "allow-same-origin allow-scripts");
+    assert.equal(frameDocument.querySelector('iframe[data-nw-node="view_frame"]').getAttribute("sandbox"), "allow-scripts");
+    assert.ok(frameDocument.body.textContent.includes("HOST_VIEW_MUST_NOT_SAVE"));
+    await canvasClick('[data-nw-node="view_copy"]'); await editorTab("ボックス"); await change(input("幅", right()), "80%");
+    assert.equal(frameDocument.querySelector("details").open, false);
+    await click(button("プレビュー"));
+    await canvasClick("summary");
+    assert.equal(frameDocument.querySelector("details").open, true, "preview capture must not suppress native details behavior");
+    await click(button("編集に戻る"));
+    await canvasClick('[data-nw-node="faq"]'); await editorTab("ボックス"); await change(input("幅", right()), "90%");
+    await click(button("下書き保存"));
+    assert.equal(app.calls.saves[0].presentationVersion, "details-host-v1");
+    assert.equal(JSON.stringify(app.calls.saves[0].document).includes("HOST_VIEW_MUST_NOT_SAVE"), false);
+    assert.equal(app.calls.saves[0].document.body[1].style.base.width, "80%", "host descendant selection edits the containing body component");
+    assert.equal(app.calls.saves[0].document.body[0].attrs?.open, undefined, "preview-only disclosure state is not persisted");
   } finally { await app.cleanup(); }
 });
 

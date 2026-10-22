@@ -214,7 +214,7 @@ export function StyleInspector(props: StyleInspectorProps) {
       tier={{ key: String(tier), get: (property) => state(property).own, set, preview: (values) => preview(values === null ? null : operation(values)), status: (property) => status([property]), lock, effective }} section="settings" />}
     {show("box") && normal && <Layout ui={ui} />}
     {show("box") && normal && (element || slot) && <Flow ui={ui} flex={flex} grid={grid} />}
-    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle", "borderColor", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor", "opacity"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
+    {show("box") && normal && (!!appearanceExtra || (["backgroundColor", "borderRadius", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStyle", "borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle", "borderColor", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor", "opacity", "boxShadow", "textShadow", "outlineOffset", "backgroundFilter"] as const).some(can)) && <section className="e-sec"><h3>外観</h3>
       {color("backgroundColor", "背景色", true)}
       {appearanceExtra}
       {can("borderRadius") && <Corners key={key("radius")} ui={ui} />}
@@ -234,6 +234,10 @@ export function StyleInspector(props: StyleInspectorProps) {
       </Collapse>}
       {can("opacity") && <PercentField key={key("opacity")} caption="不透明度" value={state("opacity").own} apply={(value) => set({ opacity: value })} preview={draft("opacity")} pending={pending} fieldKey={key("opacity")}
         disabled={disabled || !!lock("opacity")} status={status(["opacity"])} placeholder={typeof effective("opacity") === "number" ? String(Math.round(Number(effective("opacity")) * 100)) : "100"} />}
+      {ui.unit("boxShadow", "ボックスの影", { units: [], keywords: [["none", "なし"]] })}
+      {ui.unit("textShadow", "文字の影", { units: [], keywords: [["none", "なし"]] })}
+      {ui.unit("backgroundFilter", "背景画像フィルター", { units: [] })}
+      {ui.unit("outlineOffset", "アウトライン位置", { units: ["px", "rem", "em"] })}
     </section>}
     {show("box") && normal && (["position", "top", "right", "bottom", "left", "zIndex", "overflow"] as const).some(can) && <Collapse key={key("position-section")} title="位置">
       {ui.select("position", "配置の基準", positions)}
@@ -242,13 +246,14 @@ export function StyleInspector(props: StyleInspectorProps) {
         disabled={disabled || !!lock("zIndex")} status={status(["zIndex"])} placeholder={text(state("zIndex").inherited?.value)} />}
       {ui.select("overflow", "はみ出し", overflows)}
     </Collapse>}
-    {show("box") && normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit", "overflowWrap", "wordBreak"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
+    {show("box") && normal && (["flexGrow", "flexShrink", "flexBasis", "gridColumn", "gridRow", "alignSelf", "objectFit", "overflowWrap", "wordBreak", "writingMode"] as const).some(can) && <Collapse key={key("detail-section")} title="詳細">
       <div className="e-grid2">{ui.unit("flexGrow", "伸びる比率", { units: [""], numberUnit: "" })}{ui.unit("flexShrink", "縮む比率", { units: [""], numberUnit: "" })}</div>
       {ui.unit("flexBasis", "基準サイズ", { keywords: sizes })}
       <div className="e-grid2">{ui.unit("gridColumn", "グリッドの列位置", { units: [] })}{ui.unit("gridRow", "グリッドの行位置", { units: [] })}</div>
       {ui.select("alignSelf", "自身の揃え", selfAligns)}
       {ui.select("overflowWrap", "長い文字の折り返し", wrapChoices)}
       {ui.select("wordBreak", "単語の改行", wordBreakChoices)}
+      {ui.select("writingMode", "文字の向き", [["horizontal-tb", "横書き"], ["vertical-rl", "縦書き（右から）"], ["vertical-lr", "縦書き（左から）"]])}
       {(element?.tag === "img" || slot) && ui.select("objectFit", "画像の収まり", fits)}
     </Collapse>}
   </div>;

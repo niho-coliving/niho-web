@@ -16,16 +16,20 @@ const sideBorderProperties = new Set<string>([
   "borderTopStyle", "borderRightStyle", "borderBottomStyle", "borderLeftStyle",
   "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"
 ]);
-function declarations(values: StyleDeclarations, assets: ResolvedAssetMap): string {
-  const properties = (Object.keys(values) as (StyleProperty | "backgroundImage")[]).filter((property) => !motion.has(property)).sort();
+const isolatedBackgroundProperties = new Set<string>(["backgroundImage", "backgroundSize", "backgroundPosition", "backgroundRepeat", "backgroundFilter"]);
+function declarations(values: StyleDeclarations, assets: ResolvedAssetMap, mode: "all" | "withoutIsolatedBackground" | "isolatedBackground" = "all"): string {
+  const properties = (Object.keys(values) as (StyleProperty | "backgroundImage")[])
+    .filter((property) => !motion.has(property) && (mode === "all" || (mode === "isolatedBackground" ? isolatedBackgroundProperties.has(property) : !isolatedBackgroundProperties.has(property)))).sort();
   // CSS shorthand は後にあると side-specific longhand を上書きするため、同じ rule 内で先に出す。
   for (const common of ["borderWidth", "borderStyle", "borderColor"] as const) {
     const index = properties.indexOf(common), firstSide = properties.findIndex((property) => sideBorderProperties.has(property));
     if (index > firstSide && firstSide >= 0) properties.splice(firstSide, 0, properties.splice(index, 1)[0]!);
   }
   return properties.map((property) => {
+    if (property === "backgroundFilter") return `filter:${declarationCss(property, values[property]!).slice("background-filter:".length)}`;
     if (property !== "backgroundImage") return declarationCss(property, values[property]!);
     // src は parseResolvedAssets で引用符・空白・<> を拒否済み。解決できない宣言だけ省く。
+    if (values.backgroundImage === "none") return "background-image:none;";
     const resolved = resolvedAsset(assets, values.backgroundImage!.asset);
     return resolved ? `background-image:url("${resolved.src}");` : "";
   }).join("");
@@ -80,11 +84,25 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
     for (const node of nodes) {
       if (node.type === "text") continue;
       const selector = `${scope} ${owner}[data-nw-node="${node.id}"]`;
+      // The UA content wrapper is a flex item in modern details; fill the authored box.
+      if (node.type === "element" && node.tag === "details") rules.push(`${selector}::details-content{width:100%;min-width:0;}`);
+      const isolatedBackground = [node.style?.base, ...(node.style?.responsive ?? []).map((entry) => entry.declarations)]
+        .some((values) => values?.backgroundFilter !== undefined);
+      const boxDeclarations = (values: StyleDeclarations) => declarations(isolatedBackground && values.position === "static" ? { ...values, position: "relative" } : values, assets, isolatedBackground ? "withoutIsolatedBackground" : "all");
       // 遷移だけの指定は動きの規則に出すので、空の規則を残さない（旧文書の空の規則はそのまま）。
       const motionOnly = (values: StyleDeclarations) => Object.keys(values).some((property) => motion.has(property)) && !declarations(values, assets);
-      if (node.style?.base && !motionOnly(node.style.base)) rules.push(`${selector}{${declarations(node.style.base, assets)}}`);
+      if (node.style?.base && !motionOnly(node.style.base)) rules.push(`${selector}{${isolatedBackground ? `isolation:isolate;${node.style?.base?.position ? "" : "position:relative;"}` : ""}${boxDeclarations(node.style.base)}}`);
+      else if (isolatedBackground) rules.push(`${selector}{isolation:isolate;position:relative;}`);
       for (const responsive of node.style?.responsive ?? []) {
-        if (!motionOnly(responsive.declarations)) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets)}}}`);
+        if (!motionOnly(responsive.declarations)) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${boxDeclarations(responsive.declarations)}}}`);
+      }
+      if (isolatedBackground) {
+        const base = declarations(node.style?.base ?? {}, assets, "isolatedBackground");
+        rules.push(`${selector}::before{content:"";position:absolute;inset:0;width:100%;height:100%;border-radius:inherit;pointer-events:none;z-index:-1;${base}}`);
+        for (const responsive of node.style?.responsive ?? []) {
+          const body = declarations(responsive.declarations, assets, "isolatedBackground");
+          if (body) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}::before{${body}}}`);
+        }
       }
       if (node.type === "component") for (const [slot, style] of Object.entries(node.slots ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
         // ブロックが data-nw-slot を付けた内側の要素。繰り返すカード等、同じ領域のすべてに適用する。

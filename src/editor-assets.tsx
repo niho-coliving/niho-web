@@ -554,7 +554,8 @@ export function BackgroundImageField({ declarations, assets, lock, disabled, onP
   declarations: StyleDeclarations | undefined; assets: ResolvedAssetMap; lock: (property: BackgroundProperty | "backgroundImage") => string | undefined; disabled: boolean;
   onPick: () => void; onClear: () => void; onStyle: (property: StyleProperty, value: StyleValue | undefined) => void;
 }) {
-  const image = declarations?.backgroundImage, src = image ? resolvedAsset(assets, image.asset)?.src : undefined, imageLock = lock("backgroundImage");
+  const background = declarations?.backgroundImage, image = background && background !== "none" ? background : undefined;
+  const src = image ? resolvedAsset(assets, image.asset)?.src : undefined, imageLock = lock("backgroundImage");
   return <details open className="e-asset-background"><summary>背景画像</summary>
     <div className="e-asset-preview e-asset-mini">{src ? <img src={src} alt="" /> : <span className="e-asset-missing">{image ? "画像を表示できません" : "背景画像はありません"}</span>}</div>
     <div className="e-actions"><button type="button" disabled={disabled || !!imageLock} onClick={onPick}>背景画像を選ぶ</button>{image && <button type="button" disabled={disabled || !!imageLock} onClick={onClear}>背景画像を外す</button>}</div>

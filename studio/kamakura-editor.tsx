@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageEditor } from "../src/editor.js";
+import { createExternalFramePolicy } from "../src/react.js";
 import { createProjectEditorAdapter } from "../src/project-editor-adapter.js";
 import type { EditorAdapter, EditorReleasePlan, EditorReleaseRequest, EditorReleaseResult, EditorSaveResult, EditorSnapshot, EditorTarget } from "../src/editor-types.js";
 import type { Project } from "../src/projects.js";
@@ -186,12 +187,13 @@ export function KamakuraEditor({ project, environment }: { readonly project: Pro
   const ready = catalog.status === "ready" ? catalog.value : null;
   const adapter = useMemo(() => ready ? createProjectEditorAdapter(createKamakuraAdapter(ready, setStatus), project) : null, [ready, project]);
   const blocks = useMemo(() => ready ? createKamakuraEditorBlocks(ready.blockContracts) : {}, [ready]);
+  const externalFramePolicy = useMemo(() => createExternalFramePolicy({ parentOrigin: window.location.origin, sources: ["https://www.google.com/maps/embed"] }), []);
   return <main className="studio-editor studio-kamakura-editor">
     {status !== null && <EditorAlert status={status} />}
     {catalog.status === "loading" && <section className="studio-kamakura-state" role="status"><p>ページを読み込んでいます…</p></section>}
     {catalog.status === "error" && <section className="studio-kamakura-state" role="alert"><h1>ページを読み込めませんでした</h1><p>{catalog.errorCode === KAMAKURA_CATALOG_CONTRACT_ERROR_CODE ? "ページ一覧の形式に対応できません。編集内容は変更されていません。管理者へ確認してください。" : "編集内容は変更されていません。接続状態を確認して再試行してください。"}</p>{catalog.supportId !== null && <p>問い合わせID: <code>{catalog.supportId}</code></p>}<button type="button" onClick={() => setReload((value) => value + 1)}>再試行</button></section>}
     {ready && (ready.pages.length === 0
       ? <section className="studio-kamakura-state"><h1>編集できるページはありません</h1><p>編集対象のページがありません。ページ一覧を再読み込みしてください。</p><button type="button" onClick={() => setReload((value) => value + 1)}>再読み込み</button></section>
-      : adapter && <PageEditor adapter={adapter} blocks={blocks} assets={kamakuraAssetLibrary} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarStart={<a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">←</a>} />)}
+      : adapter && <PageEditor adapter={adapter} externalFramePolicy={externalFramePolicy} blocks={blocks} assets={kamakuraAssetLibrary} insertableBlocks={[]} builder={studioBuilderDefinition} toolbarStart={<a href={projectRoutePath(window.location.pathname, project.id, project.site.id, "dashboard")} aria-label="ダッシュボードに戻る" title="ダッシュボードに戻る">←</a>} />)}
   </main>;
 }

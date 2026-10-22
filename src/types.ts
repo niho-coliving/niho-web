@@ -18,15 +18,15 @@ export type StyleProperty =
   | "borderStyle" | "borderTopStyle" | "borderRightStyle" | "borderBottomStyle" | "borderLeftStyle"
   | "borderTopColor" | "borderRightColor" | "borderBottomColor" | "borderLeftColor"
   | "borderRadius" | "overflow" | "objectFit" | "opacity" | "overflowWrap" | "wordBreak"
-  | "backgroundSize" | "backgroundPosition" | "backgroundRepeat"
-  | "fontStyle" | "textDecorationLine"
+  | "backgroundSize" | "backgroundPosition" | "backgroundRepeat" | "backgroundFilter"
+  | "fontStyle" | "textDecorationLine" | "writingMode" | "boxShadow" | "textShadow" | "outlineOffset"
   | "translate" | "rotate" | "scale" | "skew" | "transformOrigin"
   | "transitionDuration" | "transitionDelay" | "transitionTimingFunction"
   | "overflowX" | "scrollSnapType" | "scrollSnapAlign";
 /** 素材ライブラリの参照。URL はホストが描画時に解決し、文書には保存しない。 */
 export type AssetReference = { provider: string; id: string };
 export type BackgroundImageValue = { asset: AssetReference };
-export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>> & { backgroundImage?: BackgroundImageValue };
+export type StyleDeclarations = Partial<Record<StyleProperty, StyleValue>> & { backgroundImage?: BackgroundImageValue | "none" };
 /** 文字スタイルで共通化できる見た目。色はカラーの token で共通化する。 */
 export type TextStyleProperty = "fontFamily" | "fontSize" | "fontWeight" | "lineHeight" | "letterSpacing" | "wordSpacing" | "fontVariantEastAsian" | "fontStyle" | "textDecorationLine";
 export type TextStyleDeclarations = Partial<Record<TextStyleProperty, StyleValue>>;
@@ -147,6 +147,43 @@ export type SitePresentationOverlay = {
   triggerIds: string[];
   closeIds: string[];
 };
+/** 表示文書内の空divを、検証済みHTTPS read-only iframeとして描画する。 */
+export type SitePresentationExternalFrame = {
+  nodeId: string;
+  src: string;
+  title: string;
+  loading?: "lazy" | "eager";
+  referrerPolicy?: "no-referrer" | "no-referrer-when-downgrade" | "strict-origin-when-cross-origin";
+  allowFullScreen?: boolean;
+  /** opaque sandbox内の既知embedが、親へ数値heightだけを通知するための論理ID。 */
+  frameKey?: string;
+  /** frameKeyを持つframeの自動高さ上限。 */
+  autoHeightMax?: number;
+};
+/** 表示文書内の既知ノードだけへ属性を付ける、実行コードを含まないcarousel binding。 */
+export type SitePresentationCarousel = {
+  rootId: string;
+  slideIds: string[];
+  previousIds?: string[];
+  nextIds?: string[];
+  playPauseIds?: string[];
+  autoplayMs?: number;
+  /** 重なるslide間のクロスフェード。未指定・0・reduced-motionでは即時切替。 */
+  fadeMs?: number;
+  initiallyPlaying?: boolean;
+  loop?: boolean;
+  swipe?: boolean;
+};
+/** 登録済みblockと正規化済みpropsへ完全一致する、host所有の読み取り専用表示。 */
+export type SitePresentationHostView = {
+  id: string;
+  block: string;
+  props: Record<string, PublicPropValue>;
+  document: PageDocument;
+  slotBindings?: Record<string, string[]>;
+  externalFrames?: SitePresentationExternalFrame[];
+  carousel?: SitePresentationCarousel;
+};
 /**
  * ページ本文とは独立した、版固定のサイト表示コンテキスト。
  * header/footer はそれぞれ独立して編集・保存する canonical PageDocument であり、本文へ複製しない。
@@ -162,6 +199,7 @@ export type SitePresentation = {
   fonts: SiteFontFace[];
   shared: { header: PageDocument; footer: PageDocument };
   overlays?: SitePresentationOverlay[];
+  hostViews?: SitePresentationHostView[];
 };
 
 export type ComponentKind = "header" | "footer" | "navigation" | "section" | "part";

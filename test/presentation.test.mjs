@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cssForSitePresentation, initializeSitePresentation, parsePageDocument, parseSitePresentation, presentationAssetDocument } from "@niho/web/core";
 import { renderSitePageToHtml } from "@niho/web/server";
+import { createExternalFramePolicy } from "@niho/web";
 import { JSDOM } from "jsdom";
 
 const element = (id, tag, text, style) => ({ type: "element", id, tag, ...(style ? { style } : {}), children: text === undefined ? [] : [{ type: "text", text }] });
@@ -34,6 +35,8 @@ test("native presentation is generic and canvas/SSR share one reset, font and sc
   const html = renderSitePageToHtml(document, parsed);
   assert.match(output.css, /@font-face\{font-family:"Synthetic Sans"/);
   assert.match(output.css, /:where\(h1,h2,h3,h4,h5,h6,p,ul,ol,dl,dd,figure,blockquote\)\{margin:0;padding:0\}/);
+  assert.match(output.css, /details:not\(\[open\]\)>:not\(summary\)\{display:none!important\}/);
+  assert.match(output.css, /summary::-webkit-details-marker\{display:none\}/);
   assert.ok(html.includes(output.css));
   for (const text of ["Shared header", "Body copy", "Shared footer"]) assert.ok(html.includes(text), text);
   const owners = [...html.matchAll(/data-nw-owner="([^"]+)"/g)].map((match) => match[1]);
@@ -138,4 +141,209 @@ test("background asset references remain native through parse, asset collection 
   const html = renderSitePageToHtml(parsed, presentation, {}, { assets: { "synthetic-assets:hero": { src: "https://media.example.test/hero.webp" } } });
   for (const declaration of ["background-image:url(\"https://media.example.test/hero.webp\");", "height:5px;", "width:100%;"]) assert.ok(html.includes(declaration), declaration);
   assert.equal(html.includes("min-height:48px"), false);
+});
+
+const hostBlocks = {
+  Gallery: { props: { variant: { type: "enum", values: ["wide", "compact"], required: true } }, slots: { image: { label: "画像", style: ["height"] } }, component: () => "REAL HOST COMPONENT" },
+};
+function siteWithHostView() {
+  const presentation = site();
+  presentation.hostViews = [{
+    id: "gallery-wide", block: "Gallery", props: { variant: "wide" },
+    document: page("synthetic", "en", "host-gallery-wide", [{ type: "element", id: "gallery-root", tag: "section", children: [
+      { type: "element", id: "previous", tag: "a", attrs: { href: "#gallery-root" }, children: [{ type: "text", text: "Previous" }] },
+      { type: "element", id: "next", tag: "a", attrs: { href: "#gallery-root" }, children: [{ type: "text", text: "Next" }] },
+      { type: "element", id: "pause", tag: "a", attrs: { href: "#gallery-root" }, children: [{ type: "text", text: "Pause" }] },
+      { type: "element", id: "slide-one", tag: "div", style: { base: { backgroundImage: { asset: { provider: "gallery", id: "one" } } } }, children: [{ type: "text", text: "REAL SLIDE ONE" }] },
+      { type: "element", id: "slide-two", tag: "div", children: [{ type: "text", text: "REAL SLIDE TWO" }] },
+      { type: "element", id: "map", tag: "div", children: [] },
+    ] }]),
+    slotBindings: { image: ["slide-one", "slide-two"] },
+    externalFrames: [{ nodeId: "map", src: "https://maps.example.test/embed/exact?place=NIHO%20Kamakura", title: "Read only map", allowFullScreen: true, frameKey: "gallery-map", autoHeightMax: 900 }],
+    carousel: { rootId: "gallery-root", slideIds: ["slide-one", "slide-two"], previousIds: ["previous"], nextIds: ["next"], playPauseIds: ["pause"], autoplayMs: 4000, loop: true, swipe: true },
+  }];
+  return presentation;
+}
+
+test("host block views require exact normalized props, render in a distinct scope, and remain outside the page document", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" }, slots: { image: { base: { height: "240px" } } } }]);
+  const presentation = parseSitePresentation(siteWithHostView(), document, hostBlocks);
+  const html = renderSitePageToHtml(document, presentation, hostBlocks, { assets: { "gallery:one": { src: "https://media.example.test/one.webp" } } });
+  assert.match(html, /data-nw-host-view="gallery-wide"/);
+  assert.match(html, /REAL SLIDE ONE/); assert.match(html, /REAL SLIDE TWO/);
+  assert.match(html, /data-nw-carousel-slide="1"[^>]*hidden=""/);
+  assert.match(html, /iframe[^>]*src="https:\/\/maps\.example\.test\/embed\/exact\?place=NIHO%20Kamakura"[^>]*title="Read only map"/);
+  assert.match(html, /iframe[^>]*sandbox="allow-scripts"/); assert.equal(/iframe[^>]* allow=/.test(html), false, "view descriptors cannot add feature permissions");
+  assert.match(html, /style="width:100%;height:100%;border:0;display:block"/);
+  assert.match(html, /data-nw-slot="image"/); assert.match(html, /height:240px/);
+  const owners = [...html.matchAll(/data-nw-owner="([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(new Set(owners).size >= 4, "host view uses its own owner scope");
+  assert.equal(document.body[0].type, "component"); assert.equal(Object.hasOwn(document, "hostViews"), false);
+  const assets = presentationAssetDocument(document, presentation);
+  assert.ok(assets.body.some((node) => node.id === "gallery-root"), "view assets are collected through the transient presentation document");
+  assert.throws(() => renderSitePageToHtml({ ...document, body: [{ ...document.body[0], props: { variant: "compact" } }] }, presentation, hostBlocks), /host view is missing/);
+  assert.match(renderSitePageToHtml(document, presentation, hostBlocks, { hostViewMode: "fallback" }), /REAL HOST COMPONENT/);
+  assert.doesNotMatch(renderSitePageToHtml(document, presentation, hostBlocks, { hostViewMode: "off" }), /data-nw-host-view="/);
+});
+
+test("host view validation rejects duplicates, hostile frames, cross-target documents, executable recursion and overlapping bindings", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const reject = (mutate) => { const input = siteWithHostView(); mutate(input); assert.throws(() => parseSitePresentation(input, document, hostBlocks)); };
+  reject((input) => input.hostViews.push(structuredClone(input.hostViews[0])));
+  reject((input) => { input.hostViews[0].document.siteId = "foreign"; });
+  reject((input) => { input.hostViews[0].document.locale = "ja"; });
+  reject((input) => { input.hostViews[0].document.pageId = "shared-header"; });
+  reject((input) => { input.hostViews[0].externalFrames[0].src = "javascript:alert(1)"; });
+  reject((input) => { input.hostViews[0].externalFrames[0].src = "https://maps.example.test/embed%0ajavascript:alert(1)"; });
+  reject((input) => { input.hostViews[0].externalFrames[0].sandbox = "allow-scripts"; });
+  reject((input) => { input.hostViews[0].externalFrames[0].autoHeightMax = 9000; });
+  reject((input) => { input.hostViews[0].document.body.push({ type: "component", id: "recursive", block: "Gallery", props: { variant: "wide" } }); });
+  reject((input) => { input.hostViews[0].carousel.nextIds = ["slide-one"]; });
+  reject((input) => { input.hostViews[0].props = { variant: "unknown" }; });
+});
+
+test("frame auto-height accepts only its opaque matching window and restores styles on cleanup", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const html = renderSitePageToHtml(document, siteWithHostView(), hostBlocks);
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: "https://example.test" });
+  const frame = dom.window.document.querySelector("iframe"), wrapper = frame.closest("[data-nw-host-view]");
+  const cleanup = initializeSitePresentation(dom.window.document);
+  const message = (source, origin, data) => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source, origin, data }));
+  message(frame.contentWindow, "https://maps.example.test", { type: "niho-native-frame-size", frameKey: "gallery-map", height: 640 });
+  assert.notEqual(wrapper.style.height, "640px");
+  message(frame.contentWindow, "null", { type: "niho-native-frame-size", frameKey: "other", height: 640 });
+  assert.notEqual(wrapper.style.height, "640px");
+  message(frame.contentWindow, "null", { type: "niho-native-frame-size", frameKey: "gallery-map", height: 640 });
+  assert.equal(frame.style.height, "640px"); assert.equal(wrapper.style.height, "640px");
+  message(frame.contentWindow, "null", { type: "niho-native-frame-size", frameKey: "gallery-map", height: 901 });
+  assert.equal(wrapper.style.height, "640px");
+  cleanup(); assert.equal(wrapper.style.height, ""); assert.equal(frame.style.height, "100%"); dom.window.close();
+});
+
+test("two components using one host view keep independent carousel state", () => {
+  const document = page("synthetic", "en", "body", ["one", "two"].map((id) => ({ type: "component", id, block: "Gallery", props: { variant: "wide" } })));
+  const html = renderSitePageToHtml(document, siteWithHostView(), hostBlocks);
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: "https://example.test" });
+  dom.window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  const roots = [...dom.window.document.querySelectorAll("[data-nw-host-view]")], cleanup = initializeSitePresentation(dom.window.document);
+  roots[0].querySelector("[data-nw-carousel-next]").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(roots[0].querySelectorAll("[data-nw-carousel-slide]")[1].hidden, false);
+  assert.equal(roots[1].querySelectorAll("[data-nw-carousel-slide]")[0].hidden, false);
+  cleanup(); dom.window.close();
+});
+
+test("native carousel starts deterministically, supports manual controls, pauses for reduced motion and cleans up", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const html = renderSitePageToHtml(document, siteWithHostView(), hostBlocks, { assets: { "gallery:one": { src: "https://media.example.test/one.webp" } } });
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: "https://example.test" });
+  let intervalCalls = 0;
+  dom.window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  dom.window.setInterval = () => { intervalCalls++; return 7; };
+  const root = dom.window.document, slides = [...root.querySelectorAll("[data-nw-carousel-slide]")], next = root.querySelector("[data-nw-carousel-next]");
+  const cleanup = initializeSitePresentation(root);
+  assert.equal(slides[0].hidden, false); assert.equal(slides[1].hidden, true); assert.equal(intervalCalls, 0, "reduced motion disables autoplay");
+  next.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(slides[0].hidden, true); assert.equal(slides[1].hidden, false);
+  cleanup();
+  assert.equal(slides[0].hidden, false); assert.equal(slides[1].hidden, true);
+  next.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(slides[0].hidden, false, "cleanup removes carousel listeners");
+  dom.window.close();
+});
+
+test("native carousel pauses on hover and focus, and its play control supports Space", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const html = renderSitePageToHtml(document, siteWithHostView(), hostBlocks, { assets: { "gallery:one": { src: "https://media.example.test/one.webp" } } });
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: "https://example.test" });
+  const callbacks = new Map(); let sequence = 0, clears = 0;
+  dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  dom.window.setInterval = (callback) => { const id = ++sequence; callbacks.set(id, callback); return id; };
+  dom.window.clearInterval = (id) => { callbacks.delete(id); clears++; };
+  const root = dom.window.document, container = root.querySelector("[data-nw-host-view]"), play = root.querySelector("[data-nw-carousel-play-pause]");
+  const cleanup = initializeSitePresentation(root);
+  assert.equal(callbacks.size, 1);
+  container.dispatchEvent(new dom.window.MouseEvent("mouseenter")); assert.equal(callbacks.size, 0);
+  container.dispatchEvent(new dom.window.MouseEvent("mouseleave")); assert.equal(callbacks.size, 1);
+  container.dispatchEvent(new dom.window.FocusEvent("focusin", { bubbles: true })); assert.equal(callbacks.size, 0);
+  container.dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true, relatedTarget: root.body })); assert.equal(callbacks.size, 1);
+  play.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "Space" }));
+  assert.equal(play.getAttribute("aria-pressed"), "true"); assert.equal(callbacks.size, 0);
+  cleanup(); assert.ok(clears >= 3);
+  play.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "Space" }));
+  assert.equal(play.getAttribute("aria-pressed"), "false", "cleanup restores state and removes keyboard listeners");
+  dom.window.close();
+});
+
+test("only trusted host code can retain a different frame origin, including shared slots", () => {
+  const presentation = siteWithHostView(), document = page("synthetic", "en", "body", []);
+  presentation.shared.header.body = [{ type: "component", id: "header-gallery", block: "Gallery", props: { variant: "wide" } }];
+  const externalFramePolicy = createExternalFramePolicy({ parentOrigin: "https://editor.example.test", sources: ["https://maps.example.test/embed/exact"] });
+  const html = renderSitePageToHtml(document, presentation, hostBlocks, { externalFramePolicy });
+  assert.match(html, /iframe[^>]*sandbox="allow-scripts allow-same-origin"/);
+  assert.match(renderSitePageToHtml(document, presentation, hostBlocks), /iframe[^>]*sandbox="allow-scripts"/);
+  assert.doesNotMatch(renderSitePageToHtml(document, presentation, hostBlocks, { hostViewMode: "off" }), /data-nw-host-view=/);
+  assert.equal(externalFramePolicy({ src: "https://editor.example.test/api/editor" }), "opaque");
+  assert.equal(externalFramePolicy({ src: "https://maps.example.test/other" }), "opaque");
+  assert.equal(externalFramePolicy({ src: "https://maps.example.test/embed/exact#unexpected" }), "opaque");
+  assert.throws(() => createExternalFramePolicy({ parentOrigin: "https://editor.example.test", sources: ["https://editor.example.test/"] }));
+  assert.throws(() => createExternalFramePolicy({ parentOrigin: "https://editor.example.test", sources: ["http://maps.example.test/embed/exact"] }));
+});
+
+test("editing keeps frame sizing active without starting interactive controls", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const dom = new JSDOM(`<!doctype html><body>${renderSitePageToHtml(document, siteWithHostView(), hostBlocks)}</body>`, { url: "https://editor.example.test" });
+  const frame = dom.window.document.querySelector("iframe"), messages = [];
+  frame.contentWindow.postMessage = (data) => messages.push(data);
+  const cleanup = initializeSitePresentation(dom.window.document, { interactive: false });
+  assert.deepEqual(messages, [{ type: "niho-native-frame-request-size", frameKey: "gallery-map" }]);
+  dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source: frame.contentWindow, origin: "null", data: { type: "niho-native-frame-size", frameKey: "gallery-map", height: 600 } }));
+  assert.equal(frame.style.height, "600px");
+  dom.window.document.querySelector("[data-nw-carousel-next]").click();
+  assert.equal(dom.window.document.querySelectorAll("[data-nw-carousel-slide]")[1].hidden, true);
+  cleanup(); frame.dispatchEvent(new dom.window.Event("load"));
+  assert.equal(messages.length, 1); dom.window.close();
+});
+
+test("native disclosure content fills the authored flex box while keeping native closed state", () => {
+  const document = page("synthetic", "en", "body", [{ type: "element", id: "disclosure", tag: "details", style: { base: { display: "flex", flexDirection: "column", alignItems: "flex-start" } }, children: [element("summary", "summary", "Read more"), element("content", "div", "Details")] }]);
+  const html = renderSitePageToHtml(document, site(), {});
+  assert.match(html, /data-nw-node="disclosure"\]::details-content\{width:100%;min-width:0;\}/);
+  assert.equal(JSDOM.fragment(html).querySelector("details").open, false);
+});
+
+test("carousel fade cancels interrupted animations, completes once and restores on cleanup", async () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const presentation = siteWithHostView(); presentation.hostViews[0].carousel.fadeMs = 1200;
+  const dom = new JSDOM(`<!doctype html><html><body>${renderSitePageToHtml(document, presentation, hostBlocks)}</body></html>`);
+  const root = dom.window.document, slides = [...root.querySelectorAll("[data-nw-carousel-slide]")], next = root.querySelector("[data-nw-carousel-next]");
+  const animations = [];
+  for (const slide of slides) slide.animate = (_frames, options) => {
+    let finish; const animation = { finished: new Promise(resolve => { finish = resolve; }), cancel() { this.cancelled = true; }, finish: () => finish(), options };
+    animations.push(animation); return animation;
+  };
+  const cleanup = initializeSitePresentation(root);
+  const click = () => next.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  click(); assert.equal(animations.length, 2); assert.equal(animations[0].options.duration, 1200); assert.ok(slides.every(slide => !slide.hidden));
+  click(); assert.ok(animations.slice(0, 2).every(animation => animation.cancelled));
+  animations.slice(2).forEach(animation => animation.finish()); await Promise.resolve(); await Promise.resolve();
+  assert.equal(slides[0].hidden, false); assert.equal(slides[1].hidden, true);
+  click(); cleanup(); assert.ok(animations.every(animation => animation.cancelled));
+  assert.equal(slides[0].hidden, false); assert.equal(slides[1].hidden, true); dom.window.close();
+  const invalid = siteWithHostView(); invalid.hostViews[0].carousel.fadeMs = 3001;
+  assert.throws(() => parseSitePresentation(invalid, document, hostBlocks), /fade duration/);
+});
+
+test("host view scopes cannot collide with the target and overlay bindings reach nested views", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const collision = siteWithHostView(); collision.hostViews[0].document.pageId = "body";
+  assert.throws(() => parseSitePresentation(collision, document, hostBlocks), /distinct from the target/);
+  assert.throws(() => renderSitePageToHtml(document, collision, hostBlocks), /distinct from the target/);
+  const presentation = siteWithHostView(), menu = siteWithMenu(); presentation.overlays = menu.overlays;
+  presentation.hostViews[0].document.body[0].children.push({ type: "element", id: "host-menu-trigger", tag: "a", attrs: { id: "menu-trigger", href: "#site-menu" }, children: [{ type: "text", text: "Host menu" }] });
+  const dom = new JSDOM(renderSitePageToHtml(document, presentation, hostBlocks));
+  const trigger = dom.window.document.querySelector('[data-nw-host-view] [data-nw-overlay-open="site-menu"]');
+  assert.ok(trigger); const cleanup = initializeSitePresentation(dom.window.document);
+  trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(dom.window.document.querySelector('[data-nw-overlay="site-menu"]').hidden, false);
+  cleanup(); dom.window.close();
 });

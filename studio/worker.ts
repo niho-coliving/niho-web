@@ -726,7 +726,7 @@ async function enforceMutationBoundary(request: Request): Promise<Record<string,
 type KamakuraAssetOperation = "list" | "upload-intent" | "update" | "usages" | "resolve";
 type EditorRoute = { readonly upstreamPath: string; readonly bodyLimit: number; readonly assetOperation?: KamakuraAssetOperation };
 
-const KAMAKURA_ASSET_PROVIDERS = new Set(["kamakura-upload", "kamakura-studio", "kamakura-cms"]);
+const KAMAKURA_ASSET_PROVIDERS = new Set(["kamakura-upload", "kamakura-studio", "kamakura-cms", "kamakura-approved-remote"]);
 const KAMAKURA_ASSET_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const KAMAKURA_UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const KAMAKURA_ASSET_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"]);
@@ -1118,6 +1118,7 @@ type WorkerEditorAdapter = {
   readonly dispatchAssetPreview?: (request: Request, env: Env, identity: AccessIdentity, assetId: string) => Promise<Response>;
   readonly connectOrigins?: readonly string[];
   readonly fontSources?: readonly string[];
+  readonly frameSources?: readonly string[];
 };
 
 const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map([
@@ -1137,7 +1138,8 @@ const WORKER_EDITOR_ADAPTERS: ReadonlyMap<string, WorkerEditorAdapter> = new Map
     assetPreview: (action) => /^\/editor\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/preview$/iu.exec(action)?.[1] ?? null,
     dispatchAssetPreview: signedKamakuraAssetPreview,
     connectOrigins: [KAMAKURA_EDITOR_UPSTREAM_ORIGIN],
-    fontSources: ["https://kamakura-media.niho.life/niho-web/fonts/v1/"]
+    fontSources: ["https://kamakura-media.niho.life/niho-web/fonts/v1/"],
+    frameSources: ["https://kamakura-media.niho.life/niho-web/embeds/v1/", "https://www.google.com/maps/embed"]
   }]
 ]);
 
@@ -1173,11 +1175,11 @@ async function editorApi(request: Request, env: Env, identity: AccessIdentity, u
   }
 }
 
-function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = [], fontSources: readonly string[] = []): Response {
+function withStaticSecurity(response: Response, editor = false, connectOrigins: readonly string[] = [], fontSources: readonly string[] = [], frameSources: readonly string[] = []): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store");
   const connectSrc = `connect-src 'self'${connectOrigins.map((origin) => ` ${origin}`).join("")};`;
-  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + ` font-src 'self'${fontSources.map((source) => ` ${source}`).join("")};` + (editor ? " frame-src 'self';" : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'" + (editor ? " 'unsafe-inline'" : "") + "; img-src 'self' https:; " + connectSrc + ` font-src 'self'${fontSources.map((source) => ` ${source}`).join("")};` + (editor ? ` frame-src 'self'${frameSources.map((source) => ` ${source}`).join("")};` : "") + " frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
@@ -1243,7 +1245,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/" || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/?$/u.test(url.pathname) || /^\/projects\/[A-Za-z][A-Za-z0-9_-]{0,79}\/sites\/[A-Za-z][A-Za-z0-9_-]{0,79}\/invite\/?$/u.test(url.pathname) || isEditor || projectAlias !== null) {
     if (editorPage?.environment === "staging" && pageAdapter && !await pageAdapter.authorize(env, identity, editorPage)) return htmlError("このページを表示できません。", 403);
     const indexUrl = new URL("/index.html", url);
-    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? [], pageAdapter?.fontSources ?? []);
+    return withStaticSecurity(await env.ASSETS.fetch(new Request(indexUrl, { method: request.method, headers: request.headers })), isEditor, pageAdapter?.connectOrigins ?? [], pageAdapter?.fontSources ?? [], pageAdapter?.frameSources ?? []);
   }
   return withStaticSecurity(await env.ASSETS.fetch(request));
 }
