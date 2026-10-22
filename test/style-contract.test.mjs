@@ -96,6 +96,36 @@ test("native layout additions serialize as a closed style vocabulary", () => {
   }
 });
 
+test("home-native visual properties remain declarative and reject CSS injection", () => {
+  const input = doc();
+  input.body[0].style.base = {
+    ...input.body[0].style.base,
+    backgroundImage: "none",
+    display: "contents",
+    writingMode: "vertical-rl",
+    boxShadow: "rgba(0, 0, 0, 0.25) 0px 1px 3px inset",
+    textShadow: "#112233 1px 2px 0px",
+    outlineOffset: "-2px",
+    backgroundFilter: "grayscale(0.2) sepia(0.1)"
+  };
+  const css = generatePageCss(input);
+  for (const part of ["background-image:none;", "filter:grayscale(0.2) sepia(0.1);", "::before{content:\"\";position:absolute", "display:contents;", "writing-mode:vertical-rl;", "box-shadow:rgba(0, 0, 0, 0.25) 0px 1px 3px inset;", "text-shadow:#112233 1px 2px 0px;", "outline-offset:-2px;"]) assert.ok(css.includes(part), part);
+  assert.equal(/\[data-nw-node="hero"\]\{[^}]*filter:/.test(css), false, "background filter never affects foreground content");
+  for (const [property, value] of [
+    ["backgroundImage", "url(https://example.com/x)"],
+    ["writingMode", "vertical-rl;display:none"],
+    ["boxShadow", "0 0 1px red;position:fixed"],
+    ["boxShadow", "0 0 1px url(x)"],
+    ["textShadow", "1px 2px"],
+    ["outlineOffset", "calc(1px + 2px)"],
+    ["backgroundFilter", "blur(20px)"],
+    ["backgroundFilter", "saturate(3)"],
+    ["backgroundFilter", "grayscale(0.2);color:red"]
+  ]) {
+    const copy = doc(); copy.body[0].style.base[property] = value; reject(copy);
+  }
+});
+
 test("numeric words in font family names remain valid CSS for both literal and token fonts", () => {
   const input = doc();
   input.tokens.icons = { type: "fontFamily", value: "Font Awesome 6 Brands, sans-serif" };

@@ -38,6 +38,13 @@ function assertPresentationTarget(presentation: unknown, target: EditorTarget): 
       if (document.siteId !== target.siteId || document.locale !== target.locale) throw new Error("共有overlay文書の対象が一致しません。");
     }
   }
+  if (value.hostViews !== undefined) {
+    if (!Array.isArray(value.hostViews)) throw new Error("表示コンテキストのhost viewが正しくありません。");
+    for (const [index, raw] of value.hostViews.entries()) {
+      const view = record(raw, `presentation.hostViews[${index}]`), document = record(view.document, `presentation.hostViews[${index}].document`);
+      if (document.siteId !== target.siteId || document.locale !== target.locale) throw new Error("host view文書の対象が一致しません。");
+    }
+  }
 }
 
 function assertLibrarySite(library: unknown, site: EditorSite): void {

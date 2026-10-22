@@ -6,7 +6,7 @@ import {
 
 const SITE_ID = "kamakura";
 const UPLOAD_PROVIDER = "kamakura-upload";
-const PROVIDER_IDS = new Set([UPLOAD_PROVIDER, "kamakura-studio", "kamakura-cms"]);
+const PROVIDER_IDS = new Set([UPLOAD_PROVIDER, "kamakura-studio", "kamakura-cms", "kamakura-approved-remote"]);
 const BASE = "/api/projects/project-kamakura/sites/kamakura/editor/assets";
 const UPLOAD_ORIGIN = "https://next-kamakura.niho.life";
 const UPLOAD_PATH = /^\/internal\/studio\/asset-upload\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/iu;
@@ -78,7 +78,8 @@ function parseUploadIntent(input: unknown, expectedProvider: string): { readonly
 const PROVIDERS: AssetProvider[] = parseAssetProviders([
   { id: UPLOAD_PROVIDER, kind: "upload", label: "NIHO Studio", origin: "Kamakura Studio", status: "available", capabilities: { upload: true, editMetadata: true, delete: false, folders: false, acquire: false } },
   { id: "kamakura-studio", kind: "cms", label: "Kamakura Studio", origin: "Kamakura Studio", status: "available", capabilities: { upload: false, editMetadata: false, delete: false, folders: false, acquire: false } },
-  { id: "kamakura-cms", kind: "cms", label: "Kamakura CMS", origin: "Kamakura CMS", status: "available", capabilities: { upload: false, editMetadata: false, delete: false, folders: false, acquire: false } }
+  { id: "kamakura-cms", kind: "cms", label: "Kamakura CMS", origin: "Kamakura CMS", status: "available", capabilities: { upload: false, editMetadata: false, delete: false, folders: false, acquire: false } },
+  { id: "kamakura-approved-remote", kind: "cms", label: "承認済み外部素材", origin: "Kamakura", status: "available", capabilities: { upload: false, editMetadata: false, delete: false, folders: false, acquire: false } }
 ]);
 
 export const kamakuraAssetLibrary: AssetLibraryAdapter = {
@@ -139,14 +140,14 @@ export const kamakuraAssetLibrary: AssetLibraryAdapter = {
 
   async resolveAssets(request, signal) {
     assertSite(request.siteId);
-    if (request.references.some((reference) => !provider(reference))) throw new Error("素材の出所が一致しません。");
-    const resolved = request.references.length
-      ? parseResolvedAssets(await post("resolve", { siteId: SITE_ID, references: request.references }, signal))
+    const supported = request.references.filter(provider);
+    const resolved = supported.length
+      ? parseResolvedAssets(await post("resolve", { siteId: SITE_ID, references: supported }, signal))
       : {};
-    const requested = new Set(request.references.map(assetKey));
+    const requested = new Set(supported.map(assetKey));
     if (Object.keys(resolved).some((key) => !requested.has(key) || !PROVIDER_IDS.has(key.slice(0, key.indexOf(":"))))) throw new Error("素材解決結果に対象外の参照が含まれています。");
     const result: Record<string, { src: string; width?: number; height?: number }> = {};
-    for (const reference of request.references) {
+    for (const reference of supported) {
       const key = assetKey(reference);
       if (!Object.hasOwn(resolved, key)) continue;
       result[key] = reference.provider === UPLOAD_PROVIDER ? { src: previewUrl(reference.id) } : resolved[key]!;

@@ -70,6 +70,27 @@ const pair = (v: string, part: (value: string) => boolean) => { const parts = v.
 const scalePart = (v: string) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(v) && Number(v) <= 5;
 const skewPart = (v: string) => { const match = /^(-?(?:\d+(?:\.\d+)?|\.\d+))deg$/.exec(v); return !!match && Math.abs(Number(match[1])) <= 180; };
 const time = (v: string) => { const match = /^(\d+(?:\.\d+)?|\.\d+)(s|ms)$/.exec(v); return !!match && Number(match[1]) * (match[2] === "s" ? 1000 : 1) <= 5000; };
+const shadow = (v: string) => {
+  if (v === "none") return true;
+  const colorValue = String.raw`(?:#[\da-fA-F]{3,8}|(?:rgb|rgba)\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0(?:\.\d+)?|1(?:\.0+)?))?\)|black|white|transparent|currentColor)`;
+  const distance = String.raw`-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em)`;
+  const match = new RegExp(`^${colorValue} (${distance})(?: (${distance})){1,3}(?: inset)?$`).exec(v);
+  if (!match) return false;
+  return [...v.matchAll(new RegExp(distance, "g"))].every((part) => Math.abs(Number.parseFloat(part[0])) <= 10000);
+};
+const backgroundFilter = (value: string) => {
+  if (value === "none") return true;
+  const parts = value.match(/(?:grayscale|sepia|saturate|brightness)\((?:\d+(?:\.\d+)?|\.\d+)%?\)/g);
+  if (!parts || parts.join(" ") !== value || parts.length > 3) return false;
+  const names = new Set<string>();
+  return parts.every((part) => {
+    const match = /^(grayscale|sepia|saturate|brightness)\((\d+(?:\.\d+)?|\.\d+)(%)?\)$/.exec(part)!;
+    if (names.has(match[1]!)) return false;
+    names.add(match[1]!);
+    const number = Number(match[2]), normalized = match[3] ? number / 100 : number;
+    return normalized <= (match[1] === "saturate" || match[1] === "brightness" ? 2 : 1);
+  });
+};
 export const easings: readonly MotionEasing[] = ["ease", "ease-in", "ease-out", "ease-in-out", "linear"];
 export const origins = ["left top", "center top", "right top", "left center", "center", "right center", "left bottom", "center bottom", "right bottom"] as const;
 
@@ -93,7 +114,7 @@ const specs: Record<StyleProperty, PropertySpec> = {
   width: dimensionWithCalc, height: dimensionWithCalc, minWidth: dimensionWithCalc, maxWidth: dimensionWithCalc, minHeight: dimension, maxHeight: dimension,
   margin, marginTop: offset, marginRight: offset, marginBottom: offset, marginLeft: offset,
   padding, paddingTop: nonnegative, paddingRight: nonnegative, paddingBottom: nonnegative, paddingLeft: nonnegative,
-  display: { valid: oneOf("block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "none") },
+  display: { valid: oneOf("block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "contents", "none") },
   flexDirection: { valid: oneOf("row", "row-reverse", "column", "column-reverse") },
   flexWrap: { valid: oneOf("nowrap", "wrap", "wrap-reverse") },
   justifyContent: { valid: oneOf("start", "end", "center", "flex-start", "flex-end", "space-between", "space-around", "space-evenly") },
@@ -118,9 +139,17 @@ const specs: Record<StyleProperty, PropertySpec> = {
   objectFit: { valid: oneOf("fill", "contain", "cover", "none", "scale-down") },
   opacity: { kind: "number", valid: (v) => /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(v) },
   backgroundSize: { valid: oneOf("auto", "cover", "contain") },
-  backgroundPosition: { valid: oneOf("center", "top", "bottom", "left", "right", "top left", "top right", "bottom left", "bottom right") },
+  backgroundPosition: { valid: (v) => {
+    const parts = v.split(" ");
+    if (parts.length < 1 || parts.length > 2) return false;
+    const position = (part: string) => ["left", "center", "right", "top", "bottom"].includes(part) || /^(?:\d+(?:\.\d+)?|\.\d+)%$/.test(part) && Number.parseFloat(part) <= 100;
+    return parts.every(position);
+  } },
   backgroundRepeat: { valid: oneOf("no-repeat", "repeat", "repeat-x", "repeat-y") },
+  backgroundFilter: { valid: backgroundFilter },
   fontStyle: { valid: oneOf("normal", "italic") }, textDecorationLine: { valid: oneOf("none", "underline", "line-through") },
+  writingMode: { valid: oneOf("horizontal-tb", "vertical-rl", "vertical-lr") }, boxShadow: { valid: shadow }, textShadow: { valid: shadow },
+  outlineOffset: offset,
   translate: { kind: "length", px: true, valid: (v) => pair(v, translatePart) },
   rotate: { unit: "deg", valid: (v) => { const match = /^(-?(?:\d+(?:\.\d+)?|\.\d+))deg$/.exec(v); return !!match && Math.abs(Number(match[1])) <= 360; } },
   scale: { kind: "number", valid: (v) => pair(v, scalePart) }, skew: { unit: "deg", valid: (v) => pair(v, skewPart) },
@@ -186,7 +215,8 @@ function literal(property: StyleProperty, value: unknown, path: string): string 
   return text;
 }
 /** URL・token・数値は受け付けず、素材参照だけを通す。 */
-function backgroundImage(value: unknown, path: string): BackgroundImageValue {
+function backgroundImage(value: unknown, path: string): BackgroundImageValue | "none" {
+  if (value === "none") return value;
   const source = record(value, path);
   keys(source, ["asset"], path);
   return { asset: parseAssetReference(source.asset, `${path}.asset`) };

@@ -155,9 +155,9 @@ export function collectAssetReferences(document: PageDocument): AssetPlacement[]
       if (node.type === "text") continue;
       if (node.type === "element" && node.asset) result.push({ reference: copy(node.asset), nodeId: node.id, target: "image", breakpoint: "base" });
       const base = node.style?.base?.backgroundImage;
-      if (base) result.push({ reference: copy(base.asset), nodeId: node.id, target: "background", breakpoint: "base" });
+      if (base && base !== "none") result.push({ reference: copy(base.asset), nodeId: node.id, target: "background", breakpoint: "base" });
       for (const entry of node.style?.responsive ?? []) {
-        if (entry.declarations.backgroundImage) result.push({ reference: copy(entry.declarations.backgroundImage.asset), nodeId: node.id, target: "background", breakpoint: entry.minWidth });
+        if (entry.declarations.backgroundImage && entry.declarations.backgroundImage !== "none") result.push({ reference: copy(entry.declarations.backgroundImage.asset), nodeId: node.id, target: "background", breakpoint: entry.minWidth });
       }
       if (node.type === "element") visit(node.children);
     }

@@ -23,7 +23,9 @@ test("Kamakura upload previews require the upstream resolver to confirm each ref
   const references = [
     { provider: "kamakura-upload", id: existingId },
     { provider: "kamakura-upload", id: missingId },
-    { provider: "kamakura-cms", id: "published-image" }
+    { provider: "kamakura-cms", id: "published-image" },
+    { provider: "kamakura-approved-remote", id: "r-" + "a".repeat(40) },
+    { provider: "unknown-provider", id: "ignored" }
   ];
   let requestedReferences;
   t.mock.method(globalThis, "fetch", async (url, init) => {
@@ -31,14 +33,16 @@ test("Kamakura upload previews require the upstream resolver to confirm each ref
     requestedReferences = JSON.parse(init.body).references;
     return new Response(JSON.stringify({
       [existingKey]: { src: "https://cdn.example.com/draft.webp" },
-      "kamakura-cms:published-image": { src: "https://cdn.example.com/published.webp" }
+      "kamakura-cms:published-image": { src: "https://cdn.example.com/published.webp" },
+      ["kamakura-approved-remote:r-" + "a".repeat(40)]: { src: "https://images.unsplash.com/photo-approved" }
     }), { headers: { "Content-Type": "application/json" } });
   });
 
   const resolved = await kamakuraAssetLibrary.resolveAssets({ siteId: "kamakura", references }, new AbortController().signal);
-  assert.deepEqual(requestedReferences, references);
+  assert.deepEqual(requestedReferences, references.slice(0, -1));
   assert.deepEqual(resolved, {
     [existingKey]: { src: "/api/projects/project-kamakura/sites/kamakura/editor/assets/" + existingId + "/preview" },
-    "kamakura-cms:published-image": { src: "https://cdn.example.com/published.webp" }
+    "kamakura-cms:published-image": { src: "https://cdn.example.com/published.webp" },
+    ["kamakura-approved-remote:r-" + "a".repeat(40)]: { src: "https://images.unsplash.com/photo-approved" }
   });
 });

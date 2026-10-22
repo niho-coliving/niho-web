@@ -128,7 +128,7 @@ const StablePageRenderer = memo(PageRenderer);
 type DragItem = { kind: "palette"; type: string } | { kind: "node"; id: string };
 type DropPlace = { parentId: string | null; index: number; marker: { left: number; top: number; width: number; height: number; inside: boolean } };
 const asElement = (target: EventTarget | null): HTMLElement | null => target && typeof target === "object" && "nodeType" in target && (target as Node).nodeType === 1 ? target as HTMLElement : null;
-function Canvas({ document, blocks, width, height, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, previewComponent: PreviewComponent, mode, baseVersion, historyRevision, assets, motionCss, replay, rendered, presentation, origins, openInstance }: {
+function Canvas({ document, blocks, width, height, breakpoint, selection, selectedNodeId, slot, select, canEditNode, dragItem, drop, pending, editText, resize, reportError, editable, structureEditable, locks, preview, previewComponent: PreviewComponent, mode, baseVersion, historyRevision, assets, motionCss, replay, rendered, presentation, presentationRuntime, externalFramePolicy, origins, openInstance }: {
   document: PageDocument; blocks: EditorBlockRegistry; width: number; height: number; selection: NodePath | null; selectedNodeId?: string; select: (path: NodePath | null, nodeId?: string, slot?: string | null) => void;
   canEditNode?: (nodeId: string) => boolean;
   slot: string | null;
@@ -140,6 +140,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   reportError: (message: string) => void; editable: boolean; structureEditable: boolean; locks: readonly EditorLock[]; preview: boolean; assets: ResolvedAssetMap;
   /** 状態の強制表示と動きの停止。replay が変わると描画を作り直し、登場をもう一度見せる。 */
   motionCss: string; replay: string;
+  presentationRuntime: boolean; externalFramePolicy?: PageEditorProps["externalFramePolicy"];
   previewComponent?: PageEditorProps["previewComponent"]; mode: "edit" | "preview" | "history";
   baseVersion: string; historyRevision?: EditorCanvasPreviewProps["historyRevision"];
   presentation?: SitePresentation;
@@ -274,24 +275,40 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
     const element = body?.querySelector<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node="${editingId}"]`); element?.focus();
   }
   const defaultPreview = presentation
-    ? <SitePageRenderer key={replay} document={rendered} presentation={presentation} blocks={blocks} assets={assets} missingAssets="placeholder" />
+    ? <SitePageRenderer key={replay} document={rendered} presentation={presentation} blocks={blocks} {...(externalFramePolicy ? { externalFramePolicy } : {})} assets={assets} missingAssets="placeholder" />
     : <StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" />;
   useEffect(() => {
-    if (!body || !presentation || !preview) return;
-    return initializeSitePresentation(body);
-  }, [body, presentation, preview, rendered, replay]);
-  return <><iframe ref={frame} title="ページのライブキャンバス" sandbox="allow-same-origin" style={{ width, height }}
+    if (!body || !presentation) return;
+    return initializeSitePresentation(body, { interactive: presentationRuntime });
+  }, [body, presentation, presentationRuntime, rendered, replay]);
+  const presentationHasFrames = !!presentation?.hostViews?.some((view) => (view.externalFrames?.length ?? 0) > 0);
+  return <><iframe ref={frame} title="ページのライブキャンバス" sandbox={presentationHasFrames ? "allow-same-origin allow-scripts" : "allow-same-origin"} style={{ width, height }}
     srcDoc={'<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
     onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
     {body && createPortal(<div onClickCapture={(event) => {
       if (preview) {
-        if (presentation && asElement(event.target)?.closest("[data-nw-overlay-open],[data-nw-overlay-close],[data-nw-overlay] a[href]")) { event.preventDefault(); return; }
+        const target = asElement(event.target);
+        if (target?.closest("summary")) return;
+        if (presentation && target?.closest("[data-nw-overlay-open],[data-nw-overlay-close],[data-nw-carousel-previous],[data-nw-carousel-next],[data-nw-carousel-play-pause]")) { event.preventDefault(); return; }
+        const anchor = target?.closest<HTMLAnchorElement>("a[href]"), href = anchor?.getAttribute("href") ?? "";
+        let targetId: string | undefined;
+        try {
+          const url = new URL(href, body.ownerDocument.baseURI);
+          if ((href.startsWith("#") || url.pathname === "/") && /^#[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(url.hash) && body.ownerDocument.getElementById(url.hash.slice(1))) targetId = url.hash.slice(1);
+        } catch { /* The document validator rejects unsafe hrefs; keep navigation blocked. */ }
+        if (targetId) {
+          event.preventDefault();
+          body.ownerDocument.defaultView?.setTimeout(() => body.ownerDocument.getElementById(targetId!)?.scrollIntoView({ block: "start" }), 0);
+          return;
+        }
+        if (presentation && target?.closest("[data-nw-overlay] a[href]")) { event.preventDefault(); return; }
         event.preventDefault(); event.stopPropagation(); return;
       }
       if (asElement(event.target)?.closest(".nw-resize-handle") || editingId && asElement(event.target)?.closest("[contenteditable=true],.nw-text-toolbar")) return;
       event.preventDefault(); event.stopPropagation();
       const target = event.target as HTMLElement;
-      const element = typeof target.closest === "function" ? target.closest<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node]`) : null;
+      const host = typeof target.closest === "function" ? target.closest<HTMLElement>("[data-nw-host-view]") : null;
+      const element = host?.dataset.nwOwner === scope ? host : typeof target.closest === "function" ? target.closest<HTMLElement>(`[data-nw-owner="${scope}"][data-nw-node]`) : null;
       const id = element?.dataset.nwNode, entry = entries.find(({ node }) => node.type !== "text" && node.id === id);
       select(entry?.path ?? null, id, structureEditable && element && entry?.node.type === "component" ? slotFromTarget(target, element, blocks[entry.node.block]?.slots) : null);
 
@@ -318,6 +335,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
         .nw-drop-marker{position:absolute;pointer-events:none;z-index:2147483000;background:#2878ff;box-shadow:0 0 0 2px white}.nw-drop-marker.inside{background:#2878ff22;outline:2px dashed #2878ff;box-shadow:none}.nw-resize-handle{position:absolute;z-index:2147483001;width:15px;height:15px;border:2px solid white;border-radius:4px;background:#2878ff;box-shadow:0 0 0 1px #1452b8;cursor:nwse-resize;touch-action:none}
         .nw-text-toolbar{position:fixed;z-index:2147483001;right:12px;top:12px;display:flex;gap:4px;align-items:center;padding:6px;border:1px solid #d7e2d9;background:#fff;border-radius:10px;box-shadow:0 8px 24px #20382b30;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.nw-text-toolbar button,.nw-text-toolbar input{font:inherit;border:1px solid #d8e2d9;border-radius:6px;background:white;padding:5px 7px}.nw-text-toolbar input{width:170px}.nw-text-toolbar .problem{color:#a23d30}`}</style>
       <style>{canvasAssetCss}</style>
+      {!preview && <style>{"iframe[data-nw-node]{pointer-events:none}"}</style>}
       <PreviewBoundary document={rendered}>{PreviewComponent ? <PreviewComponent document={rendered} baseVersion={baseVersion} {...(historyRevision ? { historyRevision } : {})} width={width} breakpoint={breakpoint} mode={mode} readOnly={!editable || preview}>{defaultPreview}</PreviewComponent> : defaultPreview}</PreviewBoundary>
       <style>{motionCss}</style>
       {dropPlace && <div aria-hidden className={`nw-drop-marker${dropPlace.marker.inside ? " inside" : ""}`} style={{ left: dropPlace.marker.left, top: dropPlace.marker.top, width: dropPlace.marker.width, height: dropPlace.marker.height }} />}
@@ -338,7 +356,7 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
 }
 
 /** 認証済みホストに接続する共通エディター。ネットワーク URL や秘密を所有しない。 */
-export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builder, previewComponent, insertableBlocks, assets, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
+export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builder, previewComponent, insertableBlocks, assets, externalFramePolicy, breakpoints: hostBreakpoints, autosave, recovery }: PageEditorProps) {
   const adapterRef = useRef(adapter); adapterRef.current = adapter;
   const [sites, setSites] = useState<readonly EditorSite[]>([]), [siteId, setSiteId] = useState("");
   const [pages, setPages] = useState<readonly EditorPage[]>([]), [session, setSession] = useState<Session | null>(null);
@@ -1319,8 +1337,8 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
         restore={() => { if (recoveryStale) setRecoveryCompare(true); else void restoreRecovered(); }} discard={recoveryState.discard} />}
       <div className="e-stage" ref={stageRef}><HistoryBar history={versions} restore={restoreRevision} {...(session?.readOnly ? { restoreBlocked: session.readOnly.reason } : {})} rollbackHint={session?.readOnly ? session.readOnly.reason : session?.hasSavedDraft === false ? publishHold : dirty || libraryDirty || hasInput ? "未保存の変更を保存してから公開版を戻せます。" : blocked ? "処理が完了してから操作できます。" : undefined}
         rollback={session?.readOnly || session?.hasSavedDraft === false || viewedRelease === undefined ? undefined : () => { versions.exit(); setRollbackRevision(String(viewedRelease)); void prepare("rollback", viewedRelease); }} />
-{document && session && shown && renderedCanvas && localizationReady ? <div className="e-canvas-spacer" data-scale={canvasScale.toFixed(3)} data-viewport-height={canvasHeight} style={{ width: width * canvasScale, height: canvasHeight * canvasScale }}><div className="e-canvas-scaled" style={{ width, transform: `scale(${canvasScale})` }}><Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} {...(canvasPresentation ? { presentation: canvasPresentation } : {})} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} width={width} height={canvasHeight} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
-        motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /></div></div> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>} right={<aside className="e-rail e-right" aria-label="インスペクタ" hidden={!rightPanelOpen || preview}>
+{document && session && shown && renderedCanvas && localizationReady ? <div className="e-canvas-spacer" data-scale={canvasScale.toFixed(3)} data-viewport-height={canvasHeight} style={{ width: width * canvasScale, height: canvasHeight * canvasScale }}><div className="e-canvas-scaled" style={{ width, transform: `scale(${canvasScale})` }}><Canvas key={`${document.siteId}/${document.pageId}/${document.locale}/${masterId ?? ""}`} document={shown} rendered={renderedCanvas} {...(canvasPresentation ? { presentation: canvasPresentation } : {})} origins={canvasOrigins} openInstance={openInstance} blocks={canvasBlocks} {...(externalFramePolicy ? { externalFramePolicy } : {})} width={width} height={canvasHeight} breakpoint={tier} selection={targetMode ? null : historyMode ? null : selection} {...(!historyMode && canvasSelectedNodeId ? { selectedNodeId: canvasSelectedNodeId } : {})} slot={historyMode ? null : slotName} select={selectCanvas} canEditNode={canEditCanvasNode} dragItem={dragItem} drop={dropAt} pending={pending} editText={editCanvasText} resize={(path, width, height) => applyStyle({ type: "resize", path, breakpoint: tier, width, height, ...(until === undefined ? {} : { until }) })} reportError={setNotice} editable={!editBlocked && !hasInput} structureEditable={!editBlocked && !hasInput && !targetMode} locks={locks} preview={preview || historyMode} baseVersion={masterId && library ? library.version : session.version} {...(historyMode && versions.viewing ? { historyRevision: versions.viewing.entry } : {})} mode={historyMode ? "history" : preview ? "preview" : "edit"} {...(previewComponent ? { previewComponent } : {})} assets={resolvedAssets.map} replay={`${replay}-${preview}`}
+        presentationRuntime={(preview || motion) && !historyMode} motionCss={canvasCss(renderedCanvas, { forceState: !preview && !historyMode && styleState !== "normal" && node && node.type !== "text" ? { nodeId: node.id, state: styleState } : undefined, motion: (preview || motion) && !historyMode ? "play" : "paused" })} /></div></div> : <p className="e-empty">{localizationGate || "サイトとページを選ぶと、ここにプレビューを表示します。"}</p>}</div></section>} right={<aside className="e-rail e-right" aria-label="インスペクタ" hidden={!rightPanelOpen || preview}>
       <div className="e-inspector-actions" role="toolbar" aria-label="編集操作"><WorkspaceScaleSelect scale={scaleMode} fitPercent={Math.round(fitScale * 100)} onScale={setScaleMode} />
       {localization.site && selectedLocale && <LanguageSelector config={localization.site.config} locale={selectedLocale} disabled={blocked} select={selectLocale} />}
       <SaveStatus {...status} retry={() => void save()} compare={() => setConflictView((value) => value + 1)} reload={() => void reloadLibrary()} retryDisabled={siteWorkBlocked || blocked || hasInput || historyMode || !localizationReady} compareDisabled={targetMode || !!busy || hasInput || historyMode || !localizationReady}
