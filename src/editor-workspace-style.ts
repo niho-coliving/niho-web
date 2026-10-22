@@ -34,13 +34,14 @@ export const workspaceCss = `
 .nw-editor .e-crumb,.nw-editor .e-project-context>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nw-editor .e-crumb{font-size:12px}.nw-editor .e-project-context>span{color:var(--e-muted);font-size:10px}
 .nw-editor .e-panel{min-width:0;min-height:0;flex:1;overflow:auto}.nw-editor .e-panel>section{padding:14px 12px 22px}.nw-editor .e-panel-head{margin-bottom:12px}.nw-editor .e-panel-head h2{margin:0;font-size:13px}.nw-editor .e-panel-head p{display:none}
 
+/* Layout zoom keeps fixed iframe layers intact; transforming the iframe can drop their initial paint in Chromium. */
 /* Canvas begins at the workspace top; only the stage scrolls. */
 .nw-editor .e-canvas{position:relative;display:flex;min-width:0;min-height:0;flex-direction:column;overflow:hidden;background:var(--e-ground)}
 .nw-editor .e-stage{min-height:0;flex:1;overflow:auto;scrollbar-gutter:stable;padding:20px 20px 84px;background:var(--e-ground)}
 /* Keep fit measurements independent of automatic scrollbar visibility. */
 @supports not (scrollbar-gutter:stable){.nw-editor .e-stage{overflow-y:scroll}}
-.nw-editor .e-canvas-spacer{position:relative;flex:none;margin:0 auto}.nw-editor .e-canvas-scaled{position:absolute;top:0;left:0;transform-origin:top left}
-.nw-editor iframe{display:block;height:800px;max-width:none;margin:0 auto;border:1px solid #dedede;background:#fff;box-shadow:0 2px 8px #00000012}.nw-editor .e-empty{padding:40px;color:var(--e-muted);text-align:center}
+.nw-editor .e-canvas-spacer{position:relative;flex:none;margin:0 auto}.nw-editor .e-canvas-scaled{position:absolute;top:0;left:0}
+.nw-editor iframe{display:block;height:800px;max-width:none;margin:0 auto;border:0;outline:1px solid #dedede;background:#fff;box-shadow:0 2px 8px #00000012}.nw-editor .e-empty{padding:40px;color:var(--e-muted);text-align:center}
 .nw-editor .e-canvas-tools{position:absolute;z-index:10;bottom:16px;left:50%;display:flex;width:auto;height:42px;min-height:42px;max-width:calc(100% - 24px);align-items:center;justify-content:center;gap:5px;padding:5px 7px;border:1px solid #dedede;border-radius:7px;background:#fff;box-shadow:0 3px 14px #00000014;transform:translateX(-50%)}
 .nw-editor .e-width-field{display:flex;width:80px;align-items:center;color:var(--e-muted);white-space:nowrap}.nw-editor .e-width-field input{width:58px;height:30px;padding:4px 3px 4px 7px;border:0;background:transparent;text-align:right;font-variant-numeric:tabular-nums}
 .nw-editor .e-device-group{display:flex;align-items:center;gap:1px;padding:2px;border-radius:5px;background:var(--e-input)}.nw-editor .e-device-button{display:grid;width:30px;height:28px;min-width:30px;min-height:28px;place-items:center;padding:0;border:0;background:transparent}
