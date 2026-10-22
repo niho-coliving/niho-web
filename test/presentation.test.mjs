@@ -332,3 +332,18 @@ test("carousel fade cancels interrupted animations, completes once and restores 
   const invalid = siteWithHostView(); invalid.hostViews[0].carousel.fadeMs = 3001;
   assert.throws(() => parseSitePresentation(invalid, document, hostBlocks), /fade duration/);
 });
+
+test("host view scopes cannot collide with the target and overlay bindings reach nested views", () => {
+  const document = page("synthetic", "en", "body", [{ type: "component", id: "gallery-block", block: "Gallery", props: { variant: "wide" } }]);
+  const collision = siteWithHostView(); collision.hostViews[0].document.pageId = "body";
+  assert.throws(() => parseSitePresentation(collision, document, hostBlocks), /distinct from the target/);
+  assert.throws(() => renderSitePageToHtml(document, collision, hostBlocks), /distinct from the target/);
+  const presentation = siteWithHostView(), menu = siteWithMenu(); presentation.overlays = menu.overlays;
+  presentation.hostViews[0].document.body[0].children.push({ type: "element", id: "host-menu-trigger", tag: "a", attrs: { id: "menu-trigger", href: "#site-menu" }, children: [{ type: "text", text: "Host menu" }] });
+  const dom = new JSDOM(renderSitePageToHtml(document, presentation, hostBlocks));
+  const trigger = dom.window.document.querySelector('[data-nw-host-view] [data-nw-overlay-open="site-menu"]');
+  assert.ok(trigger); const cleanup = initializeSitePresentation(dom.window.document);
+  trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(dom.window.document.querySelector('[data-nw-overlay="site-menu"]').hidden, false);
+  cleanup(); dom.window.close();
+});

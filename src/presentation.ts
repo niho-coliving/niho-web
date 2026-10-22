@@ -133,7 +133,7 @@ function carousel(input: unknown, nodes: ReadonlyMap<string, ElementNode>, path:
 }
 
 /** 外部 snapshot の presentation を対象ページへ固定して検証する。 */
-export function parseSitePresentation(input: unknown, target: Pick<PageDocument, "siteId" | "locale">, blocks: BlockContracts = {}): SitePresentation {
+export function parseSitePresentation(input: unknown, target: Pick<PageDocument, "siteId" | "locale"> & Partial<Pick<PageDocument, "pageId">>, blocks: BlockContracts = {}): SitePresentation {
   const source = record(input, "presentation");
   keys(source, ["schemaVersion", "siteId", "locale", "version", "reset", "tokens", "layout", "fonts", "shared", "overlays", "hostViews"], "presentation");
   if (source.schemaVersion !== 1) fail("presentation.schemaVersion", "unsupported schema version");
@@ -191,7 +191,7 @@ export function parseSitePresentation(input: unknown, target: Pick<PageDocument,
     viewKeys.add(key);
     const document = parsePageDocument(view.document, {});
     if (document.siteId !== siteId || document.locale !== locale) fail(`${path}.document`, "target mismatch");
-    if (documentIds.has(document.pageId)) fail(`${path}.document.pageId`, "presentation document IDs must be distinct");
+    if (documentIds.has(document.pageId) || document.pageId === target.pageId) fail(`${path}.document.pageId`, "presentation document IDs must be distinct from the target");
     documentIds.add(document.pageId);
     let nodes: Map<string, ElementNode>;
     try { nodes = elements(document); } catch { return fail(`${path}.document`, "host view cannot contain components or instances"); }

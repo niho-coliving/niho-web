@@ -88,12 +88,13 @@ export function cssForDocument(document: PageDocument, assets: ResolvedAssetMap 
       if (node.type === "element" && node.tag === "details") rules.push(`${selector}::details-content{width:100%;min-width:0;}`);
       const isolatedBackground = [node.style?.base, ...(node.style?.responsive ?? []).map((entry) => entry.declarations)]
         .some((values) => values?.backgroundFilter !== undefined);
+      const boxDeclarations = (values: StyleDeclarations) => declarations(isolatedBackground && values.position === "static" ? { ...values, position: "relative" } : values, assets, isolatedBackground ? "withoutIsolatedBackground" : "all");
       // 遷移だけの指定は動きの規則に出すので、空の規則を残さない（旧文書の空の規則はそのまま）。
       const motionOnly = (values: StyleDeclarations) => Object.keys(values).some((property) => motion.has(property)) && !declarations(values, assets);
-      if (node.style?.base && !motionOnly(node.style.base)) rules.push(`${selector}{${isolatedBackground ? `isolation:isolate;${node.style?.base?.position ? "" : "position:relative;"}` : ""}${declarations(node.style.base, assets, isolatedBackground ? "withoutIsolatedBackground" : "all")}}`);
+      if (node.style?.base && !motionOnly(node.style.base)) rules.push(`${selector}{${isolatedBackground ? `isolation:isolate;${node.style?.base?.position ? "" : "position:relative;"}` : ""}${boxDeclarations(node.style.base)}}`);
       else if (isolatedBackground) rules.push(`${selector}{isolation:isolate;position:relative;}`);
       for (const responsive of node.style?.responsive ?? []) {
-        if (!motionOnly(responsive.declarations)) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${declarations(responsive.declarations, assets, isolatedBackground ? "withoutIsolatedBackground" : "all")}}}`);
+        if (!motionOnly(responsive.declarations)) rules.push(`@media (min-width:${responsive.minWidth}px){${selector}{${boxDeclarations(responsive.declarations)}}}`);
       }
       if (isolatedBackground) {
         const base = declarations(node.style?.base ?? {}, assets, "isolatedBackground");

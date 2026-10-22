@@ -163,3 +163,10 @@ test("text style rules come before node rules, group their users and skip unused
   assert.ok(!html.includes("textStyle") && !html.includes("data-nw-text"));
   assert.match(html, /<h1 data-nw-node="heading" data-nw-owner="[^"]+">/);
 });
+
+test("isolated filtered backgrounds anchor static nodes at base and responsive widths", () => {
+  const document = { schemaVersion: 1, siteId: "synthetic", pageId: "background", locale: "en", revision: 1, title: "Background", tokens: {}, body: [{ type: "element", id: "filtered", tag: "div", children: [], style: { base: { position: "static", backgroundFilter: "sepia(0.2)" }, responsive: [{ minWidth: 768, declarations: { position: "static" } }] } }] };
+  const css = generatePageCss(document);
+  assert.equal(css.includes("position:static"), false);
+  assert.ok((css.match(/position:relative/g) ?? []).length >= 2);
+});

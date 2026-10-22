@@ -60,7 +60,7 @@ export function PageRenderer({ document: input, blocks = {}, assets: assetInput,
         const view = candidates.find((candidate) => sitePresentationHostViewKey(candidate.block, candidate.props) === sitePresentationHostViewKey(node.block, node.props));
         if (!view) throw new Error(`Registered host view is missing for block props: ${node.block}`);
         return createElement("div", { key: node.id, "data-nw-node": node.id, "data-nw-owner": scope, "data-nw-block": node.block, "data-nw-host-view": view.id },
-          createElement(PageRenderer, { document: view.document, assets, missingAssets, hostViewBinding: view, hostViewMode: "off", ...(externalFramePolicy ? { externalFramePolicy } : {}) }));
+          createElement(PageRenderer, { document: view.document, assets, missingAssets, hostViewBinding: view, hostViewMode: "off", overlayBindings, ...(externalFramePolicy ? { externalFramePolicy } : {}) }));
       }
       if (!definition?.component) throw new Error(`Registered block has no React component: ${node.block}`);
       // 枠の属性や style をブロックの props へ混ぜない。
