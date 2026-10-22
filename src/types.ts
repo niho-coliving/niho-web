@@ -139,6 +139,14 @@ export type SiteFontFace = {
   display?: "auto" | "block" | "swap" | "fallback" | "optional";
   unicodeRange?: string;
 };
+/** JSONからは操作コードを受け取らず、既知のDOM bindingだけを許すnative overlay。 */
+export type SitePresentationOverlay = {
+  id: string;
+  label: string;
+  document: PageDocument;
+  triggerIds: string[];
+  closeIds: string[];
+};
 /**
  * ページ本文とは独立した、版固定のサイト表示コンテキスト。
  * header/footer はそれぞれ独立して編集・保存する canonical PageDocument であり、本文へ複製しない。
@@ -153,6 +161,7 @@ export type SitePresentation = {
   layout?: NodeStyle;
   fonts: SiteFontFace[];
   shared: { header: PageDocument; footer: PageDocument };
+  overlays?: SitePresentationOverlay[];
 };
 
 export type ComponentKind = "header" | "footer" | "navigation" | "section" | "part";

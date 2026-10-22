@@ -31,6 +31,13 @@ function assertPresentationTarget(presentation: unknown, target: EditorTarget): 
     const document = record(shared[name], `presentation.shared.${name}`);
     if (document.siteId !== target.siteId || document.locale !== target.locale) throw new Error("共有文書の対象が一致しません。");
   }
+  if (value.overlays !== undefined) {
+    if (!Array.isArray(value.overlays)) throw new Error("表示コンテキストのoverlayが正しくありません。");
+    for (const [index, raw] of value.overlays.entries()) {
+      const overlay = record(raw, `presentation.overlays[${index}]`), document = record(overlay.document, `presentation.overlays[${index}].document`);
+      if (document.siteId !== target.siteId || document.locale !== target.locale) throw new Error("共有overlay文書の対象が一致しません。");
+    }
+  }
 }
 
 function assertLibrarySite(library: unknown, site: EditorSite): void {

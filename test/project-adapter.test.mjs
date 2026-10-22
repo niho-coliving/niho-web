@@ -63,7 +63,7 @@ test("legal read and save preserve compatibility while forwarding identity field
 test("presentation stays target-scoped and its dependency version is forwarded to save and release CAS", async () => {
   const target = { siteId: "demo", pageId: "home", locale: "ja-JP" };
   const shared = (pageId) => ({ ...fixture, siteId: "demo", pageId, locale: "ja-JP", title: pageId, body: [] });
-  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "context-v2", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header: shared("header"), footer: shared("footer") } };
+  const presentation = { schemaVersion: 1, siteId: "demo", locale: "ja-JP", version: "context-v2", reset: "neutral-v1", tokens: {}, fonts: [], shared: { header: shared("header"), footer: shared("footer") }, overlays: [{ id: "site-menu", label: "メニュー", document: shared("menu"), triggerIds: ["menu-open"], closeIds: ["menu-close"] }] };
   const { calls, wrapped } = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation }) });
   const snapshot = await wrapped.readDocument(target, signal());
   assert.equal(snapshot.presentation.version, "context-v2");
@@ -76,6 +76,8 @@ test("presentation stays target-scoped and its dependency version is forwarded t
   await assert.rejects(() => mismatched.readDocument(target, signal()), /表示コンテキスト/);
   const foreignShared = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation: { ...presentation, shared: { ...presentation.shared, header: { ...presentation.shared.header, locale: "en" } } } }) }).wrapped;
   await assert.rejects(() => foreignShared.readDocument(target, signal()), /共有文書/);
+  const foreignOverlay = setup({ readDocument: async () => ({ document: { ...fixture, ...target }, version: "v1", presentation: { ...presentation, overlays: [{ ...presentation.overlays[0], document: { ...presentation.overlays[0].document, siteId: "other" } }] } }) }).wrapped;
+  await assert.rejects(() => foreignOverlay.readDocument(target, signal()), /overlay文書/);
 });
 
 test("prepare and release reject cross-site plans and unapproved domains, but legal release remains compatible", async () => {

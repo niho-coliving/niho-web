@@ -1,6 +1,6 @@
 import { resolvePageStyles, type SiteStyles } from "./site-styles.js";
 import { createElement, Fragment, type ComponentType, type ReactElement } from "react";
-import type { BlockContract, PageDocument, PageNode, PublicPropValue, SitePresentation } from "./types.js";
+import type { BlockContract, PageDocument, PageNode, PublicPropValue, SitePresentation, SitePresentationOverlay } from "./types.js";
 import { parsePageDocument } from "./document.js";
 import { cssForDocument, pageScope } from "./css.js";
 import { parseResolvedAssets, resolvedAsset, type ResolvedAssetMap } from "./assets.js";
@@ -18,10 +18,12 @@ export type PageRendererProps = {
   assets?: ResolvedAssetMap;
   /** 解決できない素材画像。既定は描画しない。placeholder はエディター用。 */
   missingAssets?: "omit" | "placeholder";
+  /** @internal SitePageRendererが検証済みoverlay controlへ付ける既知属性。 */
+  overlayBindings?: readonly SitePresentationOverlay[];
 };
 
 /** useEffect を使わず、Next.js の初期 HTML と静的 SSR の両方で本文を返す。 */
-export function PageRenderer({ document: input, blocks = {}, assets: assetInput, missingAssets = "omit", siteStyles }: PageRendererProps): ReactElement {
+export function PageRenderer({ document: input, blocks = {}, assets: assetInput, missingAssets = "omit", siteStyles, overlayBindings = [] }: PageRendererProps): ReactElement {
   const document = resolvePageStyles(parsePageDocument(input, blocks, siteStyles ? { siteStyles } : {}), siteStyles);
   const assets = assetInput === undefined ? {} : parseResolvedAssets(assetInput);
   const scope = pageScope(document);
@@ -36,6 +38,11 @@ export function PageRenderer({ document: input, blocks = {}, assets: assetInput,
       return createElement("div", { key: node.id, "data-nw-node": node.id, "data-nw-owner": scope, "data-nw-block": node.block }, createElement(definition.component, node.props));
     }
     const attrs = { ...node.attrs };
+    const htmlId = typeof attrs.id === "string" ? attrs.id : undefined;
+    const opens = htmlId ? overlayBindings.find((overlay) => overlay.triggerIds.includes(htmlId)) : undefined;
+    const closes = htmlId ? overlayBindings.find((overlay) => overlay.closeIds.includes(htmlId)) : undefined;
+    if (opens) { attrs["aria-controls"] = opens.id; attrs["aria-expanded"] = "false"; attrs["data-nw-overlay-open"] = opens.id; }
+    if (closes) attrs["data-nw-overlay-close"] = closes.id;
     if (node.asset) {
       const resolved = resolvedAsset(assets, node.asset);
       if (!resolved) return missingAssets === "placeholder" ? createElement("span", { key: node.id, "data-nw-node": node.id, "data-nw-owner": scope, "data-nw-missing-asset": "", role: "img",
@@ -69,15 +76,24 @@ export function SitePageRenderer({ document: input, presentation: presentationIn
   const assets = assetInput === undefined ? {} : parseResolvedAssets(assetInput);
   const output = cssForSitePresentation(presentation, document, blocks, assets), layout = presentationLayoutDocument(presentation);
   const layoutScope = pageScope(layout), shared = presentation.shared;
+  const overlays = presentation.overlays ?? [];
   const header: PageDocument = document.pageId === shared.header.pageId ? document : shared.header;
   const footer: PageDocument = document.pageId === shared.footer.pageId ? document : shared.footer;
   const body = document.pageId === shared.header.pageId || document.pageId === shared.footer.pageId ? null
-    : createElement("main", { "data-nw-presentation-body": "" }, createElement(PageRenderer, { document, blocks, assets, missingAssets, ...(siteStyles ? { siteStyles } : {}) }));
+    : overlays.some((overlay) => document.pageId === overlay.document.pageId) ? null
+    : createElement("main", { "data-nw-presentation-body": "" }, createElement(PageRenderer, { document, blocks, assets, missingAssets, overlayBindings: overlays, ...(siteStyles ? { siteStyles } : {}) }));
   return createElement(Fragment, null,
     createElement("style", { "data-nw-presentation-style": output.scope, dangerouslySetInnerHTML: { __html: output.css } }),
     createElement("div", { "data-nw-presentation": output.scope, "data-nw-scope": layoutScope, lang: document.locale },
       createElement("div", { "data-nw-owner": layoutScope, "data-nw-node": "layout" },
-      createElement("div", { "data-nw-presentation-header": "" }, createElement(PageRenderer, { document: header, blocks, assets, missingAssets })),
+      createElement("div", { "data-nw-presentation-header": "" }, createElement(PageRenderer, { document: header, blocks, assets, missingAssets, overlayBindings: overlays })),
       body,
-      createElement("div", { "data-nw-presentation-footer": "" }, createElement(PageRenderer, { document: footer, blocks, assets, missingAssets })))));
+      createElement("div", { "data-nw-presentation-footer": "" }, createElement(PageRenderer, { document: footer, blocks, assets, missingAssets, overlayBindings: overlays })),
+      ...overlays.map((overlay) => {
+        const editing = document.pageId === overlay.document.pageId, overlayDocument = editing ? document : overlay.document;
+        return createElement("div", { key: overlay.id, id: overlay.id, role: "dialog", "aria-modal": "true", "aria-label": overlay.label, tabIndex: -1, "data-nw-overlay": overlay.id,
+          ...(editing ? { "data-nw-overlay-editing": "" } : { hidden: true }) },
+          createElement("button", { type: "button", tabIndex: -1, "aria-hidden": "true", "aria-label": overlay.label + "を閉じる", "data-nw-overlay-backdrop": "", "data-nw-overlay-close": overlay.id }),
+          createElement("div", { "data-nw-overlay-content": "" }, createElement(PageRenderer, { document: overlayDocument, blocks, assets, missingAssets, overlayBindings: overlays })));
+      }))));
 }

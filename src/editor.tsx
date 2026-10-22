@@ -27,6 +27,7 @@ import { AssetLibraryPanel, BackgroundImageField, ImageSourceField, assetPlaceme
 import { assetEditorCss, canvasAssetCss } from "./editor-assets-style.js";
 import type { LibraryAsset, ResolvedAssetMap } from "./assets.js";
 import { presentationAssetDocument } from "./presentation.js";
+import { initializeSitePresentation } from "./presentation-runtime.js";
 import { componentIssues, componentUsage, parseComponentLibrary, type ResolvedOrigin } from "./components.js";
 import { bumpChangedComponentVersions, componentCreationLock, componentDocument, createComponentFromNode, duplicateComponent, removeComponent, renameComponent, setComponentKind, setComponentProp, withComponentDocument } from "./component-model.js";
 import { ComponentBanner, ComponentDialogBody, ComponentPanel, ComponentSettings, CreateComponentSection, InstanceInspector, LibraryReloadDialogBody, MasterPropFields, componentDialogTitle, type ComponentDialogState, type InputRenderer } from "./component-panel.js";
@@ -274,11 +275,18 @@ function Canvas({ document, blocks, width, height, breakpoint, selection, select
   const defaultPreview = presentation
     ? <SitePageRenderer key={replay} document={rendered} presentation={presentation} blocks={blocks} assets={assets} missingAssets="placeholder" />
     : <StablePageRenderer key={replay} document={rendered} blocks={blocks} assets={assets} missingAssets="placeholder" />;
+  useEffect(() => {
+    if (!body || !presentation || !preview) return;
+    return initializeSitePresentation(body);
+  }, [body, presentation, preview, rendered, replay]);
   return <><iframe ref={frame} title="ページのライブキャンバス" sandbox="allow-same-origin" style={{ width, height }}
     srcDoc={'<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"></body></html>'}
     onLoad={() => setBody(frame.current?.contentDocument?.body ?? null)} />
     {body && createPortal(<div onClickCapture={(event) => {
-      if (preview) { event.preventDefault(); event.stopPropagation(); return; }
+      if (preview) {
+        if (presentation && asElement(event.target)?.closest("[data-nw-overlay-open],[data-nw-overlay-close],[data-nw-overlay] a[href]")) { event.preventDefault(); return; }
+        event.preventDefault(); event.stopPropagation(); return;
+      }
       if (asElement(event.target)?.closest(".nw-resize-handle") || editingId && asElement(event.target)?.closest("[contenteditable=true],.nw-text-toolbar")) return;
       event.preventDefault(); event.stopPropagation();
       const target = event.target as HTMLElement;
