@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,7 +11,8 @@ await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(join(publicOutput, "assets"), { recursive: true });
 
 await Promise.all([
-  build({
+  (async () => {
+    const result = await build({
     entryPoints: [join(studioDirectory, "client.tsx")],
     outfile: join(publicOutput, "assets", "app.js"),
     bundle: true,
@@ -20,8 +21,12 @@ await Promise.all([
     target: "es2022",
     minify: true,
     define: { "process.env.NODE_ENV": '"production"' },
-    legalComments: "none"
-  }),
+    legalComments: "none",
+    metafile: true
+    });
+    const forbidden = Object.keys(result.metafile.inputs).filter((input) => /studio\/(?:integration-entry|experience-editor|kamakura-editor)\.tsx$/u.test(input) || /src\/editor\.tsx$/u.test(input));
+    if (forbidden.length) throw new Error(`Frozen editor code entered the Studio client bundle: ${forbidden.join(", ")}`);
+  })(),
   build({
     entryPoints: [join(studioDirectory, "worker.ts")],
     outfile: join(outputDirectory, "worker.js"),
@@ -49,3 +54,7 @@ await Promise.all([
   })()
 ]);
 
+const workerBundle = await readFile(join(outputDirectory, "worker.js"), "utf8");
+for (const forbidden of ["https://api.niho.life", "https://api-stg.niho.life", "/internal/studio/web-content"]) {
+  if (workerBundle.includes(forbidden)) throw new Error(`Frozen editor upstream entered the Studio Worker bundle: ${forbidden}`);
+}
