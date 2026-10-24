@@ -1246,7 +1246,7 @@ test("the conflict comparison shows the diff, overwrites with the latest version
 
 test("recovery offers unsaved work after a load, restores it as an undoable edit and is cleared after saving", async () => {
   const storage = memoryStorage(), store = createBrowserRecoveryStore({ scope: "staff", storage });
-  const updatedAt = "2026-10-21T01:02:00.000Z";
+  const updatedAt = new Date(Date.now() - 60_000).toISOString();
   store.write({ target: homeTarget, baseVersion: "v1", baseRevision: 1, document: { ...structuredClone(fixture), title: "端末の編集" }, updatedAt });
   const app = await setup({ props: { recovery: store } });
   try {
