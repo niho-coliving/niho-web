@@ -47,7 +47,7 @@ export function saveProblemNotice(problem: SaveProblem, auto: boolean, thrown: b
   if (problem === "offline") return auto ? "オフラインのため自動保存できませんでした。編集内容を保持しています。接続が戻ると再試行します。" : "オフラインのため保存できませんでした。編集内容を保持しています。接続が戻ってから「再試行」を押してください。";
   return auto ? "自動保存できませんでした。編集内容を保持しています。「再試行」で保存できます。" : "下書きを保存できませんでした。編集内容を保持しています。時間をおいて再試行してください。";
 }
-const problemLabels: Record<SaveProblem, string> = { failed: "保存できませんでした", conflict: "競合しています", "library-conflict": "部品が競合しています", auth: "ログインを確認してください", offline: "オフラインです" };
+const problemLabels: Record<SaveProblem, string> = { failed: "保存できませんでした", conflict: "競合しています", "library-conflict": "コンポーネントが競合しています", auth: "ログインを確認してください", offline: "オフラインです" };
 /** ツールバーの保存状態。競合・部品の競合とログイン切れは内容が戻っても残し（保存の基準が古いため）、失敗とオフラインは未保存の間だけ出す。 */
 export function saveStatus(state: { busy: string; hasInput: boolean; problem: SaveProblem | null; dirty: boolean; online: boolean; autosave: boolean; savedAt: Date | null; loaded: boolean }): { text: string; tone: "saved" | "dirty" | "problem"; problem: SaveProblem | null } {
   const problem = state.problem === "conflict" || state.problem === "library-conflict" || state.problem === "auth" || state.dirty ? state.problem : null;
@@ -64,7 +64,7 @@ export function SaveStatus({ text, tone, problem, retry, compare, reload, retryD
     <span className={`e-status${tone === "saved" ? "" : " is-dirty"}${tone === "problem" ? " is-problem" : ""}`} role="status">{text}</span>
     {(problem === "failed" || problem === "auth" || problem === "offline") && <button type="button" className="e-small e-status-action" disabled={retryDisabled} onClick={retry}>再試行</button>}
     {problem === "conflict" && <button type="button" className="e-small e-status-action" disabled={compareDisabled} onClick={compare}>比較する</button>}
-    {problem === "library-conflict" && <button type="button" className="e-small e-status-action" disabled={reloadDisabled} onClick={reload}>部品を読み直す</button>}
+    {problem === "library-conflict" && <button type="button" className="e-small e-status-action" disabled={reloadDisabled} onClick={reload}>コンポーネントを読み直す</button>}
   </>;
 }
 export function AutosaveSwitch({ on, set }: { on: boolean; set: (on: boolean) => void }) {
@@ -136,7 +136,7 @@ export function useRecovery({ store, session, dirty, blocks, components, siteSty
       const recovered = stored ? recoveredEntry(stored, target, blocks, library.current, sharedStyles.current) : null;
       if (recovered === "component-unresolved" || recovered === "style-unresolved") {
         reporter.current(recovered === "component-unresolved"
-          ? "端末に残っていた変更がありますが、共通部品の現在の内容と合わないため復元できません。"
+          ? "端末に残っていた変更がありますが、コンポーネントの現在の内容と合わないため復元できません。"
           : "端末に残っていた変更がありますが、共通スタイルの現在の内容と合わないため復元できません。");
         setPhase({ epoch, key: currentKey, state: "idle" }); return;
       }
@@ -252,7 +252,7 @@ export function useLibraryRecovery({ store, session, dirty, blocks, epoch, repor
       void Promise.resolve().then(() => library.writeLibrary!({ siteId: now.siteId, baseVersion: now.version, changed, baseTokens: structuredClone(now.saved.tokens), library: now.present, updatedAt: new Date().toISOString() })).catch((error: unknown) => {
         if (warned.current) return;
         warned.current = true;
-        reporter.current(error instanceof RecoveryTooLargeError ? "部品の変更が大きすぎるため端末へ退避していません。保存して作業を残してください。" : "部品の変更を端末へ退避できませんでした。保存して作業を残してください。");
+        reporter.current(error instanceof RecoveryTooLargeError ? "コンポーネントの変更が大きすぎるため端末へ退避していません。保存して作業を残してください。" : "コンポーネントの変更を端末へ退避できませんでした。保存して作業を残してください。");
       });
     };
     pendingWrite.current = write;
@@ -283,13 +283,13 @@ export function useLibraryRecovery({ store, session, dirty, blocks, epoch, repor
 }
 /** 端末に残っていた部品の変更の提案。復元できる部品が無ければ「破棄」だけを出す。 */
 export function LibraryRecoveryBanner({ offer, merge, disabled, restore, discard }: { offer: RecoveredLibrary; merge: LibraryMerge; disabled: boolean; restore: () => void; discard: () => void }) {
-  return <div className="e-recovery" role="status" aria-label="端末に残っていた部品の変更">
-    <p><strong>保存されていない部品の変更があります（{formatDateTime(offer.updatedAt)}）</strong>
-      {merge.library && merge.restored.length > 0 && <span>復元する部品: {merge.restored.map((change) => `${change.name}（${changeLabels[change.change]}）`).join("、")}</span>}
+  return <div className="e-recovery" role="status" aria-label="端末に残っていたコンポーネントの変更">
+    <p><strong>保存されていないコンポーネントの変更があります（{formatDateTime(offer.updatedAt)}）</strong>
+      {merge.library && merge.restored.length > 0 && <span>復元するコンポーネント: {merge.restored.map((change) => `${change.name}（${changeLabels[change.change]}）`).join("、")}</span>}
       {merge.library && merge.restoredTokens.length > 0 && <span>復元するスタイル: {merge.restoredTokens.join("、")}</span>}
-      {merge.conflicts.length > 0 && <span>ほかの保存で変更されたため復元しない部品: {merge.conflicts.join("、")}</span>}
+      {merge.conflicts.length > 0 && <span>ほかの保存で変更されたため復元しないコンポーネント: {merge.conflicts.join("、")}</span>}
       {merge.tokenConflicts.length > 0 && <span>ほかの保存で変更されたため復元しないスタイル: {merge.tokenConflicts.join("、")}</span>}
-      {!merge.library && <span>最新の共通部品と合わないため、復元できません。</span>}</p>
+      {!merge.library && <span>最新のコンポーネントと合わないため、復元できません。</span>}</p>
     <div className="e-recovery-actions">{merge.library && (merge.restored.length > 0 || merge.restoredTokens.length > 0) && <button type="button" className="e-small e-primary" disabled={disabled} onClick={restore}>復元する</button>}
       <button type="button" className="e-small" onClick={discard}>破棄</button></div>
   </div>;
@@ -475,9 +475,9 @@ export function HistoryDialogs({ history, present }: { history: VersionHistory; 
   </Dialog>;
 }
 
-const affectedLabels: Readonly<Record<EditorReleaseAffected["kind"], string>> = { shared: "共通部品", page: "ページ", site: "サイト設定" };
+const affectedLabels: Readonly<Record<EditorReleaseAffected["kind"], string>> = { shared: "コンポーネント", page: "ページ", site: "サイト設定" };
 export function ReleaseAffected({ affected }: { affected: readonly EditorReleaseAffected[] | undefined }) {
   if (!affected?.length) return null;
-  return <div className="e-affected"><p>影響する共通部品・ページ・サイト設定</p><ul>{affected.map((item, index) => <li key={index}>
+  return <div className="e-affected"><p>影響するコンポーネント・ページ・サイト設定</p><ul>{affected.map((item, index) => <li key={index}>
     <span className="e-badge">{affectedLabels[item.kind]}</span><span className="e-affected-name">{item.name}</span>{item.detail && <small className="e-help">{item.detail}</small>}</li>)}</ul></div>;
 }

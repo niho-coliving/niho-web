@@ -16,7 +16,7 @@ function show(value: unknown): string {
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 type Owned = ElementNode | ComponentNode | InstanceNode;
 type Placed = { node: Owned; parent: string | null };
-const nodeLabel = (node: Owned) => `${node.type === "element" ? node.tag : node.type === "component" ? node.block : `部品 ${node.component}`}#${node.id}`;
+const nodeLabel = (node: Owned) => `${node.type === "element" ? node.tag : node.type === "component" ? node.block : `コンポーネント ${node.component}`}#${node.id}`;
 function placed(document: PageDocument): Map<string, Placed> {
   const result = new Map<string, Placed>();
   const visit = (nodes: readonly PageNode[], parent: string | null) => {
@@ -67,18 +67,18 @@ function compareNodes(changes: DocumentChange[], before: Owned, after: Owned): v
     const oldText = directText(before.children), newText = directText(after.children);
     if (oldText !== newText) changes.push({ path: `${label} のテキスト`, before: oldText ? show(oldText) : none, after: newText ? show(newText) : none });
     compareFields(changes, `${label} の `, before.attrs ?? {}, after.attrs ?? {});
-    if (!same(before.asset, after.asset)) changes.push({ path: `${label} の素材`, before: show(before.asset), after: show(after.asset) });
+    if (!same(before.asset, after.asset)) changes.push({ path: `${label} のアセット`, before: show(before.asset), after: show(after.asset) });
   } else if (before.type === "component" && after.type === "component") {
     compareFields(changes, `${label} の `, before.props, after.props);
     for (const slot of unionKeys(Object.keys(after.slots ?? {}), Object.keys(before.slots ?? {}))) compareStyle(changes, `${label} の領域 ${slot}`, before.slots?.[slot], after.slots?.[slot]);
   } else if (before.type === "instance" && after.type === "instance") {
-    if (before.component !== after.component) changes.push({ path: `${label} の部品`, before: before.component, after: after.component });
+    if (before.component !== after.component) changes.push({ path: `${label} のコンポーネント`, before: before.component, after: after.component });
     compareFields(changes, `${label} の `, before.props ?? {}, after.props ?? {});
   }
   compareStyle(changes, label, before.style, after.style);
 }
 function compareStyle(changes: DocumentChange[], label: string, before: NodeStyle | undefined, after: NodeStyle | undefined): void {
-  if (!same(before?.textStyle, after?.textStyle)) changes.push({ path: `${label} の文字スタイル`, before: show(before?.textStyle), after: show(after?.textStyle) });
+  if (!same(before?.textStyle, after?.textStyle)) changes.push({ path: `${label} のテキストスタイル`, before: show(before?.textStyle), after: show(after?.textStyle) });
   const oldStyle = flatStyle(before), newStyle = flatStyle(after);
   const keys = unionKeys(newStyle.keys(), oldStyle.keys()).sort((left, right) => {
     const scope = (key: string) => { const head = key.split("\u0000")[0]!; return head === "共通" ? -1 : Number(head); };
@@ -101,7 +101,7 @@ export function diffDocuments(before: PageDocument, after: PageDocument, options
   push("ソーシャルカバー", oldMeta.ogImage, newMeta.ogImage, (value) => {
     if (!value || typeof value !== "object") return none;
     const image = value as PageImage;
-    return show(`${"asset" in image ? `素材 ${image.asset.provider}:${image.asset.id}` : image.src}（${image.alt}）`);
+    return show(`${"asset" in image ? `アセット ${image.asset.provider}:${image.asset.id}` : image.src}（${image.alt}）`);
   });
   push("ファビコン", oldMeta.favicon, newMeta.favicon);
   push("検索エンジンに表示しない", !!oldMeta.noindex, !!newMeta.noindex, (value) => value ? "表示しない" : "表示する");
@@ -111,7 +111,7 @@ export function diffDocuments(before: PageDocument, after: PageDocument, options
     push(`トークン @${name}`, oldToken, newToken, (value) => value && typeof value === "object" ? show(typed ? `${String((value as { value: unknown }).value)}（${(value as { type: string }).type}）` : (value as { value: unknown }).value) : none);
   }
   const oldStyles = before.textStyles ?? {}, newStyles = after.textStyles ?? {};
-  for (const name of unionKeys(Object.keys(newStyles), Object.keys(oldStyles))) push(`文字スタイル ${newStyles[name]?.label ?? oldStyles[name]?.label ?? name}`, oldStyles[name], newStyles[name], (value) => value && typeof value === "object" ? show(JSON.stringify(value)) : none);
+  for (const name of unionKeys(Object.keys(newStyles), Object.keys(oldStyles))) push(`テキストスタイル ${newStyles[name]?.label ?? oldStyles[name]?.label ?? name}`, oldStyles[name], newStyles[name], (value) => value && typeof value === "object" ? show(JSON.stringify(value)) : none);
   const oldText = directText(before.body), newText = directText(after.body);
   if (oldText !== newText) changes.push({ path: "ページ直下のテキスト", before: oldText ? show(oldText) : none, after: newText ? show(newText) : none });
   const oldNodes = placed(before), newNodes = placed(after), oldOrder = siblingOrder(oldNodes, newNodes), newOrder = siblingOrder(newNodes, oldNodes);

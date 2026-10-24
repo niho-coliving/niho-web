@@ -62,7 +62,7 @@ test("library responses reject other sites, unsafe thumbnails, duplicates and un
   const result = parseAssetListResult(listing({ quota: { usedBytes: 12, limitBytes: 10 }, upload: { accept: ["image/png"], maxBytes: 1 }, nextCursor: "60" }), "demo");
   assert.deepEqual(result.assets[0], asset());
   assert.deepEqual(result.quota, { usedBytes: 12, limitBytes: 10 });
-  assert.throws(() => parseAssetListResult(listing({ assets: [asset({ siteId: "other" })] }), "demo"), /別サイトの素材は利用できません/);
+  assert.throws(() => parseAssetListResult(listing({ assets: [asset({ siteId: "other" })] }), "demo"), /別サイトのアセットは利用できません/);
   for (const invalid of [
     listing({ assets: [asset({ thumbnailUrl: "javascript:alert(1)" })] }), listing({ assets: [asset({ thumbnailUrl: "#x" })] }), listing({ assets: [asset({ thumbnailUrl: "http://example.com/a.png" })] }),
     listing({ assets: [asset(), asset()] }), listing({ assets: [asset({ src: "/a.png" })] }), listing({ extra: true }), listing({ folders: [{ id: "a", name: "A", parent: "b" }] }),

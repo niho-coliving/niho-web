@@ -28,7 +28,7 @@ type Impact = { key: string; affected: string[]; failed: boolean };
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 /** 部品の編集で、サイト共通に同名の定義がある値を変更できない理由。ページでの描画と同じくサイトの定義が優先され、ライブラリの写しを変えても見た目が変わらない。 */
 export const sharedTokenReason = (siteEditable: boolean): string =>
-  `サイト共通の値のため、部品の編集では変更できません。${siteEditable ? "ページに戻り、スタイルの「サイト共通」で変更してください。" : ""}`;
+  `サイト共通の値のため、コンポーネントの編集では変更できません。${siteEditable ? "ページに戻り、スタイルの「サイト共通」で変更してください。" : ""}`;
 
 /** サイトとページの所有権・変更の影響・移行の確認を共通ライブラリの上に表示する。 */
 export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDisabled, editingComponent, state, rawDocument, pageDirty, sitePending, migrate, ...props }: Props) {
@@ -59,7 +59,7 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
     const shared = after.tokens ?? {}, names = Object.keys(props.document.tokens);
     return <>
       {names.some((name) => Object.hasOwn(shared, name)) && <p className="e-help">サイト共通と同じ名前の値は、ページに置いたときと同じくサイト共通の値で表示します。</p>}
-      <StyleLibrary {...props} origins={state.supported ? Object.fromEntries(names.map((name) => [`token:${name}`, Object.hasOwn(shared, name) ? "サイト共通" : "共通部品"])) : undefined}
+      <StyleLibrary {...props} origins={state.supported ? Object.fromEntries(names.map((name) => [`token:${name}`, Object.hasOwn(shared, name) ? "サイト共通" : "コンポーネント本体"])) : undefined}
         readOnlyToken={(name) => Object.hasOwn(shared, name) ? sharedTokenReason(state.editable) : undefined} reservedNames={Object.keys(shared)} />
     </>;
   }
@@ -87,7 +87,7 @@ export function SharedStyleLibrary({ adapter, pages, blocks, components, siteDis
     if (kind === "token") { token(name); delete page.tokens[name]; }
     else {
       const style = rawDocument.textStyles?.[name]; if (!style) return;
-      if (Object.hasOwn(styles.textStyles ?? {}, name)) collisions.push(`文字スタイル ${name}: ${JSON.stringify(styles.textStyles![name])} → ${JSON.stringify(style)}`);
+      if (Object.hasOwn(styles.textStyles ?? {}, name)) collisions.push(`テキストスタイル ${name}: ${JSON.stringify(styles.textStyles![name])} → ${JSON.stringify(style)}`);
       for (const values of [style.base, ...(style.responsive ?? []).map((entry) => entry.declarations)]) for (const value of Object.values(values)) if (typeof value === "object") token(value.token);
       (styles.textStyles ??= {})[name] = structuredClone(style); delete page.textStyles?.[name];
       if (page.textStyles && !Object.keys(page.textStyles).length) delete page.textStyles;

@@ -50,6 +50,23 @@ test("shared catalog contract accepts the current 133-character page title", () 
   });
 });
 
+test("Kamakura catalog preserves page kinds, template paths and publication metadata", () => {
+  const source = catalog();
+  const base = source.pages[0];
+  source.pages = [
+    { ...base, pageId: "home", path: "/", kind: "page", visibility: "private", published: false },
+    { ...base, pageId: "brand-navigation", kind: "shared" },
+    { ...base, pageId: "post-detail", kind: "template", path: "/posts/[slug]", published: true }
+  ];
+  assert.deepEqual(contract.parseKamakuraCatalog(source).pages, source.pages);
+  for (const invalid of [
+    { kind: "component" }, { kind: null }, { path: "https://other.example/" }, { path: "/../admin" },
+    { path: "/posts/[slug]", kind: "page" }, { visibility: "hidden" }, { published: "false" }
+  ]) {
+    assert.throws(() => contract.parseKamakuraCatalog({ ...source, pages: [{ ...base, ...invalid }] }), contract.KamakuraCatalogContractError);
+  }
+});
+
 test("shared catalog contract normalizes known fields and rejects unsafe or mismatched data", () => {
   const extended = catalog();
   extended.unexpected = "ignored";

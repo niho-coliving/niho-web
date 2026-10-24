@@ -211,7 +211,7 @@ const textOf = (value: LocalizationValue | undefined): string => value === undef
     : value.children.map(function flatten(node): string { return node.type === "text" ? node.text : node.children.map(flatten).join(""); }).join("");
 const sameValue = (left: LocalizationValue, right: LocalizationValue): boolean => JSON.stringify(left) === JSON.stringify(right);
 function unitLabel(unit: LocalizationUnit, context: EditorLocalizationContext): string {
-  const owner = unit.scope === "page" ? "このページ" : `共通部品「${(context.options.components as ComponentLibrary | undefined)?.components.find((component) => component.id === unit.ownerId)?.name ?? unit.ownerId}」`;
+  const owner = unit.scope === "page" ? "このページ" : `コンポーネント「${(context.options.components as ComponentLibrary | undefined)?.components.find((component) => component.id === unit.ownerId)?.name ?? unit.ownerId}」`;
   if (unit.field === "title") return "ページタイトル";
   if (unit.field === "meta.description") return "ページの説明文";
   if (unit.field === "meta.ogImage.alt") return "ソーシャル画像の説明";
@@ -288,7 +288,7 @@ function ManualValueEditor({ unit, value, accepted, disabled, pending, invalid, 
       {unit.field !== "meta.ogImage.src" && <label className="e-field"><span>言語別のレスポンシブ画像 URL（任意）</span><input value={image.srcset ?? ""} disabled={disabled || !image.src} onChange={(event) => setUrl(image.src, event.target.value || undefined)} /></label>}
       {(invalid || urlInvalid) && <small className="e-help e-problem" role="alert">URL は https:// か / から始まる単一の画像 URL で入力してください。</small>}
       {pending && <small className="e-help" role="status">未保存の手修正があります。保存するか入力を取り消してください。</small>}
-      <div className="e-actions">{pickAsset && <button type="button" className="e-small" disabled={disabled} onClick={pickAsset}>素材を選ぶ</button>}
+      <div className="e-actions">{pickAsset && <button type="button" className="e-small" disabled={disabled} onClick={pickAsset}>アセットを選ぶ</button>}
         <button type="button" className="e-small" disabled={disabled || invalid || urlInvalid || !pending} onClick={() => void save(image)}>URLを保存</button>
         <button type="button" className="e-small" disabled={disabled || !pending} onClick={cancel}>入力を取り消す</button></div></div>;
   }
@@ -352,7 +352,7 @@ export function LocalizationPanel({ context, document, disabled, selectedUnit, r
   {context.collection.units.map((unit) => {
     const entry = entries.get(unit.unitId), state = states.get(unit.unitId), currentCandidate = entry?.candidate?.sourceFingerprint === unit.sourceFingerprint;
     const currentValue = entry?.draftValue ?? current[unit.unitId] ?? unit.sourceValue, buffer = bufferFor(unit), displayedValue = buffer?.value ?? currentValue;
-    return <section className={`e-section e-localization-unit${selectedUnit === unit.unitId ? " is-selected" : ""}`} data-unit-id={unit.unitId} key={unit.unitId}><div className="e-section-head"><h3>{unitLabel(unit, context)}</h3><span className="e-badge">{unit.scope === "shared-component" ? "共通部品" : "ページ"}</span><span className="e-badge">{localizationStateLabel(state?.state ?? "missing")}</span></div>
+    return <section className={`e-section e-localization-unit${selectedUnit === unit.unitId ? " is-selected" : ""}`} data-unit-id={unit.unitId} key={unit.unitId}><div className="e-section-head"><h3>{unitLabel(unit, context)}</h3><span className="e-badge">{unit.scope === "shared-component" ? "コンポーネント" : "ページ"}</span><span className="e-badge">{localizationStateLabel(state?.state ?? "missing")}</span></div>
       <dl className="e-rows"><div><dt>現在の原文</dt><dd>{textOf(unit.sourceValue)}</dd></div>
         {context.previousSourceValues[unit.unitId] !== undefined && <div><dt>以前の原文</dt><dd>{textOf(context.previousSourceValues[unit.unitId])}</dd></div>}
         <div><dt>現在の訳</dt><dd>{textOf(currentValue)}</dd></div>

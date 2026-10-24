@@ -409,7 +409,7 @@ test("editor operations set instance values, style instances, duplicate, move an
   assert.deepEqual(next.body[0].children[0].props, { aboutLabel: "会社" });
   next = editDocument(next, { type: "instanceProp", path: [0, 0], name: "aboutLabel", value: undefined }, {}, [], components);
   assert.equal(Object.hasOwn(next.body[0].children[0], "props"), false);
-  assert.throws(() => editDocument(next, { type: "instanceProp", path: [0], name: "aboutLabel", value: "x" }, {}, [], components), /部品のインスタンスを選択してください/);
+  assert.throws(() => editDocument(next, { type: "instanceProp", path: [0], name: "aboutLabel", value: "x" }, {}, [], components), /配置したコンポーネントを選択してください/);
   rejects(() => editDocument(next, { type: "instanceProp", path: [0, 0], name: "aboutHref", value: "javascript:alert(1)" }, {}, [], components), /props\.aboutHref: unsafe URL/);
   rejects(() => editDocument(original, { type: "title", value: "ライブラリなし" }), /component instance requires a component library/);
   next = editDocument(next, { type: "style", path: [0, 0], breakpoint: "base", property: "padding", value: 8 }, {}, [], components);
@@ -424,8 +424,8 @@ test("editor operations set instance values, style instances, duplicate, move an
   assert.equal(editDocument(moved, { type: "remove", path: [0] }, {}, [], components).body[0].id, "wrap");
   const placed = editDocument(parsePageDocument(fixture), { type: "add", parentId: "hero", node: instance("badge1", "badge", { props: { label: "注目" } }) }, {}, [], components);
   assert.equal(find(resolved(placed).body, "badge1--n2").children[0].text, "注目");
-  assert.throws(() => editDocument(next, { type: "detach", path: [0, 0] }), /部品ライブラリを読み込めていません/);
-  assert.throws(() => editDocument(next, { type: "detach", path: [0] }, {}, [], components), /部品のインスタンスを選択してください/);
+  assert.throws(() => editDocument(next, { type: "detach", path: [0, 0] }), /コンポーネントライブラリを読み込めていません/);
+  assert.throws(() => editDocument(next, { type: "detach", path: [0] }, {}, [], components), /配置したコンポーネントを選択してください/);
   const colliding = parsePageDocument(page([instance("nav1", "navbar", { props: { aboutLabel: "会社" }, style: { base: { padding: 4 } } }), { type: "element", id: "n3", tag: "div", children: [] }]), {}, { components });
   const detached = detachInstance(colliding, [0], components);
   assert.deepEqual(detached.body[0].children.map((child) => child.id), ["n2", "n3_copy1", "n4"]);
@@ -460,9 +460,9 @@ test("createComponentFromNode replaces an element with an instance, renumbers ma
   const lead = createComponentFromNode(document, [0, 1], created.library, { name: "リード", kind: "part" }).componentId;
   assert.match(lead, newIdFormat); assert.notEqual(lead, id);
   assert.throws(() => createComponentFromNode(document, [0, 0, 0], components, { name: "文字", kind: "part" }), /要素を選択してください/);
-  assert.throws(() => createComponentFromNode(document, [0], components, { name: " ナビゲーション", kind: "part" }), /同じ名前の部品があります/);
-  assert.throws(() => createComponentFromNode(document, [0], components, { name: " ", kind: "part" }), /部品の名前/);
-  assert.throws(() => createComponentFromNode(document, [0], components, { name: "ロック", kind: "part" }, {}, [{ nodeId: "lead", fields: ["children"], reason: "外部データ" }]), /データ連動値を含む要素は部品にできません/);
+  assert.throws(() => createComponentFromNode(document, [0], components, { name: " ナビゲーション", kind: "part" }), /同じ名前のコンポーネントがあります/);
+  assert.throws(() => createComponentFromNode(document, [0], components, { name: " ", kind: "part" }), /コンポーネント名を入力してください/);
+  assert.throws(() => createComponentFromNode(document, [0], components, { name: "ロック", kind: "part" }, {}, [{ nodeId: "lead", fields: ["children"], reason: "外部データ" }]), /データ連動値を含む要素はコンポーネントにできません/);
   rejects(() => createComponentFromNode(document, [0], components, { name: "種類", kind: "page" }), /kind: unknown component kind/);
   const nested = parsePageDocument(page([{ type: "element", id: "wrap", tag: "div", children: [instance("nav1", "navbar", { style: { base: { color: { token: "ink" } } } })] }]), {}, { components: parseComponentLibrary(library()) });
   const wrapped = createComponentFromNode(nested, [0], parseComponentLibrary(library()), { name: "外枠", kind: "section" });
@@ -509,12 +509,12 @@ test("master documents write back roots and tokens but keep public prop targets 
   assert.throws(() => withComponentDocument(components, "navbar", edit({ type: "add", parentId: "n3", node: { type: "element", id: "extra", tag: "span", children: [] } })), /ページごとの値に使っている要素/);
   assert.doesNotThrow(() => withComponentDocument(components, "navbar", edit({ type: "remove", path: [0, 0] })));
   const twoRoots = componentDocument(components, "navbar", "ja"); twoRoots.body.push({ type: "element", id: "x", tag: "div", children: [] });
-  assert.throws(() => withComponentDocument(components, "navbar", twoRoots), /部品には外枠の要素が1つだけ必要です/);
+  assert.throws(() => withComponentDocument(components, "navbar", twoRoots), /コンポーネントには外枠の要素が1つだけ必要です/);
   assert.throws(() => withComponentDocument(components, "navbar", { ...twoRoots, body: [{ type: "text", text: "文字" }] }), /外枠の要素が1つだけ/);
   rejects(() => withComponentDocument(components, "badge", edit({ type: "add", parentId: "n1", node: instance("again", "badge") }, "badge")), /^\$\.components\[1\]: circular component reference$/);
   const recolored = componentDocument(components, "badge", "ja"); recolored.tokens.accent = { type: "color", value: "#123456" };
   assert.equal(withComponentDocument(components, "badge", recolored).tokens.accent.value, "#123456");
-  assert.throws(() => componentDocument(components, "missing", "ja"), /部品が見つかりません/);
+  assert.throws(() => componentDocument(components, "missing", "ja"), /コンポーネントが見つかりません/);
 });
 
 test("master documents are drawn and validated with same-named site-wide tokens over the library copy, like a page without overrides", () => {
@@ -535,9 +535,9 @@ test("master documents are drawn and validated with same-named site-wide tokens 
 test("library operations keep names unique, protect referenced components and manage public props", () => {
   const components = parseComponentLibrary(library());
   assert.equal(renameComponent(components, "navbar", "  メインナビ ").components[0].name, "メインナビ");
-  assert.throws(() => renameComponent(components, "navbar", "バッジ "), /同じ名前の部品があります/);
+  assert.throws(() => renameComponent(components, "navbar", "バッジ "), /同じ名前のコンポーネントがあります/);
   assert.doesNotThrow(() => renameComponent(components, "navbar", "ナビゲーション"));
-  assert.throws(() => renameComponent(components, "missing", "名前"), /部品が見つかりません/);
+  assert.throws(() => renameComponent(components, "missing", "名前"), /コンポーネントが見つかりません/);
   assert.equal(setComponentKind(components, "navbar", "header").components[0].kind, "header");
   rejects(() => setComponentKind(components, "navbar", "page"), /kind: unknown component kind/);
   const first = duplicateComponent(components, "navbar"), copy = first.library.components.at(-1);
@@ -549,7 +549,7 @@ test("library operations keep names unique, protect referenced components and ma
   assert.equal(second.library.components.at(-1).name, "ナビゲーション のコピー 2");
   const longName = duplicateComponent(renameComponent(components, "card", "長".repeat(COMPONENT_LIMITS.nameLength)), "card").library.components.at(-1).name;
   assert.equal(longName.length, COMPONENT_LIMITS.nameLength); assert.ok(longName.endsWith(" のコピー"));
-  assert.throws(() => removeComponent(components, "badge"), /他の部品から使われているため削除できません/);
+  assert.throws(() => removeComponent(components, "badge"), /他のコンポーネントから使われているため削除できません/);
   const withoutNavbar = removeComponent(components, "navbar");
   assert.deepEqual(withoutNavbar.components.map((component) => component.id), ["badge", "card"]);
   assert.deepEqual(removeComponent(withoutNavbar, "badge").components.map((component) => component.id), ["card"]);
@@ -637,12 +637,12 @@ test("project editor forwards the component adapter for its own site only and pa
   await assert.rejects(() => wrapped.listUsage("other", signal), /プロジェクト外/);
   assert.deepEqual(calls.reads, ["demo"]); assert.deepEqual(calls.usage, []);
   stored = { ...library(), siteId: "other" };
-  await assert.rejects(() => wrapped.readLibrary("demo", signal), /部品ライブラリの対象サイトが一致しません/);
+  await assert.rejects(() => wrapped.readLibrary("demo", signal), /コンポーネントライブラリの対象サイトが一致しません/);
   stored = "library";
   await assert.rejects(() => wrapped.readLibrary("demo", signal), DocumentValidationError);
   const parsed = parseComponentLibrary(library());
   await assert.rejects(() => wrapped.saveLibrary({ siteId: "other", library: parsed, expectedVersion: "lib-1" }, signal), /プロジェクト外/);
-  await assert.rejects(() => wrapped.saveLibrary({ siteId: "demo", library: { ...parsed, siteId: "other" }, expectedVersion: "lib-1" }, signal), /部品ライブラリの対象サイトが一致しません/);
+  await assert.rejects(() => wrapped.saveLibrary({ siteId: "demo", library: { ...parsed, siteId: "other" }, expectedVersion: "lib-1" }, signal), /コンポーネントライブラリの対象サイトが一致しません/);
   assert.equal(calls.saves.length, 0);
   assert.deepEqual(await wrapped.saveLibrary({ siteId: "demo", library: parsed, expectedVersion: "lib-1", ignored: true }, signal), { status: "saved", version: "lib-2", revision: 2 });
   assert.deepEqual(Object.keys(calls.saves[0]).sort(), ["expectedVersion", "library", "siteId"]);

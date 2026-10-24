@@ -1,4 +1,5 @@
 import { isStyleProperty } from "../src/style-values.js";
+import { isTemplatePath, validatePagePath } from "../src/pages.js";
 import type { EditorPage, EditorSite } from "../src/editor-types.js";
 import type { BlockContracts, BlockSlot, PropRule, StyleProperty } from "../src/types.js";
 
@@ -139,7 +140,25 @@ export function parseKamakuraCatalog(value: unknown): KamakuraCatalog {
     if (!isRecord(candidate) || candidate.siteId !== KAMAKURA_EDITOR_SITE_ID || candidate.locale !== "ja" || typeof candidate.pageId !== "string" || !KAMAKURA_COMMON_PAGE_ID.test(candidate.pageId)) {
       throw new KamakuraCatalogContractError();
     }
-    return { siteId: KAMAKURA_EDITOR_SITE_ID, pageId: candidate.pageId, locale: "ja", title: catalogText(candidate.title) };
+    const entry: EditorPage = { siteId: KAMAKURA_EDITOR_SITE_ID, pageId: candidate.pageId, locale: "ja", title: catalogText(candidate.title) };
+    if (candidate.kind !== undefined) {
+      if (candidate.kind !== "page" && candidate.kind !== "template" && candidate.kind !== "shared") throw new KamakuraCatalogContractError();
+      entry.kind = candidate.kind;
+    }
+    if (candidate.path !== undefined) {
+      const path = catalogText(candidate.path, 160);
+      if (validatePagePath(path) !== null && !(entry.kind === "template" && isTemplatePath(path))) throw new KamakuraCatalogContractError();
+      entry.path = path;
+    }
+    if (candidate.visibility !== undefined) {
+      if (candidate.visibility !== "public" && candidate.visibility !== "private") throw new KamakuraCatalogContractError();
+      entry.visibility = candidate.visibility;
+    }
+    if (candidate.published !== undefined) {
+      if (typeof candidate.published !== "boolean") throw new KamakuraCatalogContractError();
+      entry.published = candidate.published;
+    }
+    return entry;
   });
   if (new Set(pages.map(({ pageId }) => pageId)).size !== pages.length) throw new KamakuraCatalogContractError();
 

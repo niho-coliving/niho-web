@@ -48,7 +48,7 @@ function assertPresentationTarget(presentation: unknown, target: EditorTarget): 
 }
 
 function assertLibrarySite(library: unknown, site: EditorSite): void {
-  if (record(library, "library").siteId !== site.id) throw new Error("部品ライブラリの対象サイトが一致しません。");
+  if (record(library, "library").siteId !== site.id) throw new Error("コンポーネントライブラリの対象サイトが一致しません。");
 }
 
 function releaseRequest(request: EditorReleaseRequest, target: EditorTarget): EditorReleaseRequest {

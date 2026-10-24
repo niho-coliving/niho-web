@@ -184,7 +184,7 @@ export function createInsertionNode(preset: InsertionPreset, options: InsertionB
     if (entry.type === "text") continue;
     if (!issued.has(entry.id)) throw new Error("挿入プリセットは id factory で全ノード ID を採番してください。");
     if (entry.type === "component" && insertableBlocks !== undefined && !insertableBlocks.includes(entry.block)) throw new Error("このブロックは新しく配置できません。");
-    if (entry.type === "instance" && canInsertInstance && !canInsertInstance(entry.component)) throw new Error("この共通部品はここへ配置できません。");
+    if (entry.type === "instance" && canInsertInstance && !canInsertInstance(entry.component)) throw new Error("このコンポーネントはここへ配置できません。");
   }
   if (insertableBlocks !== undefined && components) {
     const definitions = new Map(components.components.map((component) => [component.id, component] as const)), checked = new Set<string>();
@@ -192,9 +192,9 @@ export function createInsertionNode(preset: InsertionPreset, options: InsertionB
       if (checked.has(componentId)) return;
       checked.add(componentId);
       const component = definitions.get(componentId);
-      if (!component) throw new Error("この共通部品はここへ配置できません。");
+      if (!component) throw new Error("このコンポーネントはここへ配置できません。");
       for (const entry of descendants(component.root)) {
-        if (entry.type === "component" && !insertableBlocks.includes(entry.block)) throw new Error("追加が許可されていないブロックを含む共通部品は配置できません。");
+        if (entry.type === "component" && !insertableBlocks.includes(entry.block)) throw new Error("追加が許可されていない業務ブロックを含むコンポーネントは配置できません。");
         if (entry.type === "instance") inspect(entry.component);
       }
     };

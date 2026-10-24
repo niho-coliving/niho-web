@@ -41,7 +41,7 @@ const blocks = {
 const cards = () => ({ type: "component", id: "cards", block: "ExperienceCards", props: { heading: "人気の体験", ctaLabel: "予約する" } });
 const page = (...nodes) => ({ ...structuredClone(fixture), body: [...structuredClone(fixture.body), ...structuredClone(nodes.length ? nodes : [cards()])] });
 const library = () => ({ schemaVersion: 1, siteId: "demo", revision: 1, tokens: {}, components: [{ id: "cards_section", name: "体験セクション", kind: "section", version: 1,
-  root: { type: "element", id: "n1", tag: "section", children: [{ type: "component", id: "n2", block: "ExperienceCards", props: { heading: "部品の体験" } }] } }] });
+  root: { type: "element", id: "n1", tag: "section", children: [{ type: "component", id: "n2", block: "ExperienceCards", props: { heading: "コンポーネントの体験" } }] } }] });
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const left = () => document.querySelector('[aria-label="サイト・ページ・レイヤー"]');
@@ -60,7 +60,7 @@ const canvas = () => frame().contentDocument;
 const canvasCss = () => canvas().querySelector("style[data-nw-style]").textContent;
 const editorCss = () => [...canvas().querySelectorAll("style")].map((node) => node.textContent).join("\n");
 const card = (name) => document.querySelector(`article.e-part-card[aria-label="${name}"]`);
-const openPanel = () => click(document.querySelector('nav[aria-label="編集ツール"] button[title="部品"]'));
+const openPanel = () => click(document.querySelector('nav[aria-label="編集ツール"] button[title="コンポーネント"]'));
 async function click(target) { assert.ok(target); await act(async () => target.click()); await flush(); }
 async function canvasClick(selector) { const view = frame().contentWindow, target = view.document.querySelector(selector); assert.ok(target, selector); await act(async () => target.dispatchEvent(new view.MouseEvent("click", { bubbles: true, cancelable: true }))); await flush(); }
 async function change(target, value) {
@@ -246,7 +246,7 @@ test("blocks inside a component master support regions, while instances on the p
   try {
     await canvasClick('[data-nw-node="featured--n2"] [data-nw-slot="title"]');
     assert.ok(heading().includes("体験セクション")); assert.ok(!button("ブロック全体に戻る", right()));
-    await openPanel(); await click(button("編集", card("体験セクション"))); await loadCanvas();
+    await openPanel(); await click(button("コンポーネントを編集", card("体験セクション"))); await loadCanvas();
     await canvasClick('[data-nw-node="n2"] [data-nw-slot="title"]');
     assert.equal(heading(), "体験カード一覧 · カードの見出し");
     await change(input("文字サイズ", right()), "20");

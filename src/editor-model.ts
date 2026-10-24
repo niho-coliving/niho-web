@@ -255,7 +255,7 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
     }
     const cover = draft.meta?.ogImage;
     if (cover && "asset" in cover && same(cover.asset)) { cover.asset = structuredClone(to); count++; }
-    if (!count) throw new Error("置き換える素材がこのページにありません。");
+    if (!count) throw new Error("置き換えるアセットがこのページにありません。");
   } else if (operation.type === "token") {
     styleName(operation.name);
     const previous = draft.tokens[operation.name];
@@ -304,12 +304,12 @@ export function editDocument(document: PageDocument, operation: EditorOperation,
       if (node.type !== "component") throw new Error("ブロックを選択してください。");
       if (operation.value === undefined) delete node.props[operation.name]; else node.props[operation.name] = operation.value;
     } else if (operation.type === "instanceProp") {
-      if (node.type !== "instance") throw new Error("部品のインスタンスを選択してください。");
+      if (node.type !== "instance") throw new Error("配置したコンポーネントを選択してください。");
       const props = { ...node.props };
       if (operation.value === undefined) delete props[operation.name]; else props[operation.name] = operation.value;
       if (Object.keys(props).length) node.props = props; else delete node.props;
     } else if (operation.type === "detach") {
-      if (!components) throw new Error("部品ライブラリを読み込めていません。");
+      if (!components) throw new Error("コンポーネントライブラリを読み込めていません。");
       draft.body = detachInstance(draft, operation.path, components, blocks).body;
     } else if (operation.type === "slotStyle") {
       if (node.type !== "component") throw new Error("ブロックを選択してください。");
@@ -497,7 +497,7 @@ export function pageChangeProblems(change: EditorPageChange, pages: readonly Edi
   if (siteId !== site.id) return [{ field: "change", message: "別のサイトのページは操作できません。" }];
   const page = target && pages.find((page) => sameTarget(page, target));
   if (target && !page) return [{ field: "change", message: "対象のページが見つかりません。ページ一覧を再読込してください。" }];
-  if (page && (page.kind ?? "page") !== "page") return [{ field: "change", message: "テンプレートと共通枠はホストが管理します。" }];
+  if (page && (page.kind ?? "page") !== "page") return [{ field: "change", message: `${page.kind === "shared" ? "コンポーネント" : "テンプレート"}はページの操作で変更できません。` }];
   if (change.action === "visibility") {
     if (change.visibility !== "public" && change.visibility !== "private") return [{ field: "change", message: "公開状態を選択してください。" }];
     if ((page?.visibility ?? "public") === change.visibility) return [{ field: "change", message: change.visibility === "private" ? "このページはすでに非公開です。" : "このページはすでに公開状態です。" }];
