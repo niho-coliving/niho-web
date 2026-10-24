@@ -1218,13 +1218,19 @@ export function PageEditor({ adapter, toolbarStart, blocks = emptyBlocks, builde
     requestNavigation({ type: "page", target: { siteId: current.target.siteId, pageId: current.target.pageId, locale: documentLocaleFor(currentSite.config, locale) } });
   };
   const panelLocale = selectedLocale ?? localization.site?.config.sourceLocale;
-  const panelPages: readonly EditorPage[] = localization.site && panelLocale ? localization.site.pages.map(({ locales, ...page }) => ({
-    ...page, locale: documentLocaleFor(localization.site!.config, panelLocale), ...(locales[panelLocale]?.published === undefined ? {} : { published: locales[panelLocale]!.published })
-  })) : pages;
+  const panelPages: readonly EditorPage[] = localization.site && panelLocale ? localization.site.pages.map(({ locales, ...page }) => {
+    const sourcePage = pages.find((entry) => entry.siteId === page.siteId && entry.pageId === page.pageId);
+    const kind = page.kind ?? sourcePage?.kind;
+    return {
+      ...sourcePage, ...page, ...(kind ? { kind } : {}),
+      locale: documentLocaleFor(localization.site!.config, panelLocale),
+      ...(locales[panelLocale]?.published === undefined ? {} : { published: locales[panelLocale]!.published })
+    };
+  }) : pages;
   const site = sites.find((site) => site.id === siteId), page = session ? panelPages.find((page) => page.pageId === session.target.pageId) ?? pages.find((page) => page.pageId === session.target.pageId) : undefined;
   const siteComponents = panelPages.filter((page) => page.kind === "shared"), regularPages = panelPages.filter((page) => page.kind !== "shared");
   const isSiteComponent = !masterId && page?.kind === "shared";
-  const siteComponentBack = regularPages.find((page) => !!siteComponentReturn && sameTarget(page, siteComponentReturn)) ?? regularPages[0];
+  const siteComponentBack = regularPages.find((page) => page.siteId === siteComponentReturn?.siteId && page.pageId === siteComponentReturn?.pageId) ?? regularPages[0];
   const pageOperations = !!adapter.preparePageChange && !!adapter.applyPageChange, unsaved = dirty || hasInput;
   const pageOperationsDisabled = siteWorkBlocked || unsaved || blocked || !!navigation || !site || historyMode || targetMode || !!session?.readOnly;
   const startPageChange = (start: PageChangeStart) => { if (pageOperations && !pageOperationsDisabled) setPageChange(start); };

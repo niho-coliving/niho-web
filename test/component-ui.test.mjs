@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import { parseComponentLibrary, parsePageDocument } from "@niho/web/core";
+import { collectLocalizationUnits, createLocalizationOverlay } from "@niho/web/localization";
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: "https://editor.example.test" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Element", "Event", "MouseEvent"]) globalThis[key] = dom.window[key];
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -168,6 +169,40 @@ test("shared documents stay out of pages and remain editable as site components 
     assert.equal(button("コンポーネントにする"), undefined);
     assert.equal(document.querySelector(".e-hold"), null); assert.equal(button("公開").getAttribute("title"), "公開前に対象と差分を確認");
     await click("公開"); assert.equal(Object.hasOwn(app.calls.prepares[0], "componentsVersion"), false);
+  } finally { await app.cleanup(); }
+});
+
+test("localized component navigation keeps host page kinds and returns to the original page", async () => {
+  const reads = [];
+  const config = { schemaVersion: 1, siteId: "demo", sourceLocale: "ja", defaultLocale: "ja", enabledLocales: ["ja", "en"],
+    documentLocales: { ja: "ja-JP", en: "en-US" }, glossaryVersion: "g1", contextVersion: "c1" };
+  const pageEntries = [
+    { siteId: "demo", pageId: "home", title: "ホーム", locales: { ja: { state: "source" }, en: { state: "missing" } } },
+    { siteId: "demo", pageId: "other", title: "別ページ", locales: { ja: { state: "source" }, en: { state: "missing" } } },
+    { siteId: "demo", pageId: "chrome", title: "サイトの共通枠", locales: { ja: { state: "source" }, en: { state: "missing" } } }
+  ];
+  const app = await setup({ components: false, document: fixture, adapter: {
+    readDocument: async (request) => { reads.push(structuredClone(request)); return { document: { ...structuredClone(fixture), pageId: request.pageId, locale: request.locale }, version: "v1" }; },
+    localization: {
+      readSite: async () => ({ config, pages: pageEntries, version: "site-v1" }),
+      readPage: async (request) => {
+        const sourceDocument = { ...structuredClone(fixture), pageId: request.pageId, locale: "ja-JP" };
+        const collection = await collectLocalizationUnits(config, sourceDocument, "en");
+        return { sourceDocument, sourceVersion: "v1", overlay: createLocalizationOverlay(collection), version: "loc-v1" };
+      }
+    }
+  } });
+  try {
+    assert.equal(pageRow("サイトの共通枠"), undefined);
+    await openPage("別ページ");
+    assert.ok(siteCard("サイトの共通枠"));
+    await click("English（訳文）");
+    assert.ok(siteCard("サイトの共通枠"));
+    await click(button("コンポーネントを編集", siteCard("サイトの共通枠")));
+    assert.ok(document.querySelector(".e-part-banner")?.textContent.includes("サイトの共通枠"));
+    await click("ページに戻る");
+    assert.deepEqual(reads.at(-1), { siteId: "demo", pageId: "other", locale: "en-US" });
+    assert.equal(document.querySelector('.e-project-context span')?.textContent, "別ページ");
   } finally { await app.cleanup(); }
 });
 
